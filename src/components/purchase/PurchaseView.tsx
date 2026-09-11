@@ -98,10 +98,17 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
 
   return (
     <div className="p-3 border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-      <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-12 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-[minmax(0,3fr)_repeat(8,minmax(0,1fr))_auto] gap-3">
         <div className="sm:col-span-3 relative">
           <div className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-2 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-100 flex items-center justify-between">
-            <span className="truncate font-medium">{item.productName}</span>
+            <span className="truncate font-medium flex-1 mr-2">
+              <span>{item.productName}</span>
+              {productDetails && (
+                <span className="font-normal text-slate-500 text-[10px] ml-1.5">
+                  {productDetails.dosage} {productDetails.presentation} {productDetails.form}
+                </span>
+              )}
+            </span>
             <button
               type="button"
               onClick={() => onRemove(index)}
@@ -140,7 +147,7 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
             type="text"
             value={item.batchNumber}
             onChange={(e) => onChange(index, { ...item, batchNumber: e.target.value })}
-            placeholder="BT-9900"
+            placeholder="Batch"
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           />
         </div>
@@ -164,8 +171,8 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
         <div>
           <input
             type="text"
-            value={formatWithCommas(priceInput)}
-            onChange={(e) => setPriceInput(e.target.value.replace(/,/g, ''))}
+            value={formatWithCommas(priceInput.split('.')[0])}
+            onChange={(e) => setPriceInput(e.target.value.replace(/,/g, '').split('.')[0])}
             onBlur={() => flushPrice(priceInput)}
             onFocus={(e) => e.target.select()}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -175,8 +182,8 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
         <div>
           <input
             type="text"
-            value={formatWithCommas(discountInput)}
-            onChange={(e) => setDiscountInput(e.target.value.replace(/,/g, ''))}
+            value={formatWithCommas(discountInput.split('.')[0])}
+            onChange={(e) => setDiscountInput(e.target.value.replace(/,/g, '').split('.')[0])}
             onBlur={() => onChange(index, { ...item, discount: parseFloat(discountInput) || 0 })}
             onFocus={(e) => e.target.select()}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -186,8 +193,8 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
         <div>
           <input
             type="text"
-            value={formatWithCommas(costInput)}
-            onChange={(e) => setCostInput(e.target.value.replace(/,/g, ''))}
+            value={formatWithCommas(costInput.split('.')[0])}
+            onChange={(e) => setCostInput(e.target.value.replace(/,/g, '').split('.')[0])}
             onBlur={() => flushCost(costInput)}
             onFocus={(e) => e.target.select()}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -197,8 +204,8 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
         <div>
           <input
             type="text"
-            value={formatWithCommas(totalInput)}
-            onChange={(e) => setTotalInput(e.target.value.replace(/,/g, ''))}
+            value={formatWithCommas(totalInput.split('.')[0])}
+            onChange={(e) => setTotalInput(e.target.value.replace(/,/g, '').split('.')[0])}
             onBlur={() => {
               const newTotal = parseFloat(totalInput) || 0;
               const safeQty = item.quantity <= 0 ? 1 : item.quantity;
@@ -212,6 +219,8 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
           />
         </div>
       </div>
+
+
     </div>
   );
 };
@@ -222,6 +231,7 @@ export const PurchaseView: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingPurchaseId, setEditingPurchaseId] = useState<string | null>(null);
   const [viewingPurchase, setViewingPurchase] = useState<PurchaseInvoice | null>(null);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
   const [selectedSupplierId, setSelectedSupplierId] = useState(suppliers[0]?.id || '');
   const [supplierSearchQuery, setSupplierSearchQuery] = useState('');
@@ -1228,9 +1238,7 @@ export const PurchaseView: React.FC = () => {
           section="purchase"
           onClose={() => {
             if (items.length > 0) {
-              if (window.confirm("You have items in this invoice. Are you sure you want to close and discard it?")) {
-                setIsCreateOpen(false);
-              }
+              setShowCloseConfirm(true);
             } else {
               setIsCreateOpen(false);
             }
@@ -1238,7 +1246,15 @@ export const PurchaseView: React.FC = () => {
           width="700px"
           height="auto"
         >
-          <form onSubmit={handleSavePurchase} className="p-5 space-y-4 text-xs flex-1 flex flex-col justify-start overflow-y-auto min-h-0">
+          <form 
+            onSubmit={handleSavePurchase} 
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).tagName !== 'TEXTAREA') {
+                e.preventDefault();
+              }
+            }}
+            className="p-5 space-y-4 text-xs flex-1 flex flex-col justify-start overflow-y-auto min-h-0"
+          >
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
               <div ref={supplierDropdownRef} className="relative">
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
@@ -1386,20 +1402,13 @@ export const PurchaseView: React.FC = () => {
             </div>
 
             {/* Add Items Row */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-800/40 space-y-3 shadow-sm">
+            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 dark:border-slate-800 dark:bg-slate-800/40 space-y-3 shadow-sm">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-900 dark:text-slate-100 block text-xs flex items-center gap-1.5">
                   <Package className="h-3.5 w-3.5 text-teal-600" />
                   Add Medication / Item to Shipment
                 </span>
-                <button
-                  type="button"
-                  onClick={handleAddItemToInvoice}
-                  className="rounded-lg bg-teal-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-teal-700 transition-colors shadow-sm cursor-pointer active:scale-95 flex items-center justify-center gap-1"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>Add Item</span>
-                </button>
+                
               </div>
 
               {scanStatusMessage && (
@@ -1419,13 +1428,9 @@ export const PurchaseView: React.FC = () => {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-12 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-[minmax(0,3fr)_repeat(8,minmax(0,1fr))_auto] gap-3 items-end">
                 <div className="sm:col-span-3 relative" ref={searchDropdownRef}>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      Medication / Item
-                    </label>
-                  </div>
+                  
 
                   {/* Primary searchable input with live matching by Name, Drug Code, or Barcode */}
                   <div className="relative">
@@ -1617,7 +1622,11 @@ export const PurchaseView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Unit</label>
+                                    <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                      Unit
+                    </label>
+                  </div>
                   <select
                     ref={unitInputRef}
                     id="purchase-item-unit"
@@ -1641,7 +1650,11 @@ export const PurchaseView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Expiry</label>
+                                    <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                      Expiry
+                    </label>
+                  </div>
                   <input
                     ref={expiryInputRef}
                     id="purchase-item-expiry"
@@ -1664,7 +1677,11 @@ export const PurchaseView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Batch #</label>
+                                    <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                      Batch
+                    </label>
+                  </div>
                   <input
                     ref={batchInputRef}
                     id="purchase-item-batch"
@@ -1679,13 +1696,17 @@ export const PurchaseView: React.FC = () => {
                         qtyInputRef.current?.select();
                       }
                     }}
-                    placeholder="BT-9900"
+                    placeholder="Batch"
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 font-mono"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Quantity</label>
+                                    <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                      Qty
+                    </label>
+                  </div>
                   <input
                     ref={qtyInputRef}
                     id="purchase-item-qty"
@@ -1699,13 +1720,17 @@ export const PurchaseView: React.FC = () => {
                         vatInputRef.current?.focus();
                       }
                     }}
-                    placeholder="0"
+                    placeholder="Qty"
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">VAT</label>
+                                    <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                      VAT
+                    </label>
+                  </div>
                   <div className="relative">
                     <select
                       ref={vatInputRef}
@@ -1732,9 +1757,11 @@ export const PurchaseView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">
-                    Public Price
-                  </label>
+                                    <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                      Pub Price
+                    </label>
+                  </div>
                   <input
                     ref={publicPriceInputRef}
                     type="text"
@@ -1752,18 +1779,22 @@ export const PurchaseView: React.FC = () => {
                         discountInputRef.current?.select();
                       }
                     }}
-                    placeholder="0"
+                    placeholder="Pub Price"
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Discount (%)</label>
+                                    <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                      Disc %
+                    </label>
+                  </div>
                   <input
                     ref={discountInputRef}
                     type="text"
-                    value={formatWithCommas(itemDiscount)}
-                    onChange={(e) => setItemDiscount(e.target.value.replace(/,/g, ''))}
+                    value={formatWithCommas(itemDiscount.split('.')[0])}
+                    onChange={(e) => setItemDiscount(e.target.value.replace(/,/g, '').split('.')[0])}
                     onFocus={(e) => {
                       setIsDiscountFocused(true);
                       e.target.select();
@@ -1776,21 +1807,23 @@ export const PurchaseView: React.FC = () => {
                         costInputRef.current?.select();
                       }
                     }}
-                    placeholder="0"
+                    placeholder="Disc %"
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">
-                    Unit Cost {purchaseCurrency === 'USD' ? 'USD ($)' : 'LBP (ل.ل)'}
-                  </label>
+                                    <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                      Cost
+                    </label>
+                  </div>
                   <input
                     ref={costInputRef}
                     id="purchase-item-cost"
                     type="text"
-                    value={formatWithCommas(itemCostUSD)}
-                    onChange={(e) => setItemCostUSD(e.target.value.replace(/,/g, ''))}
+                    value={formatWithCommas(itemCostUSD.split('.')[0])}
+                    onChange={(e) => setItemCostUSD(e.target.value.replace(/,/g, '').split('.')[0])}
                     onFocus={(e) => e.target.select()}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -1799,21 +1832,23 @@ export const PurchaseView: React.FC = () => {
                         totalInputRef.current?.select();
                       }
                     }}
-                    placeholder="0"
+                    placeholder="Cost"
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">
-                    Total / Item
-                  </label>
+                                    <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                      Total
+                    </label>
+                  </div>
                   <input
                     ref={totalInputRef}
                     type="text"
-                    value={formatWithCommas(itemTotalInput)}
+                    value={formatWithCommas(itemTotalInput.split('.')[0])}
                     onChange={(e) => {
-                      const raw = e.target.value.replace(/,/g, '');
+                      const raw = e.target.value.replace(/,/g, '').split('.')[0];
                       setItemTotalInput(raw);
                       const newTotal = parseFloat(raw);
                       if (!isNaN(newTotal)) {
@@ -1840,8 +1875,9 @@ export const PurchaseView: React.FC = () => {
                         handleAddItemToInvoice();
                       }
                     }}
-                    placeholder="0"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    placeholder="Total"
+                    style={{ width: `${Math.max(6, formatWithCommas(itemTotalInput.split('.')[0]).length + 3)}ch` }}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 min-w-full"
                   />
                 </div>
               </div>
@@ -1946,6 +1982,39 @@ export const PurchaseView: React.FC = () => {
             </div>
           </form>
         </DesktopWindow>
+      )}
+      {/* Close Confirm Modal */}
+      {showCloseConfirm && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700">
+              <h3 className="font-bold text-slate-800 dark:text-slate-200">Unsaved Changes</h3>
+            </div>
+            <div className="p-5 text-sm text-slate-600 dark:text-slate-300">
+              <p>You have items in this invoice.</p>
+              <p className="mt-1">Are you sure you want to close without saving?</p>
+            </div>
+            <div className="px-5 py-4 bg-slate-50 dark:bg-slate-900 flex justify-end gap-3 border-t border-slate-100 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setShowCloseConfirm(false)}
+                className="px-4 py-2 text-sm font-bold text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
+              >
+                Discard the close process
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCloseConfirm(false);
+                  setIsCreateOpen(false);
+                }}
+                className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded hover:bg-red-700 transition-colors"
+              >
+                Close without save
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

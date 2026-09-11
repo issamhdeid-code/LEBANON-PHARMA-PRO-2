@@ -215,11 +215,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Local-only headers. X-Frame-Options is explicitly re-asserted (a stale comment
-// once removed it); the Google Identity Services popup flow no longer exists.
+// Local-only headers.
 app.use((req, res, next) => {
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-  res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
+  // res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  // res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Sync-Secret');
