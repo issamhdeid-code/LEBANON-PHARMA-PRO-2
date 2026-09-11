@@ -211,3 +211,32 @@ granular product-array mutations, and the alert-check effect — these are safe 
   correct-secret connects, unknown-type emits dropped, `/api/moph/*` 401 without header, Host-spoof 403,
   loopback secret provisioning + rotation auth ok.
 - NOT pushed (AGENTS.md convention — push only on request). Dev server confirmed on http://localhost:3000.
+
+## What was completed in THIS session (1-month two-terminal E2E harness — COMMITTED)
+- **NEW `tests/monthly-usage.js`**: headless-Chrome E2E simulating one month of two-terminal use against
+  the built backend (`bootServer` → dist/server.cjs on 3456) with a virtual clock. Terminal A = admin
+  (`,main`, seeds catalog via CSV import UI, buys stock, adjusts qty, sells, updates prices, adds patients,
+  voids a sale), Terminal B = secondary PC (operator2 account, sells, receives broadcasts). Exit code = 
+  pass/fail; failures keep a `pharmalebanon-*-<ISO>.html` debug artifact.
+- **Key harness facts / fixes learned on the way**:
+  1. The app blocks ONE identity on TWO PCs (`PharmacyContext.login()`: `activeSessions` check returns
+     `${found.name} is already signed in on another PC`). Fix: harness creates a second admin account on A
+     via Settings → Users → `Add User` (`addSecondUser` helper) and B logs in as `operator2`. B's picker
+     is reached through `Enter username & password manually`; after the fix B's snapshot also includes the
+     seeded catalog+users because `main()` seeds A before B ever connects.
+  2. `page.evaluate(fn)` predicates must be SELF-CONTAINED — referencing a closure variable throws an
+     instant `ReferenceError` inside the page and the error is misreported as a timeout. Inline values via
+     template-string predicates.
+  3. `clickAnyText` substring matching hits the outer wrapper `div` (no onClick); use `{exact:true}` to hit
+     the role-card heading. The in-app sync status pill only renders inside Settings → Network & Sync
+     (`Connected / Connecting... / Offline`), so status checks open that panel (`checkSyncStatus`).
+  4. Sales log is NEWEST-FIRST — void selects row `[0]`, not the last button.
+- **Verified in this session**: fast 5-day run 29/29 PASS; full 30-day run all PASS: 55 sales on A + 20 on
+  B (110 invoices, unique per store, both stores byte-identical), 3 purchases, 2200 products/PC, stock
+  reconciled on every drift check (0 diff keys), no negative stock, reports month-filter + backup export
+  work, 0 real console errors (37 events = benign frame-ancestors meta + external 429/503 auto-enrich
+  noise). `npm run lint`/`test` (8)/`build` all GREEN.
+- Runs: `node tests\monthly-usage.js --fast --days 5` and `node tests\monthly-usage.js --days 30` from the
+  project root (long; logs each step). The harness boots its OWN server — never touch the running dev
+  server.
+- NOT pushed (AGENTS.md convention — push only on request).
