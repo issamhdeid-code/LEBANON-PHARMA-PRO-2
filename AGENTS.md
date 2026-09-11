@@ -17,6 +17,7 @@
   npm run build
   ```
   If any fails, fix before doing anything else.
+- Run **independent gates in parallel** to use CPU cores: issue `npm run lint` and `npm run test` as two bash calls in the SAME message (never sequential round-trips), then `npm run build` last (depends on nothing, keep last so edits are final).
 - Do NOT attempt to start a running dev server — check `localhost:3000` first.
 - Puppeteer tests live in `tests/*.js` (not `*.ts`); run from project root via `node tests/<name>.test.js`.
 
