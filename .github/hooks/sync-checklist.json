@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "node .github/hooks/check-sync-checklist.cjs",
+        "timeout": 10
+      }
+    ]
+  }
+}

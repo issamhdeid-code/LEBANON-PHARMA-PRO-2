@@ -1,0 +1,8 @@
+{
+  "name": "Lebanon Pharma Pro",
+  "description": "A high-performance pharmacy management solution with real-time sync, dual-currency POS, and intelligent inventory tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
