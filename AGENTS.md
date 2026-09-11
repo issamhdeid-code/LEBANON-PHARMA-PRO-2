@@ -37,6 +37,25 @@
 - Do NOT auto-push to remote. Only push when the user explicitly requests it.
 - Never use `git commit --amend`, `git rebase`, `git reset --hard`, or `git push --force`.
 
+### 5a. Cross-tool / multi-terminal handoff (opencode ⇄ Google AI Studio)
+The repo may be edited from multiple AI tools/terminals. `main` on GitHub is the
+single source of truth. Follow the loop EXACTLY on every switch:
+1. **Pull before you start**: `git pull` + confirm `git status` is clean. Never
+   edit against a remote that is ahead.
+2. **Edit locally**, commit with a descriptive message after each feature/fix.
+3. **Push only when the user asks**, then the OTHER tool/machine MUST `git pull`
+   before it edits.
+- Never have two tools editing the SAME file at the same time. Resolve any
+  conflict with a normal `git pull` merge — never force-push, never rebase.
+- `WORKLOG.md` is write-only from opencode; other tools READ it but do not rewrite
+  it (avoids churn). Same rule for `AGENTS.md`.
+- **Critical-path rule (see §4) applies to every tool**: if another tool touches
+  `PharmacyContext.tsx`/`syncEngine.ts`/`storage.ts`/`offlineStorage.ts`, treat it as
+  a high-risk change — re-verify sync with the harness before committing further work.
+- Line endings are normalized by the repo `.gitattributes`; never hand-edit it
+  to autocrlf settings. If a push looks like a full-file diff, stop and check
+  line-ending normalization before committing.
+
 ## 6. Productivity & Reliability Rules
 - **Do NOT hallucinate file contents.** Always read a file before editing it.
 - **Do NOT apologize.** Never say sorry, my mistake, or I forgot.

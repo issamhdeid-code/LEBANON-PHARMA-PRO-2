@@ -1,0 +1,19 @@
+# Normalize line endings across tools/OS (opencode + Google AI Studio)
+* text=auto eol=lf
+
+# Binary files stay untouched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.icns binary
+*.zip binary
+*.exe binary
+
+# Server bundle + maps are generated (already gitignored, keep binary-safe just in case)
+*.cjs.map -text

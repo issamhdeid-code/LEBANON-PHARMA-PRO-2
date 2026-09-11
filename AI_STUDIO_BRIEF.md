@@ -60,6 +60,21 @@ module is safe.
   `git push --force`. Push only when the user asks.
 - Commits are the ONLY undo available (opencode snapshots are disabled).
 
+## Cross-tool handoff (Gemini ⇄ opencode)
+The repo may be edited from two tools. GitHub `main` is the single source of
+truth. On every switch:
+1. **Pull before you start**: `git pull` and confirm `git status` is clean.
+   Never edit against a remote that is ahead.
+2. **Edit locally, commit with a descriptive message**, push only when asked.
+   The other tool then MUST `git pull` before editing.
+3. **Never edit the same file as the other tool at the same time.** Resolve
+   conflicts with a normal `git pull` merge — never force-push, never rebase.
+4. READ `WORKLOG.md` and `AGENTS.md` at session start but do NOT rewrite them
+   (opencode owns those two files — avoids churn/conflicts).
+5. If you touch a critical-path file (see section above), SAY SO explicitly —
+   the other side must re-verify sync before committing further work.
+- Never hand-edit `.gitattributes` (it normalizes line endings for both tools).
+
 ## When in doubt
 - Ask the user rather than guessing.
 - Never create README/*.md docs unless explicitly asked.
