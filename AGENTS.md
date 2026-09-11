@@ -62,3 +62,11 @@ When adding a new synced entity:
 - Port 3000 is for the Vite dev server only; Puppeteer tests must use separate ports (e.g., 3456+).
 - Never modify `server.ts` for tests — tests launch their own Express app.
 - Log `page.url()` on failure for debugging.
+
+## 10. Execution Style (GSD + tool batching)
+- **Execution-first:** Do not over-plan. Skip long reasoning chains/verbose discussion blocks before making changes. Prioritize immediate, small file modifications over parsing entire directory trees.
+- **Combined intent:** Batch read + edit + verification of the target file into a single tool-call message where possible (a prior `Read` is still mandatory before `Edit`; "batch" means one message, not multiple conversational round-trips).
+- **Token economy:** Do not inspect broad codebases or unrelated modules. Read only the files target-referenced in the current prompt context.
+- **Batched tool calls:** Favor sending multiple independent tool calls in one message to reduce context-shifting overhead.
+- **Subagents are last-resort:** Only invoke terminal sub-agents or advanced multi-step plans if the single linear execution block is structurally incapable of addressing the issue.
+- Conflicts with the rules above (Critical Path Protection §4, Two-PC Sync Model §8, verify-before-edit §6) take precedence.
