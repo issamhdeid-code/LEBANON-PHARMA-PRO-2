@@ -98,7 +98,7 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
 
   return (
     <div className="p-3 border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-      <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-[minmax(0,3fr)_repeat(8,minmax(0,1fr))_auto] gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-[repeat(17,minmax(0,1fr))] gap-2 items-end min-w-[900px]">
         <div className="sm:col-span-3 relative">
           <div className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-2 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-100 flex items-center justify-between">
             <span className="truncate font-medium flex-1 mr-2">
@@ -132,13 +132,35 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
           </select>
         </div>
 
-        <div>
+        <div className="md:col-span-2">
           <input
             type="text"
-            value={item.expiryDate}
-            onChange={(e) => onChange(index, { ...item, expiryDate: e.target.value })}
-            placeholder="MM/YY"
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            value={item.expiryDate ? item.expiryDate.split('-').reverse().join('/') : ''}
+            onChange={(e) => {
+               const val = e.target.value;
+               // simple passthrough for now, complex parsing can be added if needed on blur
+               onChange(index, { ...item, expiryDate: val });
+            }}
+            onBlur={(e) => {
+               let val = e.target.value.trim();
+               const digits = val.replace(/[^\d]/g, '');
+               let d = 0, m = 0, y = 0;
+               if (digits.length === 4) { m = parseInt(digits.slice(0, 2), 10); y = 2000 + parseInt(digits.slice(2, 4), 10); }
+               else if (digits.length === 6) {
+                 const p1 = parseInt(digits.slice(0, 2), 10), p2 = parseInt(digits.slice(2, 4), 10), p3 = parseInt(digits.slice(4, 6), 10);
+                 if (p1 <= 12 && p2 === 20) { m = p1; y = parseInt(digits.slice(2, 6), 10); }
+                 else if (p2 <= 12) { d = p1; m = p2; y = 2000 + p3; }
+                 else { m = p1; y = parseInt(digits.slice(2, 6), 10); }
+               } else if (digits.length === 8) {
+                 d = parseInt(digits.slice(0, 2), 10); m = parseInt(digits.slice(2, 4), 10); y = parseInt(digits.slice(4, 8), 10);
+               } else { return; }
+               if (m >= 1 && m <= 12) {
+                 if (d === 0 || d > 31) d = new Date(y, m, 0).getDate();
+                 onChange(index, { ...item, expiryDate: `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}` });
+               }
+            }}
+            placeholder="DD/MM/YYYY"
+            className="w-[105px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 text-center"
           />
         </div>
 
@@ -168,14 +190,15 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
           </div>
         </div>
 
-        <div>
+        <div className="md:col-span-2">
           <input
             type="text"
             value={formatWithCommas(priceInput.split('.')[0])}
             onChange={(e) => setPriceInput(e.target.value.replace(/,/g, '').split('.')[0])}
             onBlur={() => flushPrice(priceInput)}
             onFocus={(e) => e.target.select()}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            style={{ fieldSizing: "content", minWidth: "100%" } as any}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           />
         </div>
 
@@ -190,18 +213,19 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
           />
         </div>
 
-        <div>
+        <div className="md:col-span-2">
           <input
             type="text"
             value={formatWithCommas(costInput.split('.')[0])}
             onChange={(e) => setCostInput(e.target.value.replace(/,/g, '').split('.')[0])}
             onBlur={() => flushCost(costInput)}
             onFocus={(e) => e.target.select()}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            style={{ fieldSizing: "content", minWidth: "100%" } as any}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           />
         </div>
 
-        <div>
+        <div className="md:col-span-2">
           <input
             type="text"
             value={formatWithCommas(totalInput.split('.')[0])}
@@ -215,7 +239,8 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
               flushCost(newCost.toString());
             }}
             onFocus={(e) => e.target.select()}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 font-bold"
+            style={{ fieldSizing: "content", minWidth: "100%" } as any}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 font-bold"
           />
         </div>
       </div>
@@ -669,36 +694,68 @@ export const PurchaseView: React.FC = () => {
   const handleExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.target.value;
     let digits = input.replace(/[^\d]/g, '');
-    if (digits.length > 6) digits = digits.slice(0, 6);
+    if (digits.length > 8) digits = digits.slice(0, 8);
 
     let formatted = digits;
-    if (digits.length > 2) {
+    if (digits.length > 4) {
+      formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+    } else if (digits.length > 2) {
       formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
     } else if (digits.length === 2 && input.endsWith('/')) {
       formatted = `${digits}/`;
+    } else if (digits.length === 4 && input.endsWith('/')) {
+      formatted = `${digits.slice(0,2)}/${digits.slice(2)}/`;
     }
 
     setDisplayExpiry(formatted);
-
-    if (digits.length === 6) {
-      const month = digits.slice(0, 2);
-      const year = digits.slice(2, 6);
-      setItemExpiry(`${year}-${month}-01`);
-    } else if (digits.length === 4) {
-      const month = digits.slice(0, 2);
-      const year = `20${digits.slice(2, 4)}`;
-      setItemExpiry(`${year}-${month}-01`);
-    } else {
-      setItemExpiry('');
-    }
   };
 
   const handleExpiryBlur = () => {
-    const digits = displayExpiry.replace(/[^\d]/g, '');
+    let input = displayExpiry.trim();
+    if (!input) {
+      setItemExpiry('');
+      return;
+    }
+
+    const digits = input.replace(/[^\d]/g, '');
+    let d = 0, m = 0, y = 0;
+
     if (digits.length === 4) {
-      const month = digits.slice(0, 2);
-      const year = `20${digits.slice(2, 4)}`;
-      setDisplayExpiry(`${month}/${year}`);
+      m = parseInt(digits.slice(0, 2), 10);
+      y = 2000 + parseInt(digits.slice(2, 4), 10);
+    } else if (digits.length === 6) {
+      const p1 = parseInt(digits.slice(0, 2), 10);
+      const p2 = parseInt(digits.slice(2, 4), 10);
+      const p3 = parseInt(digits.slice(4, 6), 10);
+      if (p1 <= 12 && p2 === 20) {
+         m = p1;
+         y = parseInt(digits.slice(2, 6), 10);
+      } else if (p2 <= 12) {
+         d = p1;
+         m = p2;
+         y = 2000 + p3;
+      } else {
+         m = p1;
+         y = parseInt(digits.slice(2, 6), 10);
+      }
+    } else if (digits.length === 8) {
+      d = parseInt(digits.slice(0, 2), 10);
+      m = parseInt(digits.slice(2, 4), 10);
+      y = parseInt(digits.slice(4, 8), 10);
+    } else {
+      return;
+    }
+
+    if (m >= 1 && m <= 12) {
+      if (d === 0 || d > 31) {
+        d = new Date(y, m, 0).getDate();
+      }
+      const dd = d.toString().padStart(2, '0');
+      const mm = m.toString().padStart(2, '0');
+      const yyyy = y.toString();
+      
+      setDisplayExpiry(`${dd}/${mm}/${yyyy}`);
+      setItemExpiry(`${yyyy}-${mm}-${dd}`);
     }
   };
 
@@ -876,10 +933,29 @@ export const PurchaseView: React.FC = () => {
     let finalExpiry = itemExpiry;
     if (!finalExpiry && displayExpiry.trim()) {
       const digits = displayExpiry.replace(/\D/g, '');
+      let d = 0, m = 0, y = 0;
       if (digits.length === 4) {
-        finalExpiry = `20${digits.slice(2, 4)}-${digits.slice(0, 2)}-01`;
+        m = parseInt(digits.slice(0, 2), 10);
+        y = 2000 + parseInt(digits.slice(2, 4), 10);
       } else if (digits.length === 6) {
-        finalExpiry = `${digits.slice(2, 6)}-${digits.slice(0, 2)}-01`;
+        const p1 = parseInt(digits.slice(0, 2), 10);
+        const p2 = parseInt(digits.slice(2, 4), 10);
+        const p3 = parseInt(digits.slice(4, 6), 10);
+        if (p1 <= 12 && p2 === 20) {
+           m = p1; y = parseInt(digits.slice(2, 6), 10);
+        } else if (p2 <= 12) {
+           d = p1; m = p2; y = 2000 + p3;
+        } else {
+           m = p1; y = parseInt(digits.slice(2, 6), 10);
+        }
+      } else if (digits.length === 8) {
+        d = parseInt(digits.slice(0, 2), 10);
+        m = parseInt(digits.slice(2, 4), 10);
+        y = parseInt(digits.slice(4, 8), 10);
+      }
+      if (m >= 1 && m <= 12) {
+        if (d === 0 || d > 31) d = new Date(y, m, 0).getDate();
+        finalExpiry = `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
       } else {
         finalExpiry = displayExpiry.trim();
       }
@@ -1253,7 +1329,7 @@ export const PurchaseView: React.FC = () => {
                 e.preventDefault();
               }
             }}
-            className="p-5 space-y-4 text-xs flex-1 flex flex-col justify-start overflow-y-auto min-h-0"
+            className="p-5 space-y-4 text-xs flex-1 flex flex-col justify-start overflow-auto min-h-0"
           >
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
               <div ref={supplierDropdownRef} className="relative">
@@ -1402,7 +1478,7 @@ export const PurchaseView: React.FC = () => {
             </div>
 
             {/* Add Items Row */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 dark:border-slate-800 dark:bg-slate-800/40 space-y-3 shadow-sm">
+            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 dark:border-slate-800 dark:bg-slate-800/40 space-y-3 shadow-sm relative z-40">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-900 dark:text-slate-100 block text-xs flex items-center gap-1.5">
                   <Package className="h-3.5 w-3.5 text-teal-600" />
@@ -1428,8 +1504,8 @@ export const PurchaseView: React.FC = () => {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-[minmax(0,3fr)_repeat(8,minmax(0,1fr))_auto] gap-3 items-end">
-                <div className="sm:col-span-3 relative" ref={searchDropdownRef}>
+              <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-[repeat(17,minmax(0,1fr))] gap-2 items-end min-w-[900px]">
+                <div className="sm:col-span-3 relative z-50" ref={searchDropdownRef}>
                   
 
                   {/* Primary searchable input with live matching by Name, Drug Code, or Barcode */}
@@ -1649,7 +1725,7 @@ export const PurchaseView: React.FC = () => {
                   </select>
                 </div>
 
-                <div>
+                <div className="md:col-span-2">
                                     <div className="flex items-center justify-between mb-1">
                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
                       Expiry
@@ -1671,8 +1747,8 @@ export const PurchaseView: React.FC = () => {
                         batchInputRef.current?.select();
                       }
                     }}
-                    placeholder="MM/YY"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 font-mono"
+                    placeholder="DD/MM/YYYY"
+                    className="w-[105px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 font-mono text-center"
                   />
                 </div>
 
@@ -1756,7 +1832,7 @@ export const PurchaseView: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
+                <div className="md:col-span-2">
                                     <div className="flex items-center justify-between mb-1">
                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
                       Pub Price
@@ -1780,6 +1856,7 @@ export const PurchaseView: React.FC = () => {
                       }
                     }}
                     placeholder="Pub Price"
+                    style={{ fieldSizing: "content", minWidth: "100%" } as any}
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
@@ -1812,7 +1889,7 @@ export const PurchaseView: React.FC = () => {
                   />
                 </div>
 
-                <div>
+                <div className="md:col-span-2">
                                     <div className="flex items-center justify-between mb-1">
                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
                       Cost
@@ -1833,11 +1910,12 @@ export const PurchaseView: React.FC = () => {
                       }
                     }}
                     placeholder="Cost"
+                    style={{ fieldSizing: "content", minWidth: "100%" } as any}
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
 
-                <div>
+                <div className="md:col-span-2">
                                     <div className="flex items-center justify-between mb-1">
                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
                       Total
@@ -1876,8 +1954,8 @@ export const PurchaseView: React.FC = () => {
                       }
                     }}
                     placeholder="Total"
-                    style={{ width: `${Math.max(6, formatWithCommas(itemTotalInput.split('.')[0]).length + 3)}ch` }}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 min-w-full"
+                    style={{ fieldSizing: "content", minWidth: "100%" } as any}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
               </div>

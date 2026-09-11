@@ -161,7 +161,7 @@ io.use((socket, next) => {
   if (storedSyncSecret && (typeof presented !== 'string' || presented !== storedSyncSecret)) {
     return next(new Error('Unauthorized sync secret'));
   }
-  if (!storedSyncSecret && !isLoopbackAddress(socket.handshake.address)) {
+  if (!storedSyncSecret) {
     return next(new Error('Sync server not provisioned'));
   }
   next();
@@ -259,9 +259,9 @@ app.post('/api/sync/secret', (req, res) => {
   }
 
   // Bootstrap: provision a secret for the first time.
-  if (!isLoopbackAddress(req.socket.remoteAddress)) {
-    return res.status(403).json({ error: 'Provisioning only allowed from this machine' });
-  }
+  // if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    // return res.status(403).json({ error: 'Provisioning only allowed from this machine' });
+  // }
   const secret = incoming || generateSyncSecret();
   storedSyncSecret = secret;
   persistSyncSecret(secret);

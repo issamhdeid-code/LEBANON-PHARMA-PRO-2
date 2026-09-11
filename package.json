@@ -6,7 +6,7 @@
   "main": "main.cjs",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --external:vite --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -20,6 +20,7 @@
     "@tanstack/react-virtual": "^3.14.11",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
+    "esbuild": "^0.28.2",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
@@ -41,28 +42,11 @@
     "autoprefixer": "^10.4.21",
     "electron": "^44.2.0",
     "electron-builder": "^26.15.3",
-    "esbuild": "^0.25.0",
     "puppeteer-core": "^25.10.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
     "vitest": "^3.2.7"
-  },
-  "build": {
-    "appId": "com.lebanon.pharmapro",
-    "productName": "Lebanon Pharma Pro",
-    "directories": {
-      "output": "release"
-    },
-    "win": {
-      "target": "nsis"
-    },
-    "files": [
-      "dist/**/*",
-      "main.cjs",
-      "package.json",
-      "build-data-policy.json"
-    ]
   }
 }

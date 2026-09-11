@@ -1,0 +1,16 @@
+{
+  "appId": "com.lebanon.pharmapro",
+  "productName": "Lebanon Pharma Pro",
+  "directories": {
+    "output": "release"
+  },
+  "win": {
+    "target": "nsis"
+  },
+  "files": [
+    "dist/**/*",
+    "main.cjs",
+    "package.json",
+    "build-data-policy.json"
+  ]
+}
