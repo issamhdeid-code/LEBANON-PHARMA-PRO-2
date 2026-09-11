@@ -5,7 +5,7 @@
 > Reopen opencode in the NEW path: `...\lebanon-pharma-pro`.
 
 ## Git state (last known)
-- `origin` = https://github.com/issamhdeid-code/sahred-from-google-ai
+- `origin` = https://github.com/issamhdeid-code/LEBANON-PHARMA-PRO-2.git (branch `main`)
 - Local `main` == `origin/main` == `e55e3f5` (pushed). Working tree CLEAN after commit
   `feat(perf): virtualize lists, debounce search, stabilize stock grid, integer LBP`
   (23 files: perf work, stock grid fix, LBP integer amounts, build-data-policy bump, WORKLOG + AGENTS.md).
