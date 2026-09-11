@@ -710,11 +710,9 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
       cart
         .reduce((sum, item) => {
           const rate = settings.vatRates?.[item.product.category] || 0;
-          const divisor = item.isPiece && item.product.piecesPerBox ? item.product.piecesPerBox : 1;
-          const costPerUnit = (item.product.costPriceUSD || 0) / divisor;
-          const itemCostTotal = costPerUnit * item.quantity;
-          // Calculate tax based on the item's cost price
-          return sum + (itemCostTotal * (rate / 100));
+          const preTaxTotal = item.unitPriceUSD * item.quantity * (1 - (item.discountPercent || 0) / 100);
+          // Tax is levied on the selling price, never on the purchase cost.
+          return sum + (preTaxTotal * (rate / 100));
         }, 0)
         .toFixed(2)
     );
@@ -885,12 +883,10 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         date: new Date().toISOString(),
         items: cart.map((item) => {
           const rate = settings.vatRates?.[item.product.category] || 0;
-          const divisor = item.isPiece && item.product.piecesPerBox ? item.product.piecesPerBox : 1;
-          const costPerUnit = (item.product.costPriceUSD || 0) / divisor;
-          const itemCostTotal = costPerUnit * item.quantity;
           
           const preTaxUSD = item.unitPriceUSD * item.quantity * (1 - item.discountPercent / 100);
-          const taxUSD = itemCostTotal * (rate / 100);
+          // Tax is levied on the selling price, never on the purchase cost.
+          const taxUSD = preTaxUSD * (rate / 100);
           const finalItemTotalUSD = Number((preTaxUSD + taxUSD).toFixed(2));
           
           return {
@@ -943,12 +939,10 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         date: new Date().toISOString(),
         items: cart.map((item) => {
           const rate = settings.vatRates?.[item.product.category] || 0;
-          const divisor = item.isPiece && item.product.piecesPerBox ? item.product.piecesPerBox : 1;
-          const costPerUnit = (item.product.costPriceUSD || 0) / divisor;
-          const itemCostTotal = costPerUnit * item.quantity;
           
           const preTaxUSD = item.unitPriceUSD * item.quantity * (1 - item.discountPercent / 100);
-          const taxUSD = itemCostTotal * (rate / 100);
+          // Tax is levied on the selling price, never on the purchase cost.
+          const taxUSD = preTaxUSD * (rate / 100);
           const finalItemTotalUSD = Number((preTaxUSD + taxUSD).toFixed(2));
           
           return {

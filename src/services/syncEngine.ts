@@ -1,22 +1,31 @@
 import { io, Socket } from 'socket.io-client';
 import { SyncStatus } from '../types/pharmacy';
 
+export const SYNC_PROTOCOL_VERSION = 1;
+
 type SyncPayload = {
   type: 'STOCK_MUTATION' | 'SALE_CREATED' | 'PRICE_UPDATE' | 'PRODUCT_DELETED'
       | 'SALE_UPDATED' | 'SALE_DELETED' | 'SUPPLIER_UPSERT' | 'SUPPLIER_DELETED' | 'CUSTOMER_UPSERT'
       | 'PURCHASE_CREATED' | 'PURCHASE_UPDATED' | 'PURCHASE_DELETED' | 'USER_UPSERT' | 'USER_DELETED' | 'SETTINGS_UPDATE'
+      | 'CLEAR_ALL_DATA'
       | 'USER_SESSION';
   data: any;
   senderId: string;
+  protocol?: number;
 };
+
+// Cap on queued offline mutations so a long outage can't balloon memory.
+const MAX_PENDING_PAYLOADS = 500;
 
 class SyncEngine {
   private socket: Socket | null = null;
   private mode: 'main' | 'secondary' = 'main';
   private targetIp: string = '';
+  private syncSecret: string = '';
   private deviceId: string = Math.random().toString(36).substring(7);
   private status: SyncStatus = 'offline';
-  
+  private pendingQueue: SyncPayload[] = [];
+
   private onStatusChange?: (status: SyncStatus) => void;
   private onMessage?: (payload: SyncPayload) => void;
   // Fired on the Main PC when a Secondary PC asks for a full data snapshot after connecting.
@@ -35,7 +44,8 @@ class SyncEngine {
     onMessage: (payload: SyncPayload) => void,
     onSnapshotRequested?: (requesterId: string, requesterData: any) => void,
     onSnapshotData?: (data: any) => void,
-    getLocalSnapshot?: () => any
+    getLocalSnapshot?: () => any,
+    syncSecret?: string
   ) {
     this.mode = mode;
     this.targetIp = targetIp;
@@ -44,6 +54,7 @@ class SyncEngine {
     this.onSnapshotRequested = onSnapshotRequested;
     this.onSnapshotData = onSnapshotData;
     this.getLocalSnapshot = getLocalSnapshot;
+    this.syncSecret = syncSecret || '';
 
     this.connect();
   }
@@ -79,17 +90,22 @@ class SyncEngine {
         }
       }
     } else {
-       serverUrl = this.mode === 'main' ? 'http://127.0.0.1:3000' : (this.targetIp || 'http://127.0.0.1:3000');
+      serverUrl = this.mode === 'main' ? 'http://127.0.0.1:3000' : (this.targetIp || 'http://127.0.0.1:3000');
     }
 
     try {
       this.socket = io(serverUrl, {
         reconnectionDelayMax: 10000,
-        transports: ['websocket', 'polling']
+        transports: ['websocket', 'polling'],
+        auth: (cb: (args: { syncSecret: string }) => void) => {
+          cb({ syncSecret: this.syncSecret });
+        },
       });
 
       this.socket.on('connect', () => {
         this.updateStatus('connected');
+        // Flush mutations recorded while the socket was out (offline retry queue).
+        this.flushPendingQueue();
         // Secondary PC pulls a full data snapshot from Main right after (re)connecting, sending
         // along its own local data so Main can absorb anything recorded while disconnected.
         if (this.mode === 'secondary' && this.socket) {
@@ -101,15 +117,22 @@ class SyncEngine {
         this.updateStatus('offline');
       });
       
-      this.socket.on('connect_error', () => {
+      this.socket.on('connect_error', (err) => {
+        const message = err?.message || '';
+        if (message.includes('Unauthorized') || message.includes('not provisioned')) {
+          // Bad/missing sync secret — surface as error, socket.io will keep retrying on its own.
+          console.warn('[sync] Peer rejected connection:', message);
+        }
         this.updateStatus('error');
       });
 
       this.socket.on('sync_update', (payload: SyncPayload) => {
-        if (payload.senderId !== this.deviceId) {
-           if (this.onMessage) {
-             this.onMessage(payload);
-           }
+        // Ignore messages from ourselves, from a different protocol version,
+        // or malformed payloads.
+        if (payload?.senderId === this.deviceId) return;
+        if (payload?.protocol !== undefined && payload?.protocol !== SYNC_PROTOCOL_VERSION) return;
+        if (this.onMessage) {
+          this.onMessage(payload);
         }
       });
 
@@ -136,14 +159,39 @@ class SyncEngine {
     }
   }
 
-  public broadcast(type: SyncPayload['type'], data: any) {
-    if (this.socket && this.status === 'connected') {
-      const payload: SyncPayload = {
-        type,
-        data,
-        senderId: this.deviceId
-      };
+  private buildPayload(type: SyncPayload['type'], data: any): SyncPayload {
+    return {
+      type,
+      data,
+      senderId: this.deviceId,
+      protocol: SYNC_PROTOCOL_VERSION,
+    };
+  }
+
+  private flushPendingQueue() {
+    if (this.pendingQueue.length === 0 || !this.socket) return;
+    const queued = this.pendingQueue.splice(0, this.pendingQueue.length);
+    for (const payload of queued) {
       this.socket.emit('sync_update', payload);
+    }
+  }
+
+  public broadcast(type: SyncPayload['type'], data: any) {
+    const payload = this.buildPayload(type, data);
+    if (this.socket && this.status === 'connected') {
+      this.socket.emit('sync_update', payload);
+      return;
+    }
+    // Offline: keep the mutation so it isn't permanently lost during a network blip.
+    // De-duplicate by (type + id) when possible, then push newest-last.
+    const id = data?.id ?? data?.code;
+    if (id !== undefined) {
+      const dupIndex = this.pendingQueue.findIndex((p) => p.type === type && (p.data?.id ?? p.data?.code) === id);
+      if (dupIndex !== -1) this.pendingQueue.splice(dupIndex, 1);
+    }
+    this.pendingQueue.push(payload);
+    if (this.pendingQueue.length > MAX_PENDING_PAYLOADS) {
+      this.pendingQueue.splice(0, this.pendingQueue.length - MAX_PENDING_PAYLOADS);
     }
   }
 
@@ -152,6 +200,10 @@ class SyncEngine {
     if (this.socket && this.status === 'connected') {
       this.socket.emit('snapshot_response', { targetId, data });
     }
+  }
+
+  public pendingCount(): number {
+    return this.pendingQueue.length;
   }
   
   public disconnect() {

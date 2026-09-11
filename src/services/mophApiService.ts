@@ -1,3 +1,5 @@
+import { getSyncSecret } from './syncSecret';
+
 const API_BASE = '';
 
 export interface MOPHPriceListRow {
@@ -15,10 +17,17 @@ export interface MOPHPriceListRow {
   stratum: string;
 }
 
+function protectedHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const secret = getSyncSecret();
+  if (secret) headers['X-Sync-Secret'] = secret;
+  return headers;
+}
+
 export async function fetchMOPHPriceList(): Promise<MOPHPriceListRow[]> {
   const response = await fetch(`${API_BASE}/api/moph/price-list`, {
     method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: protectedHeaders(),
   });
 
   if (!response.ok) {
@@ -65,7 +74,7 @@ export async function fetchMOPHLNDDIngredients(
 ): Promise<MOPHLNDDIngredientResult[]> {
   const response = await fetch(`${API_BASE}/api/moph/lndd-ingredients`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: protectedHeaders(),
     body: JSON.stringify({ items }),
   });
 

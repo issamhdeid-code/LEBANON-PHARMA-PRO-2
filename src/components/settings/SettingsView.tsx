@@ -15,6 +15,8 @@ import {
   CloudDownload,
   Copy,
   Check,
+  KeyRound,
+  RefreshCw,
   ExternalLink,
   AlertTriangle,
   Download,
@@ -33,6 +35,7 @@ import {
   saveGoogleDriveClientId,
   getCurrentAppOrigin,
 } from '../../services/googleDriveBackup';
+import { getSyncSecret, regenerateSyncSecret, pushSyncSecretToServer } from '../../services/syncSecret';
 
 import { DesktopWindow } from '../common/DesktopWindow';
 
@@ -43,6 +46,9 @@ export const SettingsView: React.FC = () => {
   const [showClearDataModal, setShowClearDataModal] = useState(false);
   const [mode, setMode] = useState<'main' | 'secondary'>(settings.syncMode || 'main');
   const [ip, setIp] = useState(settings.mainPcIp || '');
+  const [syncSecret, setSyncSecret] = useState<string>(() => getSyncSecret() || '');
+  const [secretCopied, setSecretCopied] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [googleClientId, setGoogleClientId] = useState(() => getGoogleDriveClientId());
   const [isBackingUp, setIsBackingUp] = useState(false);
@@ -248,6 +254,37 @@ export const SettingsView: React.FC = () => {
       // Let's force a reload to reinitialize socket (easiest way in this architecture)
       window.location.reload();
     }, 600);
+  };
+
+  const refreshSyncSecret = () => setSyncSecret(getSyncSecret() || '');
+
+  useEffect(() => {
+    if (settingsTab === 'network') refreshSyncSecret();
+  }, [settingsTab]);
+
+  const handleCopySecret = async () => {
+    try {
+      await navigator.clipboard.writeText(syncSecret);
+      setSecretCopied(true);
+      setTimeout(() => setSecretCopied(false), 1500);
+    } catch (err) {
+      addNotification('Copy Failed', 'Could not copy the sync key. Select and copy it manually.', 'system', 'error');
+    }
+  };
+
+  const handleRegenerateSecret = async () => {
+    if (!window.confirm('Regenerate the sync key? Every other PC must be set to this new key or its connection will be rejected.')) return;
+    setIsRegenerating(true);
+    try {
+      const next = regenerateSyncSecret();
+      await pushSyncSecretToServer();
+      setSyncSecret(next);
+      addNotification('Sync Key Regenerated', 'The new sync key is active. Update it on every other PC.', 'sync', 'success');
+    } catch (err) {
+      addNotification('Regenerate Failed', 'Could not update the sync key on the server.', 'sync', 'error');
+    } finally {
+      setIsRegenerating(false);
+    }
   };
 
   return (
@@ -990,7 +1027,47 @@ export const SettingsView: React.FC = () => {
               </div>
             )}
           </div>
-          
+
+          {/* Sync Security: shared key required to join the two-PC sync ring */}
+          <div className="px-6 pb-6">
+            <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <h3 className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                  <KeyRound className="h-4 w-4 text-teal-600" />
+                  Sync Security Key
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopySecret}
+                    disabled={!syncSecret}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-60"
+                  >
+                    {secretCopied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                    {secretCopied ? 'Copied' : 'Copy'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRegenerateSecret}
+                    disabled={isRegenerating}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-60"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${isRegenerating ? 'animate-spin' : ''}`} />
+                    Regenerate
+                  </button>
+                </div>
+              </div>
+              <code className="block w-full px-3 py-2 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-600 text-xs font-mono text-slate-800 dark:text-slate-100 break-all">
+                {syncSecret || 'No sync key generated yet — restart the app or regenerate a key.'}
+              </code>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                <strong className="text-slate-600 dark:text-slate-300">Every terminal must use the same key.</strong>{' '}
+                Set identical keys on the Main PC and every Secondary PC. The key is stored locally on each machine
+                and is never transmitted as part of your synced business data. Connections with a missing or different
+                key are rejected at the door.
+              </p>
+            </div>
+          </div>
           
           <div className="p-5 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-end gap-3">
              {mode === 'secondary' && (

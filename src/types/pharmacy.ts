@@ -287,5 +287,4 @@ export type RibbonTab =
   | 'scientifics'
   | 'logs'
   | 'settings'
-  | 'adjustments'
-  | 'finance';
+  | 'adjustments';

@@ -11,6 +11,7 @@ import {
   AppLogEntry
 } from '../types/pharmacy';
 import { resolveStraightforwardScientificInfo } from './scientificDataService';
+import { hashPassword } from '../utils/password';
 import { idbStorage } from './indexedDbStorage';
 
 export const DEFAULT_EXCHANGE_RATE = 89500; // 89,500 L.L. per 1 USD
@@ -55,14 +56,14 @@ export const INITIAL_USERS: User[] = [
   {
     id: 'user-admin',
     username: 'admin',
-    password: 'admin',
+    password: hashPassword('admin'),
     name: 'Dr. Tarek El-Khoury (Chief Pharmacist)',
     role: 'admin',
   },
   {
     id: 'user-staff',
     username: 'staff',
-    password: 'admin',
+    password: hashPassword('admin'),
     name: 'Maya Zein (Pharmacy Technician)',
     role: 'staff',
   },
@@ -1142,6 +1143,7 @@ function compactProductsForStorage(products: Product[]): string {
 
 // In-memory cache for ultra-fast and fail-safe product access
 let memoryProducts: Product[] | null = null;
+let storageWarningMessage: string | null = null;
 
 export class OfflineStorage {
   static resetUsersForFirstSetup(): void {
@@ -1251,21 +1253,32 @@ export class OfflineStorage {
       const fullJson = JSON.stringify(products);
       const success = safeSetItem(STORAGE_KEYS.PRODUCTS, fullJson);
       
-      if (!success) {
-        // Full JSON exceeded 5MB quota: store compacted version (omitting auto-generatable scientific text)
-        const compactJson = compactProductsForStorage(products);
-        const compactSuccess = safeSetItem(STORAGE_KEYS.PRODUCTS, compactJson);
-        
-        if (!compactSuccess) {
-          // If still exceeding, keep memory cache & IndexedDB as primary, prune to top 1500 items in localStorage
-          const topSubset = compactProductsForStorage(products.slice(0, 1500));
-          safeSetItem(STORAGE_KEYS.PRODUCTS, topSubset);
-          console.warn('Full inventory stored in IndexedDB and memory; localStorage compacted.');
-        }
+      if (success) {
+        storageWarningMessage = null;
+        return;
+      }
+
+      // Full JSON exceeded 5MB quota: store compacted version (omitting auto-generatable scientific text)
+      const compactJson = compactProductsForStorage(products);
+      const compactSuccess = safeSetItem(STORAGE_KEYS.PRODUCTS, compactJson);
+      
+      if (compactSuccess) {
+        storageWarningMessage = null;
+      } else {
+        // If still exceeding, keep memory cache & IndexedDB as primary, prune to top 1500 items in localStorage.
+        // This is NOT data loss: the full catalog stays in memory + IndexedDB and only this boot cache shrinks.
+        const topSubset = compactProductsForStorage(products.slice(0, 1500));
+        safeSetItem(STORAGE_KEYS.PRODUCTS, topSubset);
+        storageWarningMessage = `Catalog exceeds the 5MB browser cache. The complete inventory is kept in the offline database; only the local quick-load cache was trimmed.`;
+        console.warn('Full inventory stored in IndexedDB and memory; localStorage compacted.');
       }
     } catch (e) {
       console.warn('saveProducts handled storage error safely:', e);
     }
+  }
+
+  static getStorageWarning(): string | null {
+    return storageWarningMessage;
   }
 
   static getSuppliers(): Supplier[] {

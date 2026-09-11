@@ -1,4 +1,5 @@
 import { Product, ScientificDrugInfo } from '../types/pharmacy';
+import { getSyncSecret } from './syncSecret';
 
 /**
  * Normalizes an active ingredient or molecule string by stripping salts, esters,
@@ -1928,11 +1929,17 @@ export async function searchOnlineScientificData(
 
   // 1. PRIORITY ONE: Online AI Clinical Intelligence (Gemini Server API)
   try {
+    const aiController = new AbortController();
+    const aiTimeout = setTimeout(() => aiController.abort(), 45_000);
+    let aiHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const syncSecret = getSyncSecret();
+    if (syncSecret) aiHeaders['X-Sync-Secret'] = syncSecret;
     const aiRes = await fetch('/api/scientifics/enrich', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: aiHeaders,
+      signal: aiController.signal,
       body: JSON.stringify({
         drugName: drugName || '',
         ingredients: ingredients || primaryMolecule,
@@ -1941,6 +1948,7 @@ export async function searchOnlineScientificData(
         presentation: metadata?.presentation || '',
       }),
     });
+    clearTimeout(aiTimeout);
 
     if (aiRes.ok) {
       const aiData = await aiRes.json();

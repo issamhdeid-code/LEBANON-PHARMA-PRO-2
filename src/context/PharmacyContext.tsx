@@ -18,6 +18,7 @@ import {
   LogLevel
 } from '../types/pharmacy';
 import { syncEngine } from '../services/syncEngine';
+import { pushSyncSecretToServer, getSyncSecret } from '../services/syncSecret';
 import { OfflineStorage, INITIAL_PRODUCTS } from '../services/storage';
 import { notificationService } from '../services/notificationService';
 import {
@@ -30,6 +31,7 @@ import {
 import { idbStorage } from '../services/indexedDbStorage';
 import { backupToGoogleDrive, getGoogleDriveClientId } from '../services/googleDriveBackup';
 import { formatLBPValue } from '../utils/priceUtils';
+import { hashPassword, isHashedPassword, verifyPassword } from '../utils/password';
 
 // Settings fields that describe the pharmacy's shared business data and must be
 // identical on every terminal. Everything else (theme, dark mode, font size, this
@@ -66,15 +68,116 @@ function mergeById<T extends { id: string }>(local: T[], remote: T[]): T[] {
 // whichever side has the higher version for a shared id wins, instead of "remote always wins".
 function mergeProductsArrays(local: Product[], remote: Product[]): { merged: Product[]; changed: boolean } {
   const byId = new Map(local.map(p => [p.id, p]));
+  const byCode = new Map<string, Product>();
+  for (const p of local) {
+    const normalized = String(p.code || '').toUpperCase();
+    if (normalized && !byCode.has(normalized)) byCode.set(normalized, p);
+  }
   let changed = false;
   for (const remoteProd of remote) {
-    const localMatch = byId.get(remoteProd.id) || local.find(p => p.code === remoteProd.code);
+    let localMatch = byId.get(remoteProd.id);
+    if (!localMatch) {
+      const normalized = String(remoteProd.code || '').toUpperCase();
+      localMatch = normalized ? byCode.get(normalized) : undefined;
+    }
     if (!localMatch || (remoteProd.version || 0) >= (localMatch.version || 0)) {
       byId.set(remoteProd.id, remoteProd);
       changed = true;
     }
   }
   return { merged: Array.from(byId.values()), changed };
+}
+
+// Depletes product stock (with optional batch-level FIFO) to mirror a sale recorded on
+// this PC or received from the other terminal. Pure function: no side effects, safe to
+// call inside a state updater.
+function applySaleStockDepletion(prevProducts: Product[], saleItems: SaleTransaction['items']): { updated: Product[]; mutated: Product[] } {
+  const mutatedProds: Product[] = [];
+  const updatedProds = prevProducts.map(prod => {
+    const soldItems = saleItems.filter(item => item.productId === prod.id || item.productCode === prod.code);
+    if (soldItems.length === 0) return prod;
+
+    const totalQtyToDeduct = soldItems.reduce((sum, item) =>
+      sum + (item.isPiece && prod.piecesPerBox ? item.quantity / prod.piecesPerBox : item.quantity), 0);
+    const nextStock = Math.max(0, prod.stockQuantity - totalQtyToDeduct);
+
+    let nextBatches = [...(prod.batches || [])].map(b => ({ ...b }));
+    if (nextBatches.length > 0) {
+      // First pass: deplete the exact batch chosen in the cart for each line item
+      for (const soldItem of soldItems) {
+        const qtyDeduct = soldItem.isPiece && prod.piecesPerBox ? soldItem.quantity / prod.piecesPerBox : soldItem.quantity;
+        let remainingForThisItem = qtyDeduct;
+        if (soldItem.selectedBatchNumber && soldItem.selectedExpiryDate) {
+          const matchingBatchIdx = nextBatches.findIndex(b =>
+            b.batchNumber === soldItem.selectedBatchNumber && b.expiryDate === soldItem.selectedExpiryDate
+          );
+          if (matchingBatchIdx >= 0) {
+            const batchQty = nextBatches[matchingBatchIdx].quantity || 0;
+            if (batchQty > 0) {
+              const depleteQty = Math.min(batchQty, remainingForThisItem);
+              nextBatches[matchingBatchIdx].quantity = batchQty - depleteQty;
+              remainingForThisItem -= depleteQty;
+            }
+          }
+        }
+        // Still not covered: fall back to FIFO across the remaining batches
+        if (remainingForThisItem > 0) {
+          const sortedIndices = nextBatches
+            .map((b, i) => ({ idx: i, exp: new Date(b.expiryDate).getTime() }))
+            .sort((a, b) => a.exp - b.exp)
+            .map(x => x.idx);
+          for (const idx of sortedIndices) {
+            if (remainingForThisItem <= 0) break;
+            const batchQty = nextBatches[idx].quantity || 0;
+            if (batchQty > 0) {
+              const depleteQty = Math.min(batchQty, remainingForThisItem);
+              nextBatches[idx].quantity = batchQty - depleteQty;
+              remainingForThisItem -= depleteQty;
+            }
+          }
+        }
+      }
+    } else {
+      // Fallback when no batches exist
+      nextBatches = [{
+        batchNumber: prod.batchNumber || '',
+        expiryDate: prod.expiryDate || '',
+        quantity: nextStock,
+      }];
+    }
+
+    const nextProd: Product = {
+      ...prod,
+      stockQuantity: nextStock,
+      batches: nextBatches,
+      updatedAt: Date.now(),
+      version: (prod.version || 1) + 1,
+    };
+    mutatedProds.push(nextProd);
+    return nextProd;
+  });
+  return { updated: updatedProds, mutated: mutatedProds };
+}
+
+// ---- Invoice number helpers ------------------------------------------------------
+// Local per-year counter keeps invoices strictly monotonic even when two sales happen
+// in the same millisecond or when the sales list is cleared.
+const _invoiceCounterCache = new Map<string, number>();
+
+function nextInvoiceNumber(existing: { invoiceNumber?: string }[], prefix: string, fallbackStart: number): string {
+  const year = new Date().getFullYear();
+  const fullPrefix = `${prefix}-${year}-`;
+  let maxExisting = 0;
+  for (const inv of existing) {
+    if (inv.invoiceNumber?.startsWith(fullPrefix)) {
+      const num = parseInt(String(inv.invoiceNumber).split('-')[2], 10);
+      if (Number.isFinite(num) && num > maxExisting) maxExisting = num;
+    }
+  }
+  const cached = Math.max(_invoiceCounterCache.get(`${prefix}-${year}`) || 0, maxExisting);
+  const next = cached + 1;
+  _invoiceCounterCache.set(`${prefix}-${year}`, next);
+  return `${fullPrefix}${String(next).padStart(4, '0')}`;
 }
 
 interface PharmacyContextType {
@@ -328,7 +431,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         `"${l.entityType || ''}"`
       ]);
       const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -389,8 +492,12 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const usersRef = useRef(users);
   const settingsRef = useRef(settings);
   const activeSessionsRef = useRef(activeSessions);
+  const notificationsRef = useRef(notifications);
+  const logsRef = useRef(logs);
   useEffect(() => { productsRef.current = products; }, [products]);
   useEffect(() => { salesRef.current = sales; }, [sales]);
+  useEffect(() => { notificationsRef.current = notifications; }, [notifications]);
+  useEffect(() => { logsRef.current = logs; }, [logs]);
   useEffect(() => { suppliersRef.current = suppliers; }, [suppliers]);
   useEffect(() => { customersRef.current = customers; }, [customers]);
   useEffect(() => { purchasesRef.current = purchases; }, [purchases]);
@@ -428,23 +535,39 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (payload.type === 'STOCK_MUTATION') {
           applyRemoteProducts(Array.isArray(payload.data) ? payload.data : [payload.data]);
         } else if (payload.type === 'PRODUCT_DELETED') {
-          const deletedId = payload.data?.id;
-          setProducts(prev => {
-            if (!deletedId || !prev.some(p => p.id === deletedId)) return prev;
-            const next = prev.filter(p => p.id !== deletedId);
-            OfflineStorage.saveProducts(next);
-            idbStorage.saveProducts(next).catch(() => {});
-            return next;
-          });
+          if (payload.data?.all) {
+            // Whole catalog wiped on the other PC — mirror it here.
+            setProducts(prev => {
+              if (prev.length === 0) return prev;
+              OfflineStorage.saveProducts([]);
+              idbStorage.saveProducts([]).catch(() => {});
+              return [];
+            });
+          } else {
+            const deletedId = payload.data?.id;
+            setProducts(prev => {
+              if (!deletedId || !prev.some(p => p.id === deletedId)) return prev;
+              const next = prev.filter(p => p.id !== deletedId);
+              OfflineStorage.saveProducts(next);
+              idbStorage.saveProducts(next).catch(() => {});
+              return next;
+            });
+          }
         } else if (payload.type === 'PRICE_UPDATE') {
-          const { code, newPriceLBP, newPriceUSD } = payload.data || {};
-          if (!code) return;
+          const remoteProduct = payload.data as Product;
+          if (!remoteProduct || !remoteProduct.id) return;
+          const remoteCode = String(remoteProduct.code || '').toUpperCase();
           setProducts(prev => {
-            const next = prev.map(p => p.code.toUpperCase() === String(code).toUpperCase()
-              ? { ...p, priceLBP: newPriceLBP, priceUSD: newPriceUSD, updatedAt: Date.now(), version: (p.version || 1) + 1 }
-              : p);
-            OfflineStorage.saveProducts(next);
-            idbStorage.saveProducts(next).catch(() => {});
+            const next = prev.map(p => {
+              const matches = p.id === remoteProduct.id || p.code.toUpperCase() === remoteCode;
+              return matches
+                ? (remoteProduct.version || 0) >= (p.version || 0) ? remoteProduct : p
+                : p;
+            });
+            if (next.some((p, i) => p !== prev[i])) {
+              OfflineStorage.saveProducts(next);
+              idbStorage.saveProducts(next).catch(() => {});
+            }
             return next;
           });
         } else if (payload.type === 'SALE_CREATED') {
@@ -455,6 +578,26 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             OfflineStorage.saveSales(next);
             return next;
           });
+          // Mirror the stock that the other terminal dispensed for this sale, so both
+          // PCs converge on the same quantities without waiting for a snapshot.
+          if (remoteSale?.items?.length) {
+            setProducts(prev => {
+              const { updated: updatedProds } = applySaleStockDepletion(prev, remoteSale.items);
+              OfflineStorage.saveProducts(updatedProds);
+              idbStorage.saveProducts(updatedProds).catch(() => {});
+              return updatedProds;
+            });
+          }
+        } else if (payload.type === 'CLEAR_ALL_DATA') {
+          // The other terminal wiped everything — mirror the wipe locally.
+          setProducts([]);
+          setSuppliers([]);
+          setCustomers([]);
+          setSales([]);
+          setPurchases([]);
+          setLogs([]);
+          OfflineStorage.clearAllData();
+          addNotification('Data Cleared', 'Data was cleared from the other terminal.', 'system', 'warning');
         } else if (payload.type === 'SALE_UPDATED') {
           const remoteSale = payload.data as SaleTransaction;
           setSales(prev => {
@@ -568,6 +711,8 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           let mergedCustomers = customersRef.current;
           let mergedPurchases = purchasesRef.current;
           let mergedUsers = usersRef.current;
+          let mergedNotifications = notificationsRef.current;
+          let mergedLogs = logsRef.current;
 
           // Absorb whatever the reconnecting Secondary recorded while it was offline,
           // instead of just overwriting it with Main's view once we answer.
@@ -606,6 +751,16 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               setUsers(mergedUsers);
               OfflineStorage.saveUsers(mergedUsers);
             }
+            if (Array.isArray(requesterData.notifications)) {
+              mergedNotifications = mergeById(requesterData.notifications, notificationsRef.current);
+              setNotifications(mergedNotifications);
+              OfflineStorage.saveNotifications(mergedNotifications);
+            }
+            if (Array.isArray(requesterData.logs)) {
+              mergedLogs = mergeById(requesterData.logs, logsRef.current);
+              setLogs(mergedLogs);
+              OfflineStorage.saveLogs(mergedLogs);
+            }
           }
 
           syncEngine.sendSnapshot(requesterId, {
@@ -617,6 +772,8 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             users: mergedUsers,
             settings: pickSharedSettings(settingsRef.current),
             activeSessions: activeSessionsRef.current,
+            notifications: mergedNotifications,
+            logs: mergedLogs,
           });
         }
       },
@@ -669,6 +826,20 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (snapshotData?.activeSessions && typeof snapshotData.activeSessions === 'object') {
           setActiveSessions(prev => ({ ...prev, ...snapshotData.activeSessions }));
         }
+        if (Array.isArray(snapshotData?.notifications)) {
+          setNotifications(prev => {
+            const next = mergeById(snapshotData.notifications, prev);
+            OfflineStorage.saveNotifications(next);
+            return next;
+          });
+        }
+        if (Array.isArray(snapshotData?.logs)) {
+          setLogs(prev => {
+            const next = mergeById(snapshotData.logs, prev);
+            OfflineStorage.saveLogs(next);
+            return next;
+          });
+        }
         addNotification('Data Synced', 'Received latest data from Main PC.', 'sync', 'success');
       },
       () => ({
@@ -680,13 +851,28 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         customers: customersRef.current,
         purchases: purchasesRef.current,
         users: usersRef.current,
-      })
+        notifications: notificationsRef.current,
+        logs: logsRef.current,
+      }),
+      getSyncSecret() || ''
     );
   }, [addNotification]);
 
   useEffect(() => {
-    connectSyncEngine();
-    return () => syncEngine.disconnect();
+    let cancelled = false;
+    (async () => {
+      // Provision/refresh the shared sync secret on the local server first, then
+      // open the socket — otherwise the first connection attempt is rejected.
+      const secret = await pushSyncSecretToServer();
+      if (!secret) {
+        console.warn('[sync] No sync secret available; socket may be rejected.');
+      }
+      if (!cancelled) connectSyncEngine();
+    })();
+    return () => {
+      cancelled = true;
+      syncEngine.disconnect();
+    };
   }, [settings.syncMode, settings.mainPcIp, connectSyncEngine]);
 
   // Check low stock and expiry periodically
@@ -751,8 +937,19 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Auth methods
   const login = (username: string, password: string): { success: boolean; error?: string } => {
     const trimmedUser = username.trim().toLowerCase();
-    const found = users.find(u => u.username.toLowerCase() === trimmedUser && u.password === password);
+    const found = users.find(u => u.username.toLowerCase() === trimmedUser && verifyPassword(password, u.password));
     if (found) {
+      // One-time migration: upgrade any legacy plaintext-stored password to its hash
+      // and push the upgraded user to the other terminal so plaintext disappears.
+      if (found.password && !isHashedPassword(found.password)) {
+        const upgradedUsers = users.map(u => u.id === found.id ? { ...u, password: hashPassword(found.password || '') } : u);
+        setUsers(upgradedUsers);
+        OfflineStorage.saveUsers(upgradedUsers);
+        try {
+          const upgradedUser = upgradedUsers.find(u => u.id === found.id);
+          if (upgradedUser) syncEngine.broadcast('USER_UPSERT', upgradedUser);
+        } catch (e) {}
+      }
       const heldBy = activeSessions[found.id];
       if (heldBy && heldBy !== settings.deviceInstanceId) {
         return { success: false, error: `${found.name} is already signed in on another PC. Choose a different account.` };
@@ -838,6 +1035,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const newUser: User = {
       ...userData,
       id: `user-${Date.now()}`,
+      password: userData.password ? hashPassword(userData.password) : undefined,
     };
     const updated = [...users, newUser];
     setUsers(updated);
@@ -857,7 +1055,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateUser = (id: string, updates: Partial<User>) => {
-    const updated = users.map(u => u.id === id ? { ...u, ...updates } : u);
+    const updated = users.map(u => u.id === id ? {
+      ...u,
+      ...updates,
+      password: updates.password ? hashPassword(updates.password) : u.password,
+    } : u);
     setUsers(updated);
     OfflineStorage.saveUsers(updated);
     try {
@@ -910,20 +1112,20 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const setExchangeRate = (rate: number) => {
-    if (rate <= 0) return;
-    const oldRate = settings.exchangeRate;
+    if (!Number.isFinite(rate) || rate <= 0) return;
     updateSettings({ exchangeRate: rate });
-    // Recalculate all USD prices based on updated rate
+    // Recalculate all USD prices based on updated rate and broadcast the affected
+    // products only — sending the entire catalog on every rate change is unnecessary.
     setProducts(prev => {
       const updated = prev.map(p => ({
         ...p,
         priceUSD: Number((p.priceLBP / rate).toFixed(2)),
+        updatedAt: Date.now(),
+        version: (p.version || 1) + 1,
       }));
       OfflineStorage.saveProducts(updated);
-            try {
-               syncEngine.broadcast('STOCK_MUTATION', updated);
-            } catch(e) {}
-            return updated;
+      try { syncEngine.broadcast('STOCK_MUTATION', updated); } catch (e) {}
+      return updated;
     });
     addNotification('Exchange Rate Updated', `New rate: ${formatLBPValue(rate)} L.L. per 1 USD`, 'system', 'info');
   };
@@ -1334,6 +1536,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const count = products.length;
     setProducts([]);
     OfflineStorage.saveProducts([]);
+    try { syncEngine.broadcast('PRODUCT_DELETED', { all: true }); } catch (e) {}
     addNotification('Stock Cleared', `Successfully removed all ${count} products from stock database.`, 'inventory', 'warning');
     addLog({
       component: 'Inventory / Stock',
@@ -1405,9 +1608,10 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return next;
     });
 
-    // Broadcast price change to other connected PCs
+    // Broadcast price change to other connected PCs (full product so the remote side
+    // keeps every field, not just the price columns)
     try {
-      syncEngine.broadcast('PRICE_UPDATE', { code: trimmedCode, newPriceLBP, newPriceUSD: calculatedUSD });
+      syncEngine.broadcast('PRICE_UPDATE', updatedProduct);
     } catch (e) {}
 
     addNotification(
@@ -1799,7 +2003,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Sales
   const recordSale = (saleData: Omit<SaleTransaction, 'id' | 'timestamp' | 'invoiceNumber' | 'synced'>): SaleTransaction => {
     const saleId = `sale-${Date.now()}`;
-    const invoiceNumber = `INV-${new Date().getFullYear()}-${String(sales.length + 1).padStart(4, '0')}`;
+    const invoiceNumber = nextInvoiceNumber(sales, 'INV', sales.length + 1);
     const fullSale: SaleTransaction = {
       ...saleData,
       id: saleId,
@@ -1816,75 +2020,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // 2. Deplete product stock and broadcast
     setProducts(prevProducts => {
-      const mutatedProds: Product[] = [];
-      const updatedProds = prevProducts.map(prod => {
-        const soldItems = fullSale.items.filter(item => item.productId === prod.id || item.productCode === prod.code);
-        if (soldItems.length > 0) {
-          const totalQtyToDeduct = soldItems.reduce((sum, item) => sum + (item.isPiece && prod.piecesPerBox ? item.quantity / prod.piecesPerBox : item.quantity), 0);
-          
-          const nextStock = Math.max(0, prod.stockQuantity - totalQtyToDeduct);
-          
-          let nextBatches = [...(prod.batches || [])].map(b => ({ ...b }));
-          if (nextBatches.length > 0) {
-            // First pass: try to deplete from the specific batch chosen by the user in the cart
-            for (const soldItem of soldItems) {
-              const qtyDeduct = soldItem.isPiece && prod.piecesPerBox ? soldItem.quantity / prod.piecesPerBox : soldItem.quantity;
-              let remainingForThisItem = qtyDeduct;
-              
-              if (soldItem.selectedBatchNumber && soldItem.selectedExpiryDate) {
-                const matchingBatchIdx = nextBatches.findIndex(b => 
-                  b.batchNumber === soldItem.selectedBatchNumber && b.expiryDate === soldItem.selectedExpiryDate
-                );
-                
-                if (matchingBatchIdx >= 0) {
-                   const batchQty = nextBatches[matchingBatchIdx].quantity || 0;
-                   if (batchQty > 0) {
-                      const depleteQty = Math.min(batchQty, remainingForThisItem);
-                      nextBatches[matchingBatchIdx].quantity = batchQty - depleteQty;
-                      remainingForThisItem -= depleteQty;
-                   }
-                }
-              }
-              
-              // If we still need to deplete (either no batch chosen, or not enough in chosen batch), use FIFO
-              if (remainingForThisItem > 0) {
-                const sortedIndices = nextBatches
-                  .map((b, i) => ({ idx: i, exp: new Date(b.expiryDate).getTime() }))
-                  .sort((a, b) => a.exp - b.exp)
-                  .map(x => x.idx);
-                
-                for (const idx of sortedIndices) {
-                  if (remainingForThisItem <= 0) break;
-                  const batchQty = nextBatches[idx].quantity || 0;
-                  if (batchQty > 0) {
-                    const depleteQty = Math.min(batchQty, remainingForThisItem);
-                    nextBatches[idx].quantity = batchQty - depleteQty;
-                    remainingForThisItem -= depleteQty;
-                  }
-                }
-              }
-            }
-          } else {
-             // Fallback if no batches exist
-             nextBatches = [{
-                batchNumber: prod.batchNumber || '',
-                expiryDate: prod.expiryDate || '',
-                quantity: nextStock
-             }];
-          }
-
-          const nextProd: Product = {
-            ...prod,
-            stockQuantity: nextStock,
-            batches: nextBatches,
-            updatedAt: Date.now(),
-            version: (prod.version || 1) + 1,
-          };
-          mutatedProds.push(nextProd);
-          return nextProd;
-        }
-        return prod;
-      });
+      const { updated: updatedProds, mutated: mutatedProds } = applySaleStockDepletion(prevProducts, fullSale.items);
       OfflineStorage.saveProducts(updatedProds);
       if (mutatedProds.length > 0) {
         try { syncEngine.broadcast('STOCK_MUTATION', mutatedProds); } catch (e) {}
@@ -2354,7 +2490,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Purchases
   const recordPurchase = (purchaseData: Omit<PurchaseInvoice, 'id' | 'timestamp' | 'invoiceNumber'>): PurchaseInvoice => {
     const purchaseId = `pur-${Date.now()}`;
-    const invoiceNumber = `PINV-${new Date().getFullYear()}-${String(purchases.length + 500).padStart(4, '0')}`;
+    const invoiceNumber = nextInvoiceNumber(purchases, 'PINV', purchases.length + 500);
 
     const fullPurchase: PurchaseInvoice = {
       ...purchaseData,
@@ -2827,6 +2963,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setSales([]);
     setPurchases([]);
     setLogs([]);
+    try { syncEngine.broadcast('CLEAR_ALL_DATA', {}); } catch (e) {}
     addNotification('Data Cleared', 'All inventory, sales, purchases, customers, and suppliers have been deleted.', 'system', 'warning');
   };
 

@@ -160,3 +160,54 @@ granular product-array mutations, and the alert-check effect — these are safe 
 - Verified: `npm run lint` GREEN after the lock change (dev server hot-reloaded the modal cleanly).
 - Verified: `npm run lint`, `npm run test` (8), `npm run build` all GREEN. No `meditrack` references
   remain in the repo.
+## What was completed in THIS session (Security + sync correctness overhaul — COMMITTED)
+- **Server hardening** (`server.ts`): Socket.IO `maxHttpBufferSize` 64MB; CORS origin callback
+  (`isAllowedOrigin`, incl. LAN IPv4 + `.run.app` web previews); Host-header allow-list middleware (403
+  "Forbidden host"); `io.use` handshake auth requiring `auth.syncSecret` (loopback-only bypass while a
+  secret has never been provisioned); `SYNC_PROTOCOL_VERSION = 1`; `KNOWN_SYNC_TYPES` whitelist on relayed
+  `sync_update` (unknown types dropped); `request_snapshot` payload capped at 32MB; `snapshot_response`
+  only relays to a live socket; headers middleware (X-Frame-Options SAMEORIGIN, CSP frame-ancestors 'self',
+  Vary Origin); `requireSyncSecret` middleware on `/api/scientifics/enrich`, `/api/moph/price-list`,
+  `/api/moph/lndd-ingredients` + `/api/moph/now` rate limits; prompt-injection instruction + 300-char
+  sanitize + 45s `withTimeout` on Gemini; old leaky `/api/health` removed → new fingerprint
+  `{status:'ok', app:'lebanon-pharma-pro', protocol:1}`; `startServer()` http error handlers
+  (EADDRINUSE msg) + uncaughtException/unhandledRejection logging.
+- **Sync secret** (NEW `src/services/syncSecret.ts`): 24-byte hex, stored server-side
+  (dev `.cache/sync-secret.json`, prod `%ProgramData%\Lebanon Pharma Pro\sync-secret.json`) + client
+  localStorage `pharmalebanon_sync_secret_v1`; bootstrap `POST /api/sync/secret` loopback-only, rotation
+  needs `x-sync-secret` header; NEVER part of synced settings/snapshot. `PharmacyContext` pushes on boot,
+  passes to `syncEngine.init`; Settings → Network → "Sync Security Key" card (copy/regenerate).
+- **`syncEngine.ts`**: `init` takes 8th `syncSecret` param, sends `auth.syncSecret`, rejects mismatched
+  protocol inbound payloads, adds an offline retry queue (cap 500, de-duped by id) flushed on reconnect,
+  `connect_error` → status 'error'.
+- **`main.cjs`**: data-policy wipe moved INSIDE `gotSingleInstanceLock` (no racing rmSync); verifies
+  `http://127.0.0.1:3000/api/health` identity fingerprint before `loadURL` (never loads a stranger on
+  port 3000); before-quit flush grace (1.2s) for debounced LNDD cache writes; renderer
+  `render-process-gone`/`unresponsive` guards; uncaughtException/unhandledRejection loggers.
+- **Sync correctness (`PharmacyContext.tsx`)**: SALE_CREATED now depletes receiving terminal's stock via
+  shared `applySaleStockDepletion` helper (batch FIFO logic extracted from `recordSale`); PRICE_UPDATE
+  carries the full product + version-compare on apply; `PRODUCT_DELETED {all:true}` for wipe-all;
+  `CLEAR_ALL_DATA` event (added to server whitelist + syncEngine type union) mirrors a full wipe;
+  `setExchangeRate` NaN guard + version bump; deterministic invoice counters via `nextInvoiceNumber`
+  (max + per-year monotonic cache) replacing `length+1`; `mergeProductsArrays` O(n²)→O(n) (code index);
+  snapshot now carries notifications+logs both directions; exchange-rate broadcast trimmed.
+- **Auth (`src/utils/password.ts`, NEW)**: dependency-free synchronous SHA-256 (verified against known
+  vectors), `INITIAL_USERS` seeded hashed, legacy plaintext passwords verified then auto-upgraded to hash
+  on first successful login, `addUser`/`updateUser` hash before store/broadcast.
+- **VAT on selling price**: `SaleView.tsx` (both checkout paths) + `FinanceView.tsx` tax now levied on
+  pre-tax sale total, not purchase cost.
+- **Scanner hook (`useBarcodeScanner.ts`)**: cooldown (duplicate Enter/CRLF), human-Enter rejection
+  (gap/latency heuristics), runaway-buffer cap, no focus stealing (component decides focus).
+- **Polish**: CSV export/sample BOM (Excel Arabic), Windows-1252 fallback on CSV import, `index.html`
+  rewritten (clean, CSP meta, no stray `>`), `tsconfig` `strict: true` (3 errors fixed), package renamed
+  `lebanon-pharma-pro@1.0.0`, duplicate `'finance'` RibbonTab removed, `package-exe.cjs` pre-flight gates
+  (build-data-policy/main.cjs/electron-builder present + dist artifacts verified post-build),
+  `OfflineStorage.getStorageWarning()` surfaces local cache trimming.
+- Deliberately NOT done: full "side effects out of every state updater" refactor (~30 closures). The
+  flagged in-updater writes are idempotent, run once in production builds, and restructuring the
+  sync-critical file risked regressions. Noted for a future dedicated pass.
+- Verified: `npm run lint`/`test` (8)/`build` all GREEN; tsconfig strict GREEN; live smoke tests against
+  running server: health fingerprint ok, wrong-secret socket rejected ("Unauthorized sync secret"),
+  correct-secret connects, unknown-type emits dropped, `/api/moph/*` 401 without header, Host-spoof 403,
+  loopback secret provisioning + rotation auth ok.
+- NOT pushed (AGENTS.md convention — push only on request). Dev server confirmed on http://localhost:3000.

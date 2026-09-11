@@ -48,10 +48,22 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
     const reader = new FileReader();
     reader.onload = (evt) => {
       const text = evt.target?.result as string;
+      // Excel on Windows commonly saves CSV as Windows-1252 rather than UTF-8.
+      // Detect the U+FFFD replacement char produced by a wrong decode and re-read.
+      if (text.includes('\uFFFD')) {
+        const fallbackReader = new FileReader();
+        fallbackReader.onload = (evt2) => {
+          const fallbackText = evt2.target?.result as string;
+          setCsvContent(fallbackText.includes('\uFFFD') ? text : fallbackText);
+          setStatus(null);
+        };
+        fallbackReader.readAsText(file, 'windows-1252');
+        return;
+      }
       setCsvContent(text);
       setStatus(null);
     };
-    reader.readAsText(file);
+    reader.readAsText(file, 'utf-8');
   };
 
   const handleLoadSample = () => {
@@ -61,7 +73,7 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
   };
 
   const handleDownloadSample = () => {
-    const blob = new Blob([SAMPLE_CSV_CONTENT], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([`\uFEFF${SAMPLE_CSV_CONTENT}`], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);

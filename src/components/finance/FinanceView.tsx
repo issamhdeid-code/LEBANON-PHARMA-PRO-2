@@ -27,11 +27,10 @@ export const FinanceView: React.FC = () => {
         totalCostUSD += cost;
         totalProfitUSD += (item.totalUSD - cost);
         
-        // Calculate VAT if applicable
+        // Calculate VAT if applicable — on the sale total (pre-VAT), not the cost.
         const rate = vatRates[item.category] || 0;
         if (rate > 0) {
-          // VAT amount is calculated based on the item cost, not retail price
-          const vatAmount = cost * (rate / 100);
+          const vatAmount = item.totalUSD * (rate / 100);
           totalVATCollectedUSD += vatAmount;
         }
       });

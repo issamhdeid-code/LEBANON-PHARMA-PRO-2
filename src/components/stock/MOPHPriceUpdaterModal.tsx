@@ -437,7 +437,7 @@ export const MOPHPriceUpdaterModal: React.FC<MOPHPriceUpdaterModalProps> = ({ on
         item.priceLBP,
         item.agent,
         margin,
-      ].map(escapeCsv).join(','));
+      ].map(v => escapeCsv(String(v))).join(','));
     }
 
     const res = importProductsFromCSV(csvLines.join('\n'));

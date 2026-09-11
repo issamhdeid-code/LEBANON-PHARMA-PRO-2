@@ -2,20 +2,10 @@ const { app, BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const http = require('http');
 
 const dataPolicyPath = path.join(__dirname, 'build-data-policy.json');
 const dataDir = path.join(process.env.ProgramData || 'C:\\ProgramData', 'Lebanon Pharma Pro');
-try {
-  const dataPolicy = JSON.parse(fs.readFileSync(dataPolicyPath, 'utf8'));
-  const policyMarker = path.join(dataDir, `.build-policy-${dataPolicy.buildId}`);
-  if (dataPolicy.mode === 'fresh' && !fs.existsSync(policyMarker)) {
-    fs.rmSync(dataDir, { recursive: true, force: true });
-    fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(policyMarker, 'applied');
-  }
-} catch (err) {
-  console.error('Could not apply packaged data policy:', err);
-}
 
 // Store app data (settings/cache used by the renderer's localStorage & IndexedDB) in a
 // stable, install-independent location instead of %APPDATA%\react-example. ProgramData is
@@ -35,6 +25,22 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
+  // Apply the packaged data policy ONLY from the single surviving instance. Running the
+  // wipe in every launching process (as before) could race two rmSync calls. The "fresh"
+  // build data policy wipes the whole ProgramData data folder when the buildId changes —
+  // no backup, so upgrades must bump the buildId deliberately.
+  try {
+    const dataPolicy = JSON.parse(fs.readFileSync(dataPolicyPath, 'utf8'));
+    const policyMarker = path.join(dataDir, `.build-policy-${dataPolicy.buildId}`);
+    if (dataPolicy.mode === 'fresh' && !fs.existsSync(policyMarker)) {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(policyMarker, 'applied');
+    }
+  } catch (err) {
+    console.error('Could not apply packaged data policy:', err);
+  }
+
   app.on('second-instance', () => {
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -42,6 +48,27 @@ if (!gotSingleInstanceLock) {
     mainWindow.focus();
   });
 }
+
+// A crashed/hung renderer must not leave a frozen blank window on duty.
+function wireRendererCrashGuard(win) {
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.error('Renderer process gone:', details?.reason);
+    try { win.reload(); } catch (err) { console.error('Reload failed:', err); }
+  });
+  win.webContents.on('unresponsive', () => {
+    console.error('Renderer became unresponsive.');
+  });
+}
+
+// Bump window-all-closed and before-quit so the server's debounced cache writes
+// (e.g. the LNDD ingredients JSON, 1s debounce) get a chance to flush before exit.
+let quitFlushStarted = false;
+app.on('before-quit', (event) => {
+  if (quitFlushStarted) return;
+  event.preventDefault();
+  quitFlushStarted = true;
+  setTimeout(() => app.quit(), 1200);
+});
 
 function createWindow() {
   // Start the server directly in the main Electron process
@@ -62,28 +89,78 @@ function createWindow() {
     width: 1280,
     height: 800,
     title: "Lebanon Pharma Pro",
-    autoHideMenuBar: true, 
+    autoHideMenuBar: true,
     webPreferences: {
-      nodeIntegration: false
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
     }
   });
   mainWindow.maximize();
+  wireRendererCrashGuard(mainWindow);
 
-  // Keep checking if port 3000 is ready before loading
+  // Keep checking if OUR server on port 3000 is ready before loading. A bare TCP
+  // probe used to be enough — but that would happily load an unrelated program that
+  // happens to occupy port 3000 and hand it this origin's data. We now require the
+  // /api/health endpoint to answer with our identity fingerprint.
   let retries = 0;
   const maxRetries = 75; // ~15 seconds at 200ms
-  
+
+  const giveUp = (message) => {
+    dialog.showErrorBox("Connection Timeout", message + " The application will now close.");
+    app.quit();
+  };
+
+  const verifyServerIdentity = () => {
+    const req = http.get('http://127.0.0.1:3000/api/health', { timeout: 2000 }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(body);
+          if (json && json.status === 'ok' && json.app === 'lebanon-pharma-pro') {
+            mainWindow.loadURL('http://localhost:3000')
+              .catch((err) => console.error('Failed to load app URL:', err));
+            return;
+          }
+        } catch (err) { /* fall through to retry */ }
+        if (retries >= maxRetries) {
+          giveUp("Port 3000 is occupied by another program that does not appear to be Lebanon Pharma Pro.");
+          return;
+        }
+        retries++;
+        setTimeout(tryLoadURL, 200);
+      });
+    });
+    req.on('error', () => {
+      if (retries >= maxRetries) {
+        giveUp("The embedded server took too long to start.");
+        return;
+      }
+      retries++;
+      setTimeout(tryLoadURL, 200);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      if (retries >= maxRetries) {
+        giveUp("The embedded server took too long to start.");
+        return;
+      }
+      retries++;
+      setTimeout(tryLoadURL, 200);
+    });
+  };
+
   const tryLoadURL = () => {
     const socket = new net.Socket();
     socket.setTimeout(100);
     socket.on('connect', () => {
       socket.destroy();
-      mainWindow.loadURL('http://localhost:3000');
+      verifyServerIdentity();
     }).on('error', () => {
-      // Server not ready yet, wait and try again
       if (retries >= maxRetries) {
-        dialog.showErrorBox("Connection Timeout", "The embedded server took too long to start. The application will now close.");
-        app.quit();
+        giveUp("The embedded server took too long to start.");
         return;
       }
       retries++;
@@ -91,8 +168,7 @@ function createWindow() {
     }).on('timeout', () => {
       socket.destroy();
       if (retries >= maxRetries) {
-        dialog.showErrorBox("Connection Timeout", "The embedded server took too long to start. The application will now close.");
-        app.quit();
+        giveUp("The embedded server took too long to start.");
         return;
       }
       retries++;
@@ -112,4 +188,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Main process uncaught exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Main process unhandled rejection:', reason);
 });
