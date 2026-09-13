@@ -259,9 +259,10 @@ export function buildProductSearchPayload(product: Product): {
   const presentation = (product.presentation || '').toLowerCase();
   const agent = (product.agent || '').toLowerCase();
   const category = (product.category || '').toLowerCase();
+  const subcategory = (product.subcategory || '').toLowerCase();
   const generics = (product.scientificInfo?.generics || []).join(' ').toLowerCase();
 
-  const latinText = `${nameOnly} ${code} ${barcode} ${ingredients} ${dosage} ${form} ${presentation} ${agent} ${category} ${generics}`;
+  const latinText = `${nameOnly} ${code} ${barcode} ${ingredients} ${dosage} ${form} ${presentation} ${agent} ${category} ${subcategory} ${generics}`;
   const arabicText = normalizeArabic(latinText);
 
   return {

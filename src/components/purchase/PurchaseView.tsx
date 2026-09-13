@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { motion } from "motion/react";
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   Truck,
   Plus,
@@ -10,6 +11,7 @@ import {
   X,
   FileText,
   Barcode,
+  Edit2,
   ScanBarcode,
   ChevronDown,
   AlertCircle,
@@ -25,6 +27,7 @@ import { filterProductsByMultiWordQuery } from '../../utils/searchUtils';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
+import { AddStockProductModal } from '../stock/AddStockProductModal';
 
 const formatWithCommas = (val: string | number) => {
   if (val === null || val === undefined) return '';
@@ -98,7 +101,7 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
 
   return (
     <div className="p-3 border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-      <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-[repeat(17,minmax(0,1fr))] gap-2 items-end min-w-[900px]">
+      <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-[repeat(19,minmax(0,1fr))] gap-2 items-end min-w-[900px]">
         <div className="sm:col-span-3 relative">
           <div className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-2 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-100 flex items-center justify-between">
             <span className="truncate font-medium flex-1 mr-2">
@@ -160,7 +163,7 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
                }
             }}
             placeholder="DD/MM/YYYY"
-            className="w-[105px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 text-center"
+            className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 text-center"
           />
         </div>
 
@@ -170,7 +173,7 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
             value={item.batchNumber}
             onChange={(e) => onChange(index, { ...item, batchNumber: e.target.value })}
             placeholder="Batch"
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           />
         </div>
 
@@ -180,12 +183,12 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
             value={item.quantity === 0 ? '' : item.quantity}
             onChange={(e) => onChange(index, { ...item, quantity: parseInt(e.target.value) || 0 })}
             onFocus={(e) => e.target.select()}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           />
         </div>
 
         <div>
-          <div className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400 cursor-not-allowed">
+          <div className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400 cursor-not-allowed">
             {vatRate > 0 ? `${vatRate}%` : '0 VAT'}
           </div>
         </div>
@@ -198,7 +201,7 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
             onBlur={() => flushPrice(priceInput)}
             onFocus={(e) => e.target.select()}
             style={{ fieldSizing: "content", minWidth: "100%" } as any}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           />
         </div>
 
@@ -209,7 +212,7 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
             onChange={(e) => setDiscountInput(e.target.value.replace(/,/g, '').split('.')[0])}
             onBlur={() => onChange(index, { ...item, discount: parseFloat(discountInput) || 0 })}
             onFocus={(e) => e.target.select()}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           />
         </div>
 
@@ -221,7 +224,7 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
             onBlur={() => flushCost(costInput)}
             onFocus={(e) => e.target.select()}
             style={{ fieldSizing: "content", minWidth: "100%" } as any}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           />
         </div>
 
@@ -240,7 +243,7 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
             }}
             onFocus={(e) => e.target.select()}
             style={{ fieldSizing: "content", minWidth: "100%" } as any}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 font-bold"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 font-bold"
           />
         </div>
       </div>
@@ -251,10 +254,28 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
 };
 
 export const PurchaseView: React.FC = () => {
-  const { purchases, suppliers, products, recordPurchase, updatePurchase, deletePurchase, exchangeRate, formatLBP, formatUSD, settings } = usePharmacy();
+  const { purchases, suppliers, products, recordPurchase, updatePurchase, deletePurchase, exchangeRate, formatLBP, formatUSD, settings, addNotification } = usePharmacy();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingPurchaseId, setEditingPurchaseId] = useState<string | null>(null);
+  const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null);
+  const [editRowData, setEditRowData] = useState<{
+    code: string;
+    barcode: string;
+    name: string;
+    unit: 'box' | 'piece';
+    qty: string;
+    free: string;
+    batch: string;
+    expiry: string;
+    displayExpiry: string;
+    pubPrice: string;
+    discount: string;
+    cost: string;
+    vat: string;
+    profit: string;
+    total: string;
+  } | null>(null);
   const [viewingPurchase, setViewingPurchase] = useState<PurchaseInvoice | null>(null);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
@@ -359,7 +380,13 @@ export const PurchaseView: React.FC = () => {
   // New Purchase Items
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [currentProductId, setCurrentProductId] = useState('');
+  const [itemCode, setItemCode] = useState('');
+  const [itemBarcode, setItemBarcode] = useState('');
+
   const [itemQty, setItemQty] = useState('0');
+  const [itemFree, setItemFree] = useState('0');
+  const [itemProfitPercent, setItemProfitPercent] = useState('0');
+
   const [itemVATChoice, setItemVATChoice] = useState<'setting' | 'none'>('setting');
   const [itemCostUSD, setItemCostUSD] = useState('0');
   const [itemTotalInput, setItemTotalInput] = useState('0');
@@ -383,6 +410,46 @@ export const PurchaseView: React.FC = () => {
     text: string;
   } | null>(null);
 
+  // Add Stock Product from Purchase Form
+  const [isAddStockProductModalOpen, setIsAddStockProductModalOpen] = useState(false);
+  const [addStockInitialData, setAddStockInitialData] = useState<{
+    barcode?: string;
+    code?: string;
+    name?: string;
+    batch?: string;
+    expiry?: string;
+  }>({});
+
+  const handleOpenAddStockProduct = () => {
+    setAddStockInitialData({
+      barcode: itemBarcode.trim(),
+      code: itemCode.trim(),
+      name: productSearchQuery.trim(),
+      batch: itemBatch.trim(),
+      expiry: itemExpiry.trim() || displayExpiry.trim(),
+    });
+    setIsAddStockProductModalOpen(true);
+  };
+
+  const handleStockProductAdded = (newProd: Product) => {
+    selectProduct(newProd, true);
+    setScanStatusMessage({
+      type: 'success',
+      text: `Added "${newProd.name}" (${newProd.code}) to stock inventory and loaded to purchase invoice!`,
+    });
+    setTimeout(() => {
+      setScanStatusMessage((curr) => (curr?.text.includes(newProd.name) ? null : curr));
+    }, 5000);
+  };
+
+  const showFeedback = (type: 'success' | 'error', text: string, duration = type === 'error' ? 8000 : 4000) => {
+    setScanStatusMessage({ type, text });
+
+    setTimeout(() => {
+      setScanStatusMessage((curr) => (curr?.text === text ? null : curr));
+    }, duration);
+  };
+
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const searchDropdownRef = useRef<HTMLDivElement | null>(null);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -390,7 +457,12 @@ export const PurchaseView: React.FC = () => {
   const unitInputRef = useRef<HTMLSelectElement | null>(null);
   const expiryInputRef = useRef<HTMLInputElement | null>(null);
   const batchInputRef = useRef<HTMLInputElement | null>(null);
+  
+  const codeInputRef = useRef<HTMLInputElement | null>(null);
+  const barcodeInputRef = useRef<HTMLInputElement | null>(null);
   const qtyInputRef = useRef<HTMLInputElement | null>(null);
+  const freeInputRef = useRef<HTMLInputElement | null>(null);
+  const profitPercentInputRef = useRef<HTMLInputElement | null>(null);
   const vatInputRef = useRef<HTMLSelectElement | null>(null);
   const costInputRef = useRef<HTMLInputElement | null>(null);
   const discountInputRef = useRef<HTMLInputElement | null>(null);
@@ -405,36 +477,6 @@ export const PurchaseView: React.FC = () => {
     parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     return parts.join('.');
   };
-
-  // Global Barcode Scanner Listener when New Purchase modal is open
-  useBarcodeScanner({
-    onScan: (scanned) => {
-      if (!isCreateOpen) return;
-      const clean = scanned.trim();
-      if (!clean) return;
-
-      const found = products.find(
-        (p) =>
-          (p.barcode || '').toLowerCase() === clean.toLowerCase() ||
-          p.code.toLowerCase() === clean.toLowerCase()
-      );
-
-      if (found) {
-        selectProduct(found, true);
-        setScanStatusMessage({
-          type: 'success',
-          text: `Scanned: ${found.name} (${found.barcode || found.code})`,
-        });
-        setTimeout(() => setScanStatusMessage(null), 3500);
-      } else {
-        setScanStatusMessage({
-          type: 'error',
-          text: `Barcode "${clean}" not found in inventory. You can search by name or code.`,
-        });
-        setTimeout(() => setScanStatusMessage(null), 4000);
-      }
-    },
-  });
 
   // Close search dropdown on click outside
   useEffect(() => {
@@ -522,7 +564,12 @@ export const PurchaseView: React.FC = () => {
     const defaultCost = prod.costPriceUSD != null ? prod.costPriceUSD : 0;
     setItemCostUSD(purchaseCurrency === 'USD' ? defaultCost.toString() : Math.round(defaultCost * exchangeRate).toString());
     setItemUnit('box');
-    setProductSearchQuery(prod.name);
+
+    setItemCode(prod.code || '');
+    setItemBarcode(prod.barcode || '');
+
+    const additionalDetails = [prod.dosage, prod.presentation, prod.form].filter(Boolean).join(' ');
+    setProductSearchQuery(`${prod.name}${additionalDetails ? ` ${additionalDetails}` : ''}`);
     setIsSearchDropdownOpen(false);
     setScanStatusMessage(null);
 
@@ -639,6 +686,149 @@ export const PurchaseView: React.FC = () => {
 
     if (autoFocusQty) {
       setTimeout(() => unitInputRef.current?.focus(), 50);
+    }
+  };
+
+  // Comprehensive product lookup by barcode or code with fuzzy / clean matching
+  const findProductByBarcode = useCallback((query: string): Product | undefined => {
+    const clean = query.trim().toLowerCase();
+    if (!clean) return undefined;
+
+    // 1. Direct barcode match
+    let found = products.find((p) => (p.barcode || '').trim().toLowerCase() === clean);
+    if (found) return found;
+
+    // 2. Direct code match
+    found = products.find((p) => p.code.trim().toLowerCase() === clean);
+    if (found) return found;
+
+    // 3. Match without spaces, hyphens, or underscores
+    const noDashes = clean.replace(/[\s-_]/g, '');
+    if (noDashes.length >= 3) {
+      found = products.find((p) => {
+        const pBarcode = (p.barcode || '').trim().toLowerCase().replace(/[\s-_]/g, '');
+        const pCode = p.code.trim().toLowerCase().replace(/[\s-_]/g, '');
+        return pBarcode === noDashes || pCode === noDashes;
+      });
+      if (found) return found;
+    }
+
+    // 4. Strip leading zeros (common with UPC-A vs EAN-13 conversions)
+    const noLeadingZeros = clean.replace(/^0+/, '');
+    if (noLeadingZeros.length >= 4) {
+      found = products.find((p) => {
+        const pBarcode = (p.barcode || '').trim().toLowerCase().replace(/^0+/, '');
+        const pCode = p.code.trim().toLowerCase().replace(/^0+/, '');
+        return (pBarcode && pBarcode === noLeadingZeros) || (pCode && pCode === noLeadingZeros);
+      });
+      if (found) return found;
+    }
+
+    return undefined;
+  }, [products]);
+
+  // Barcode input scanner tracking & processing
+  const barcodeLastKeyTimeRef = useRef<number>(0);
+  const barcodeKeyCountRef = useRef<number>(0);
+  const barcodeScanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleProcessBarcode = useCallback((rawInputVal?: string) => {
+    if (barcodeScanTimeoutRef.current) {
+      clearTimeout(barcodeScanTimeoutRef.current);
+      barcodeScanTimeoutRef.current = null;
+    }
+
+    const inputEl = barcodeInputRef.current;
+    const raw = (rawInputVal !== undefined ? rawInputVal : (inputEl ? inputEl.value : itemBarcode)).trim();
+    if (!raw) {
+      searchInputRef.current?.focus();
+      return;
+    }
+
+    const match = findProductByBarcode(raw);
+    if (match) {
+      selectProduct(match, false);
+      showFeedback('success', `Found: ${match.name} (${match.barcode || match.code})`);
+      setTimeout(() => {
+        unitInputRef.current?.focus();
+      }, 60);
+    } else {
+      showFeedback('error', `Barcode "${raw}" not found in stock list.`);
+      if (inputEl) {
+        inputEl.select();
+      }
+    }
+  }, [findProductByBarcode, itemBarcode, selectProduct, showFeedback]);
+
+  // Global Barcode Scanner Listener when New Purchase modal is open
+  useBarcodeScanner({
+    onScan: (scanned) => {
+      if (!isCreateOpen) return;
+      const clean = scanned.trim();
+      if (!clean) return;
+
+      const match = findProductByBarcode(clean);
+      if (match) {
+        selectProduct(match, false);
+        showFeedback('success', `Scanned: ${match.name} (${match.barcode || match.code})`);
+        setTimeout(() => unitInputRef.current?.focus(), 60);
+      } else {
+        showFeedback('error', `Barcode "${clean}" not found in inventory. You can search by name or code.`);
+      }
+    },
+  });
+
+  const handleBarcodeKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const now = Date.now();
+    const interval = now - barcodeLastKeyTimeRef.current;
+    if (interval < 60) {
+      barcodeKeyCountRef.current += 1;
+    } else {
+      barcodeKeyCountRef.current = 1;
+    }
+    barcodeLastKeyTimeRef.current = now;
+
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      const val = (e.currentTarget.value || itemBarcode).trim();
+      if (val) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleProcessBarcode(val);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    }
+  };
+
+  const handleBarcodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVal = e.target.value;
+    setItemBarcode(newVal);
+
+    if (barcodeScanTimeoutRef.current) {
+      clearTimeout(barcodeScanTimeoutRef.current);
+    }
+
+    const trimmed = newVal.trim();
+    const isRapid = barcodeKeyCountRef.current >= 3;
+
+    if (trimmed.length >= 4) {
+      const delay = isRapid ? 80 : 350;
+      barcodeScanTimeoutRef.current = setTimeout(() => {
+        const match = findProductByBarcode(trimmed);
+        if (match && (isRapid || trimmed === match.barcode || trimmed === match.code)) {
+          handleProcessBarcode(trimmed);
+        }
+      }, delay);
+    }
+  };
+
+  const handleBarcodePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text').trim();
+    if (pasted) {
+      e.preventDefault();
+      setItemBarcode(pasted);
+      handleProcessBarcode(pasted);
     }
   };
 
@@ -898,6 +1088,52 @@ export const PurchaseView: React.FC = () => {
     }
   };
 
+  
+  const [colWidths, setColWidths] = useState<Record<string, number>>({
+    code: 80,
+    barcode: 100,
+    name: 200,
+    unit: 70,
+    qty: 70,
+    free: 70,
+    batch: 80,
+    expiry: 80,
+    pubPrice: 80,
+    discount: 70,
+    cost: 80,
+    vat: 70,
+    profit: 70,
+    total: 90,
+    action: 60,
+  });
+
+  const handleColResizeStart = (e: React.MouseEvent, col: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.pageX;
+    const startWidth = colWidths[col] || 100;
+    
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.pageX - startX;
+      setColWidths(prev => ({
+        ...prev,
+        [col]: Math.max(40, startWidth + delta)
+      }));
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = 'default';
+      document.body.style.userSelect = 'auto';
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
+
   const handleAddItemToInvoice = () => {
     if (!selectedProduct) {
       setScanStatusMessage({
@@ -983,6 +1219,10 @@ export const PurchaseView: React.FC = () => {
     setCurrentProductId('');
     setProductSearchQuery('');
     setItemQty('0');
+    setItemCode('');
+    setItemBarcode('');
+    setItemFree('0');
+    setItemProfitPercent('0');
     setItemVATChoice('setting');
     setItemCostUSD('0');
     setItemTotalInput('0');
@@ -1002,6 +1242,124 @@ export const PurchaseView: React.FC = () => {
 
   const handleRemoveItem = (index: number) => {
     setItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleEditItem = (index: number) => {
+    const item = items[index];
+    const match = products.find(p => p.id === item.productId);
+    const vatRate = match ? (settings.vatRates?.[match.category] || 0) : 0;
+    const unitCost = purchaseCurrency === 'USD' ? item.unitCostUSD : item.unitCostLBP;
+    const pubPrice = purchaseCurrency === 'USD' ? (item.sellingPriceUSD || 0) : item.sellingPriceLBP;
+    const total = unitCost * item.quantity;
+    let profit = pubPrice - unitCost;
+    if (purchaseCurrency !== 'LBP') profit = Number(profit.toFixed(2));
+    const profitPerc = unitCost > 0 ? ((profit / unitCost) * 100).toFixed(1) : '0.0';
+
+    setEditingRowIndex(index);
+    setEditRowData({
+      code: item.productCode,
+      barcode: match?.barcode || '',
+      name: item.productName,
+      unit: item.isPiece ? 'piece' : 'box',
+      qty: item.quantity.toString(),
+      free: (item.freeQty || 0).toString(),
+      cost: unitCost.toString(),
+      pubPrice: pubPrice.toString(),
+      discount: (item.discount || 0).toString(),
+      batch: item.batchNumber || '',
+      expiry: item.expiryDate || '',
+      displayExpiry: item.expiryDate || '',
+      vat: vatRate.toString(),
+      profit: profitPerc.toString(),
+      total: total.toString()
+    });
+  };
+
+  const handleSaveEditRow = () => {
+    if (editingRowIndex === null || !editRowData) return;
+    const item = items[editingRowIndex];
+    const match = products.find(p => p.id === item.productId);
+    if (!match) return;
+
+    const parsedQty = parseInt(editRowData.qty, 10);
+    const qty = isNaN(parsedQty) ? 0 : parsedQty;
+    const parsedFree = parseInt(editRowData.free, 10);
+    const freeQty = isNaN(parsedFree) ? 0 : parsedFree;
+    const parsedCost = parseFloat(editRowData.cost);
+    const parsedDiscount = parseFloat(editRowData.discount) || 0;
+    const parsedPublicPrice = parseFloat(editRowData.pubPrice) || 0;
+    
+    let costUSD = 0;
+    let costLBP = 0;
+    let publicPriceUSD = 0;
+    let publicPriceLBP = 0;
+    
+    if (purchaseCurrency === 'USD') {
+      costUSD = isNaN(parsedCost) ? (match.costPriceUSD || 0) : parsedCost;
+      costLBP = Math.round(costUSD * exchangeRate);
+      publicPriceUSD = parsedPublicPrice;
+      publicPriceLBP = Math.round(parsedPublicPrice * exchangeRate);
+    } else {
+      costLBP = isNaN(parsedCost) ? Math.round((match.costPriceUSD || 0) * exchangeRate) : parsedCost;
+      costUSD = costLBP / exchangeRate;
+      publicPriceLBP = parsedPublicPrice;
+      publicPriceUSD = parsedPublicPrice / exchangeRate;
+    }
+
+    let finalExpiry = editRowData.expiry;
+    if (!finalExpiry && editRowData.displayExpiry.trim()) {
+      const digits = editRowData.displayExpiry.replace(/\D/g, '');
+      let d = 0, m = 0, y = 0;
+      if (digits.length === 4) {
+        m = parseInt(digits.slice(0, 2), 10);
+        y = 2000 + parseInt(digits.slice(2, 4), 10);
+      } else if (digits.length === 6) {
+        const p1 = parseInt(digits.slice(0, 2), 10);
+        const p2 = parseInt(digits.slice(2, 4), 10);
+        const p3 = parseInt(digits.slice(4, 6), 10);
+        if (p1 <= 12 && p2 === 20) {
+           m = p1; y = parseInt(digits.slice(2, 6), 10);
+        } else if (p2 <= 12) {
+           d = p1; m = p2; y = 2000 + p3;
+        } else {
+           m = p1; y = parseInt(digits.slice(2, 6), 10);
+        }
+      } else if (digits.length === 8) {
+        d = parseInt(digits.slice(0, 2), 10);
+        m = parseInt(digits.slice(2, 4), 10);
+        y = parseInt(digits.slice(4, 8), 10);
+      }
+      
+      if (m >= 1 && m <= 12) {
+        if (d === 0 || d > 31) d = new Date(y, m, 0).getDate();
+        finalExpiry = `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
+      } else {
+        finalExpiry = editRowData.displayExpiry.trim();
+      }
+    }
+
+    setItems((prev) => {
+      const updated = [...prev];
+      updated[editingRowIndex] = {
+        ...updated[editingRowIndex],
+        productCode: editRowData.code,
+        productName: editRowData.name,
+        quantity: qty,
+        freeQty: freeQty,
+        isPiece: editRowData.unit === 'piece',
+        unitCostUSD: costUSD,
+        unitCostLBP: costLBP,
+        sellingPriceLBP: publicPriceLBP,
+        sellingPriceUSD: publicPriceUSD,
+        discount: parsedDiscount,
+        batchNumber: editRowData.batch || match.batchNumber || '',
+        expiryDate: finalExpiry || ''
+      };
+      return updated;
+    });
+
+    setEditingRowIndex(null);
+    setEditRowData(null);
   };
 
   const totalCostUSD = items.reduce((sum, item) => sum + item.unitCostUSD * item.quantity, 0);
@@ -1054,6 +1412,8 @@ export const PurchaseView: React.FC = () => {
     setCurrentProductId('');
     setProductSearchQuery('');
     setItemQty('0');
+    setItemCode('');
+    setItemBarcode('');
     setItemVATChoice('setting');
     setItemCostUSD('0');
     setItemTotalInput('0');
@@ -1079,6 +1439,8 @@ export const PurchaseView: React.FC = () => {
     setCurrentProductId('');
     setProductSearchQuery('');
     setItemQty('0');
+    setItemCode('');
+    setItemBarcode('');
     setItemVATChoice('setting');
     setItemCostUSD('0');
     setItemTotalInput('0');
@@ -1117,7 +1479,7 @@ export const PurchaseView: React.FC = () => {
 
         <button
           onClick={handleOpenCreate}
-          className="flex items-center space-x-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-teal-700 shadow-2xs transition-colors cursor-pointer"
+          className="flex items-center space-x-1 rounded bg-teal-600 px-2 py-1 text-xs font-bold text-white hover:bg-teal-700 shadow-2xs transition-colors cursor-pointer"
         >
           <Plus className="h-3.5 w-3.5" />
           <span>New Purchase Invoice</span>
@@ -1329,12 +1691,12 @@ export const PurchaseView: React.FC = () => {
                 e.preventDefault();
               }
             }}
-            className="p-5 space-y-4 text-xs flex-1 flex flex-col justify-start overflow-auto min-h-0"
+            className="px-3 pt-2 pb-3 space-y-2 text-xs flex-1 flex flex-col justify-start overflow-auto min-h-0"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div ref={supplierDropdownRef} className="relative">
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Select Supplier / Agent
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Supplier
                 </label>
                 <div className="relative">
                   <input
@@ -1343,21 +1705,16 @@ export const PurchaseView: React.FC = () => {
                     onChange={(e) => {
                       setSupplierSearchQuery(e.target.value);
                       setIsSupplierDropdownOpen(true);
+                      setSupplierHighlightedIndex(0);
                     }}
-                    onFocus={() => {
-                      setIsSupplierDropdownOpen(true);
-                      const sel = suppliers.find(s => s.id === selectedSupplierId);
-                      if (sel && supplierSearchQuery === sel.name) {
-                        setSupplierSearchQuery('');
-                      }
-                    }}
+                    onFocus={() => setIsSupplierDropdownOpen(true)}
                     onKeyDown={handleSupplierKeyDown}
-                    placeholder="Type to search supplier..."
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    placeholder="Search supplier..."
+                    className="w-full rounded border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
-                  <ChevronDown className="absolute right-3 top-3 h-4 w-4 text-slate-400 pointer-events-none" />
+                  <ChevronDown className="absolute right-2 top-1.5 h-4 w-4 text-slate-400 pointer-events-none" />
                 </div>
-                
+                  
                 {isSupplierDropdownOpen && (
                   <div 
                     ref={supplierListContainerRef}
@@ -1407,7 +1764,7 @@ export const PurchaseView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Invoice Date
                 </label>
                 <input
@@ -1418,37 +1775,16 @@ export const PurchaseView: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      paymentStatusRef.current?.focus();
+                      currencyRef.current?.focus();
                     }
                   }}
                   required
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Payment Status
-                </label>
-                <select
-                  ref={paymentStatusRef}
-                  value={isPaid ? 'paid' : 'debt'}
-                  onChange={(e) => setIsPaid(e.target.value === 'paid')}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      currencyRef.current?.focus();
-                    }
-                  }}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                >
-                  <option value="paid">Paid (Cash / Bank)</option>
-                  <option value="debt">Unpaid (Add to Supplier Debt)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Currency
                 </label>
                 <select
@@ -1466,10 +1802,10 @@ export const PurchaseView: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      searchInputRef.current?.focus();
+                      // Next focus
                     }
                   }}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className="w-full rounded border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 >
                   <option value="LBP">LBP (ل.ل)</option>
                   <option value="USD">USD ($)</option>
@@ -1477,557 +1813,666 @@ export const PurchaseView: React.FC = () => {
               </div>
             </div>
 
-            {/* Add Items Row */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 dark:border-slate-800 dark:bg-slate-800/40 space-y-3 shadow-sm relative z-40">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-900 dark:text-slate-100 block text-xs flex items-center gap-1.5">
-                  <Package className="h-3.5 w-3.5 text-teal-600" />
-                  Add Medication / Item to Shipment
-                </span>
-                
-              </div>
-
-              {scanStatusMessage && (
-                <div
-                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg font-medium transition-all ${
-                    scanStatusMessage.type === 'success'
-                      ? 'bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-800 dark:text-emerald-300'
-                      : 'bg-rose-50 border border-rose-200 text-rose-800 dark:bg-rose-950/50 dark:border-rose-800 dark:text-rose-300'
-                  }`}
-                >
-                  {scanStatusMessage.type === 'success' ? (
-                    <Check className="h-3.5 w-3.5 shrink-0" />
+            {scanStatusMessage && (
+              <div
+                id="scan-status-alert"
+                className={`flex items-center justify-between gap-3 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all shrink-0 shadow-2xs ${
+                  scanStatusMessage.type === 'error'
+                    ? 'bg-rose-50/95 border border-rose-200 text-rose-800 dark:bg-rose-950/60 dark:border-rose-800 dark:text-rose-200 ring-1 ring-rose-500/10'
+                    : 'bg-emerald-50/95 border border-emerald-200 text-emerald-800 dark:bg-emerald-950/60 dark:border-emerald-800 dark:text-emerald-200 ring-1 ring-emerald-500/10'
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  {scanStatusMessage.type === 'error' ? (
+                    <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
                   ) : (
-                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   )}
-                  <span>{scanStatusMessage.text}</span>
+                  <span className="truncate">{scanStatusMessage.text}</span>
                 </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-[repeat(17,minmax(0,1fr))] gap-2 items-end min-w-[900px]">
-                <div className="sm:col-span-3 relative z-50" ref={searchDropdownRef}>
-                  
-
-                  {/* Primary searchable input with live matching by Name, Drug Code, or Barcode */}
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
-                      <Search className="h-3.5 w-3.5" />
-                    </div>
-                    <input
-                      ref={searchInputRef}
-                      type="text"
-                      value={productSearchQuery}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setProductSearchQuery(val);
-                        if (val.trim().length > 0) {
-                          setIsSearchDropdownOpen(true);
-                          setHighlightedIndex(0);
-                        } else {
-                          setIsSearchDropdownOpen(false);
-                        }
-                      }}
-                      onFocus={() => {
-                        if (productSearchQuery.trim().length > 0) {
-                          setIsSearchDropdownOpen(true);
-                        }
-                      }}
-                      onKeyDown={handleSearchKeyDown}
-                      placeholder="Type name, code, barcode, or scan box..."
-                      className="w-full rounded-lg border border-slate-200 bg-white pl-8 pr-16 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    />
-                    <div className="absolute inset-y-0 right-0 pr-1.5 flex items-center gap-1">
-                      {productSearchQuery && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setProductSearchQuery('');
-                            setCurrentProductId('');
-                            setIsSearchDropdownOpen(false);
-                            searchInputRef.current?.focus();
-                          }}
-                          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-sm hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                          title="Clear search"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsSearchDropdownOpen((prev) => !prev);
-                          searchInputRef.current?.focus();
-                        }}
-                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-sm hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                        title="Browse medication list"
-                      >
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Fallback & accessible select element to maintain exact DOM structure */}
-                  <select
-                    value={currentProductId}
-                    onChange={(e) => {
-                      const prod = products.find((p) => p.id === e.target.value);
-                      if (prod) {
-                        selectProduct(prod, true);
-                      }
-                    }}
-                    className="sr-only"
-                    tabIndex={-1}
-                    aria-hidden="true"
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    id="scan-status-add-stock-btn"
+                    onClick={handleOpenAddStockProduct}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-md shadow-2xs transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
+                      scanStatusMessage.type === 'error'
+                        ? 'bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-600 dark:hover:bg-rose-500 border border-rose-700/50'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 border border-emerald-700/50'
+                    }`}
+                    title="Open form to add new item in Stock"
                   >
-                    <option value="">-- Choose Medication --</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.code}) {p.barcode ? `[${p.barcode}]` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Add to Stock</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScanStatusMessage(null)}
+                    className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 p-0.5 rounded cursor-pointer transition-colors"
+                    title="Dismiss alert"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+            {/* Items Input/Import Table */}
+            <div className="flex-1 w-full overflow-hidden border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900/40 shadow-sm flex flex-col">
+              <div className="flex-1 w-full overflow-auto">
+                
+<table className="w-max min-w-full text-left border-collapse table-fixed">
+  <colgroup>
+    <col style={{ width: colWidths.code }} />
+    <col style={{ width: colWidths.barcode }} />
+    <col style={{ width: colWidths.name }} />
+    <col style={{ width: colWidths.unit }} />
+    <col style={{ width: colWidths.qty }} />
+    <col style={{ width: colWidths.free }} />
+    <col style={{ width: colWidths.batch }} />
+    <col style={{ width: colWidths.expiry }} />
+    <col style={{ width: colWidths.pubPrice }} />
+    <col style={{ width: colWidths.discount }} />
+    <col style={{ width: colWidths.cost }} />
+    <col style={{ width: colWidths.vat }} />
+    <col style={{ width: colWidths.profit }} />
+    <col style={{ width: colWidths.total }} />
+    <col style={{ width: colWidths.action }} />
+  </colgroup>
+  <thead className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
+    <tr>
+      {[
+        { id: 'code', label: 'Code' },
+        { id: 'barcode', label: 'Barcode' },
+        { id: 'name', label: 'Name' },
+        { id: 'unit', label: 'Unit' },
+        { id: 'qty', label: 'Qty' },
+        { id: 'free', label: 'Free' },
+        { id: 'batch', label: 'Batch' },
+        { id: 'expiry', label: 'Expiry' },
+        { id: 'pubPrice', label: 'Pub Price' },
+        { id: 'discount', label: 'Disc %' },
+        { id: 'cost', label: 'Cost' },
+        { id: 'vat', label: 'VAT' },
+        { id: 'profit', label: 'Profit' },
+        { id: 'total', label: 'Total' },
+      ].map(col => (
+        <th key={col.id} className="p-1 pb-1.5 px-2 text-[10px] font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap relative group border-r border-slate-200 dark:border-slate-800 select-none">
+          {col.label}
+          <div
+            onMouseDown={(e) => handleColResizeStart(e, col.id)}
+            className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-500/80 transition-colors z-10"
+            title="Drag to resize"
+          />
+        </th>
+      ))}
+      <th className="p-1 pb-1.5 px-2 text-[10px] font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+        {/* Actions empty header */}
+      </th>
+    </tr>
+  </thead>
+  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {items.map((it, idx) => {
+                      const productDetails = products.find(p => p.id === it.productId);
+                      const vatRate = it.vatRate !== undefined ? it.vatRate : (productDetails ? (settings.vatRates?.[productDetails.category] || 0) : 0);
+                      
+                      const unitCost = purchaseCurrency === 'USD' ? it.unitCostUSD : it.unitCostLBP;
+                      const pubPrice = purchaseCurrency === 'USD' ? (it.sellingPriceUSD || 0) : it.sellingPriceLBP;
+                      const total = unitCost * it.quantity;
+                      
+                      let profit = pubPrice - unitCost;
+                      if (purchaseCurrency !== 'LBP') profit = Number(profit.toFixed(2));
+                      const profitPerc = unitCost > 0 ? ((profit / unitCost) * 100).toFixed(1) : '0.0';
 
-                  {/* Dropdown Suggestions Menu */}
-                  {isSearchDropdownOpen && (
-                    <div
-                      id="purchase-product-suggestions-dropdown"
-                      className="absolute z-50 mt-1 w-full rounded-xl border border-slate-200 bg-white/98 dark:border-slate-700 dark:bg-slate-900/98 shadow-2xl flex flex-col overflow-hidden text-xs backdrop-blur-xs"
-                    >
-                      {filteredProducts.length === 0 ? (
-                        <div className="p-4 text-center text-slate-400">
-                          <AlertCircle className="h-5 w-5 mx-auto mb-1.5 text-slate-400" />
-                          <span className="font-semibold">No products match "{productSearchQuery}"</span>
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            Try searching by code, barcode, or Lebanese supplier
-                          </div>
-                        </div>
-                      ) : (
-                        <>
+                      const isEditing = editingRowIndex === idx && editRowData;
+
+                      return (
+                        <tr key={idx} className={isEditing ? 'bg-teal-50/20 dark:bg-teal-900/10 ring-1 ring-inset ring-teal-500' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editRowData.code}
+                                onChange={(e) => setEditRowData({ ...editRowData, code: e.target.value })}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 text-slate-600 dark:text-slate-300">{it.productCode}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editRowData.barcode}
+                                onChange={(e) => setEditRowData({ ...editRowData, barcode: e.target.value })}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 text-slate-600 dark:text-slate-300">{productDetails?.barcode || ''}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editRowData.name}
+                                onChange={(e) => setEditRowData({ ...editRowData, name: e.target.value })}
+                                className="w-full px-1 py-1 text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 font-semibold text-slate-800 dark:text-slate-100 ">{it.productName}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <select
+                                value={editRowData.unit}
+                                onChange={(e) => setEditRowData({ ...editRowData, unit: e.target.value as 'box' | 'piece' })}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-teal-500 rounded outline-none"
+                              >
+                                <option value="box">Box</option>
+                                <option value="piece">Piece</option>
+                              </select>
+                            ) : (
+                              <span className="px-2 text-slate-600 dark:text-slate-300">{it.isPiece ? 'Piece' : 'Box'}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                min="1"
+                                value={editRowData.qty}
+                                onChange={(e) => {
+                                  const newQty = e.target.value;
+                                  const q = parseInt(newQty, 10) || 0;
+                                  const c = parseFloat(editRowData.cost) || 0;
+                                  setEditRowData({ ...editRowData, qty: newQty, total: (q * c).toFixed(2) });
+                                }}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">{it.quantity}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                min="0"
+                                value={editRowData.free}
+                                onChange={(e) => setEditRowData({ ...editRowData, free: e.target.value })}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 text-slate-600 dark:text-slate-300">{it.freeQty || '-'}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editRowData.batch}
+                                onChange={(e) => setEditRowData({ ...editRowData, batch: e.target.value })}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 text-slate-600 dark:text-slate-300">{it.batchNumber}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editRowData.displayExpiry}
+                                onChange={(e) => setEditRowData({ ...editRowData, displayExpiry: e.target.value, expiry: '' })}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 text-slate-600 dark:text-slate-300">{it.expiryDate}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                step="any"
+                                value={editRowData.pubPrice}
+                                onChange={(e) => {
+                                  const newPubPrice = e.target.value;
+                                  const p = parseFloat(newPubPrice) || 0;
+                                  const c = parseFloat(editRowData.cost) || 0;
+                                  const pr = p - c;
+                                  const profitPerc = c > 0 ? ((pr / c) * 100).toFixed(1) : '0.0';
+                                  setEditRowData({ ...editRowData, pubPrice: newPubPrice, profit: profitPerc });
+                                }}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">{pubPrice}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                step="any"
+                                value={editRowData.discount}
+                                onChange={(e) => setEditRowData({ ...editRowData, discount: e.target.value })}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 font-medium text-teal-600 dark:text-teal-400">{it.discount || 0}%</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                step="any"
+                                value={editRowData.cost}
+                                onChange={(e) => {
+                                  const newCost = e.target.value;
+                                  const c = parseFloat(newCost) || 0;
+                                  const q = parseInt(editRowData.qty, 10) || 0;
+                                  const p = parseFloat(editRowData.pubPrice) || 0;
+                                  const pr = p - c;
+                                  const profitPerc = c > 0 ? ((pr / c) * 100).toFixed(1) : '0.0';
+                                  setEditRowData({ ...editRowData, cost: newCost, total: (c * q).toFixed(2), profit: profitPerc });
+                                }}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">{unitCost}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={editRowData.vat}
+                                  onChange={(e) => setEditRowData({ ...editRowData, vat: e.target.value })}
+                                  className="w-full px-1 py-1 pr-4 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none text-right"
+                                />
+                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-500">%</span>
+                              </div>
+                            ) : (
+                              <span className="px-2 text-slate-600 dark:text-slate-300">{vatRate}%</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={editRowData.profit}
+                                  onChange={(e) => {
+                                    const newProfit = e.target.value;
+                                    const c = parseFloat(editRowData.cost) || 0;
+                                    const pr = c + (c * (parseFloat(newProfit) || 0) / 100);
+                                    setEditRowData({ ...editRowData, profit: newProfit, pubPrice: pr.toFixed(2) });
+                                  }}
+                                  className="w-full px-1 py-1 pr-4 text-[11px] font-medium bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none text-right text-emerald-600 dark:text-emerald-400"
+                                />
+                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-emerald-600/70 dark:text-emerald-400/70">%</span>
+                              </div>
+                            ) : (
+                              <span className="px-2 font-medium text-emerald-600 dark:text-emerald-400">{profitPerc}%</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                step="any"
+                                value={editRowData.total}
+                                onChange={(e) => {
+                                  const newTotal = e.target.value;
+                                  const q = parseInt(editRowData.qty, 10) || 1;
+                                  const newCost = (parseFloat(newTotal) || 0) / q;
+                                  setEditRowData({ ...editRowData, total: newTotal, cost: newCost.toFixed(2) });
+                                }}
+                                className="w-full px-1 py-1 text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none text-right"
+                              />
+                            ) : (
+                              <span className="px-2 font-bold text-slate-800 dark:text-slate-200">{total}</span>
+                            )}
+                          </td>
+                          <td className="p-1 px-2 whitespace-nowrap text-center">
+                            {isEditing ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={handleSaveEditRow}
+                                  className="text-white bg-teal-600 hover:bg-teal-700 p-1 rounded shadow-sm"
+                                  title="Save changes"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingRowIndex(null);
+                                    setEditRowData(null);
+                                  }}
+                                  className="text-slate-500 hover:text-slate-700 p-1 rounded hover:bg-slate-100"
+                                  title="Cancel edit"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditItem(idx)}
+                                  className="text-teal-600 hover:text-teal-800 p-1 rounded hover:bg-teal-50 dark:hover:bg-teal-900/30"
+                                  title="Edit item"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveItem(idx)}
+                                  className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/30"
+                                  title="Remove item"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {/* Active Input Row */}
+                    <tr className="bg-teal-50/40 dark:bg-teal-900/20">
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          ref={codeInputRef}
+                          type="text"
+                          value={itemCode}
+                          onChange={(e) => setItemCode(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const val = itemCode.trim().toLowerCase();
+                              if (val) {
+                                const match = products.find(p => p.code.toLowerCase() === val);
+                                if (match) {
+                                  selectProduct(match, false);
+                                  showFeedback('success', `Found: ${match.name}`);
+                                  // Skip barcode/name, go straight to unit
+                                  setTimeout(() => unitInputRef.current?.focus(), 50);
+                                } else {
+                                  showFeedback('error', `Code "${itemCode}" not found in stock list.`);
+                                  e.currentTarget.select();
+                                }
+                              } else {
+                                barcodeInputRef.current?.focus();
+                              }
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        />
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          id="purchase-item-barcode-input"
+                          ref={barcodeInputRef}
+                          type="text"
+                          value={itemBarcode}
+                          onChange={handleBarcodeChange}
+                          onKeyDown={handleBarcodeKeyDown}
+                          onPaste={handleBarcodePaste}
+                          placeholder="Scan barcode..."
+                          title="Scan barcode with hardware scanner or enter barcode / code and press Enter or Tab"
+                          autoComplete="off"
+                          spellCheck={false}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 text-[11px] font-mono tracking-wider text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 shadow-2xs hover:border-teal-400 dark:hover:border-teal-500 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/25 focus:outline-hidden transition-all"
+                        />
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700 relative">
+                        <input
+                          ref={searchInputRef}
+                          type="text"
+                          value={productSearchQuery}
+                          onChange={(e) => {
+                            setProductSearchQuery(e.target.value);
+                            setIsSearchDropdownOpen(true);
+                          }}
+                          onFocus={() => { if (productSearchQuery.trim()) setIsSearchDropdownOpen(true); }}
+                          onKeyDown={handleSearchKeyDown}
+                          placeholder="Search product..."
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        />
+                        {isSearchDropdownOpen && (
                           <div
                             ref={listContainerRef}
-                            className="max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800"
+                            className="absolute left-0 top-full mt-1 w-[300px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xl z-50 rounded-lg max-h-48 overflow-y-auto"
                           >
-                            {filteredProducts.map((prod, index) => {
-                              const isHighlighted = index === highlightedIndex;
-                              const isSelected = prod.id === currentProductId;
-                              return (
-                                <div
-                                  key={prod.id}
-                                  ref={(el) => {
-                                    itemRefs.current[index] = el;
-                                  }}
-                                  id={`purchase-product-option-${prod.id}`}
-                                  role="option"
-                                  aria-selected={isHighlighted}
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    selectProduct(prod, true);
-                                  }}
-                                  onMouseEnter={() => setHighlightedIndex(index)}
-                                  className={`px-3 py-2 cursor-pointer transition-colors flex items-center justify-between gap-2 select-none ${
-                                    isHighlighted
-                                      ? 'bg-teal-600 text-white dark:bg-teal-600 dark:text-white shadow-xs'
-                                      : isSelected
-                                      ? 'bg-teal-50/80 dark:bg-teal-950/40 text-teal-950 dark:text-teal-100 border-l-2 border-teal-500 font-semibold'
-                                      : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-slate-100'
-                                  }`}
-                                >
-                                  <div className="min-w-0 flex-1">
-                                    <div className="font-bold truncate flex items-center gap-1.5">
-                                      <span className={isHighlighted ? 'text-white' : 'text-slate-900 dark:text-slate-100'}>
-                                        {prod.name}
-                                      </span>
-                                      <span className={`text-[10px] font-normal ${isHighlighted ? 'text-teal-100' : 'text-slate-400'}`}>
-                                        {prod.dosage} {prod.presentation} {prod.form}
-                                      </span>
-                                    </div>
-                                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] mt-0.5 font-mono">
-                                      {prod.agent && (
-                                        <span className={`font-sans text-[9px] ${isHighlighted ? 'text-teal-100' : 'text-slate-400'}`}>
-                                          {prod.agent}
-                                        </span>
-                                      )}
-                                      {prod.barcode && (
-                                        <span
-                                          className={`px-1.5 py-0.5 rounded text-[9px] flex items-center gap-0.5 ${
-                                            isHighlighted
-                                              ? 'bg-teal-700/90 text-teal-100 border border-teal-500/40'
-                                              : 'bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300'
-                                          }`}
-                                        >
-                                          <Barcode className="h-2.5 w-2.5" />
-                                          {prod.barcode}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="text-right shrink-0 flex items-center gap-2">
-                                    <div>
-                                      <div className={`font-bold ${isHighlighted ? 'text-white' : 'text-slate-800 dark:text-slate-200'}`}>
-                                        ${(prod.costPriceUSD || 5).toFixed(2)}
-                                      </div>
-                                      <div className={`text-[9px] font-bold ${
-                                        isHighlighted 
-                                          ? 'text-white/90' 
-                                          : prod.stockQuantity === 0 
-                                            ? 'text-red-600 dark:text-red-400' 
-                                            : prod.stockQuantity <= 3 
-                                              ? 'text-amber-600 dark:text-amber-400' 
-                                              : 'text-green-600 dark:text-green-400'
-                                      }`}>
-                                        Stock: {prod.stockQuantity}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
+                            {filteredProducts.map((p, idx) => (
+                              <div
+                                key={p.id}
+                                ref={(el) => { itemRefs.current[idx] = el; }}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  selectProduct(p, false); // select without auto-add
+                                }}
+                                className={`px-2 py-1.5 cursor-pointer flex justify-between items-center text-[11px] ${
+                                  highlightedIndex === idx
+                                    ? 'bg-teal-50 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 font-semibold'
+                                    : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'
+                                }`}
+                              >
+                                <span className="flex-1 overflow-hidden whitespace-nowrap text-ellipsis pr-2">
+                                  {p.name}
+                                  {p.dosage && ` ${p.dosage}`}
+                                  {p.presentation && ` ${p.presentation}`}
+                                  {p.form && ` ${p.form}`}
+                                </span>
+                                <span className="text-[10px] text-slate-400 whitespace-nowrap shrink-0">{p.code}</span>
+                              </div>
+                            ))}
+                            {filteredProducts.length === 0 && (
+                              <div className="px-3 py-3 text-center text-[11px] text-slate-500">No products found</div>
+                            )}
                           </div>
-
-                          {/* Keyboard Navigation Footer Hint */}
-                          <div className="bg-slate-50 dark:bg-slate-800/90 border-t border-slate-200 dark:border-slate-700 px-3 py-1.5 text-[10px] text-slate-500 dark:text-slate-400 flex items-center justify-end shrink-0">
-                            <span className="text-[9px] text-slate-400">
-                              {filteredProducts.length} items
-                            </span>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                                    <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      Unit
-                    </label>
-                  </div>
-                  <select
-                    ref={unitInputRef}
-                    id="purchase-item-unit"
-                    value={itemUnit}
-                    onChange={(e) => setItemUnit(e.target.value as 'box' | 'piece')}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        expiryInputRef.current?.focus();
-                        expiryInputRef.current?.select();
-                      }
-                    }}
-                    disabled={!selectedProduct?.isDivisible}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 disabled:opacity-50 disabled:bg-slate-100 dark:disabled:bg-slate-900"
-                  >
-                    <option value="box">Box</option>
-                    {selectedProduct?.isDivisible && (
-                      <option value="piece">{selectedProduct.pieceName || 'Piece'}</option>
-                    )}
-                  </select>
-                </div>
-
-                <div className="md:col-span-2">
-                                    <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      Expiry
-                    </label>
-                  </div>
-                  <input
-                    ref={expiryInputRef}
-                    id="purchase-item-expiry"
-                    type="text"
-                    value={displayExpiry}
-                    onChange={handleExpiryChange}
-                    onFocus={(e) => e.target.select()}
-                    onBlur={handleExpiryBlur}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleExpiryBlur();
-                        batchInputRef.current?.focus();
-                        batchInputRef.current?.select();
-                      }
-                    }}
-                    placeholder="DD/MM/YYYY"
-                    className="w-[105px] rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 font-mono text-center"
-                  />
-                </div>
-
-                <div>
-                                    <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      Batch
-                    </label>
-                  </div>
-                  <input
-                    ref={batchInputRef}
-                    id="purchase-item-batch"
-                    type="text"
-                    value={itemBatch}
-                    onChange={(e) => setItemBatch(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        qtyInputRef.current?.focus();
-                        qtyInputRef.current?.select();
-                      }
-                    }}
-                    placeholder="Batch"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 font-mono"
-                  />
-                </div>
-
-                <div>
-                                    <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      Qty
-                    </label>
-                  </div>
-                  <input
-                    ref={qtyInputRef}
-                    id="purchase-item-qty"
-                    type="number"
-                    value={itemQty}
-                    onChange={(e) => setItemQty(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        vatInputRef.current?.focus();
-                      }
-                    }}
-                    placeholder="Qty"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-
-                <div>
-                                    <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      VAT
-                    </label>
-                  </div>
-                  <div className="relative">
-                    <select
-                      ref={vatInputRef}
-                      value={itemVATChoice}
-                      onChange={(e) => setItemVATChoice(e.target.value as 'setting' | 'none')}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          publicPriceInputRef.current?.focus();
-                          publicPriceInputRef.current?.select();
-                        }
-                      }}
-                      className="w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3 pr-8 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 focus:outline-hidden focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
-                    >
-                      <option value="setting">
-                        {selectedProduct && (settings.vatRates?.[selectedProduct.category] || 0) > 0
-                          ? `${settings.vatRates?.[selectedProduct.category]}%`
-                          : '0 VAT'}
-                      </option>
-                      <option value="none">0 VAT</option>
-                    </select>
-                    <ChevronDown className="absolute right-2 top-2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                  </div>
-                </div>
-
-                <div className="md:col-span-2">
-                                    <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      Pub Price
-                    </label>
-                  </div>
-                  <input
-                    ref={publicPriceInputRef}
-                    type="text"
-                    value={formatWithCommas(itemPublicPrice.split('.')[0])}
-                    onChange={(e) => setItemPublicPrice(e.target.value.replace(/,/g, '').split('.')[0])}
-                    onFocus={(e) => {
-                      setIsPublicPriceFocused(true);
-                      e.target.select();
-                    }}
-                    onBlur={() => setIsPublicPriceFocused(false)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        discountInputRef.current?.focus();
-                        discountInputRef.current?.select();
-                      }
-                    }}
-                    placeholder="Pub Price"
-                    style={{ fieldSizing: "content", minWidth: "100%" } as any}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-
-                <div>
-                                    <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      Disc %
-                    </label>
-                  </div>
-                  <input
-                    ref={discountInputRef}
-                    type="text"
-                    value={formatWithCommas(itemDiscount.split('.')[0])}
-                    onChange={(e) => setItemDiscount(e.target.value.replace(/,/g, '').split('.')[0])}
-                    onFocus={(e) => {
-                      setIsDiscountFocused(true);
-                      e.target.select();
-                    }}
-                    onBlur={() => setIsDiscountFocused(false)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        costInputRef.current?.focus();
-                        costInputRef.current?.select();
-                      }
-                    }}
-                    placeholder="Disc %"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                                    <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      Cost
-                    </label>
-                  </div>
-                  <input
-                    ref={costInputRef}
-                    id="purchase-item-cost"
-                    type="text"
-                    value={formatWithCommas(itemCostUSD.split('.')[0])}
-                    onChange={(e) => setItemCostUSD(e.target.value.replace(/,/g, '').split('.')[0])}
-                    onFocus={(e) => e.target.select()}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        totalInputRef.current?.focus();
-                        totalInputRef.current?.select();
-                      }
-                    }}
-                    placeholder="Cost"
-                    style={{ fieldSizing: "content", minWidth: "100%" } as any}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                                    <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                      Total
-                    </label>
-                  </div>
-                  <input
-                    ref={totalInputRef}
-                    type="text"
-                    value={formatWithCommas(itemTotalInput.split('.')[0])}
-                    onChange={(e) => {
-                      const raw = e.target.value.replace(/,/g, '').split('.')[0];
-                      setItemTotalInput(raw);
-                      const newTotal = parseFloat(raw);
-                      if (!isNaN(newTotal)) {
-                        const qty = parseInt(itemQty, 10);
-                        const safeQty = isNaN(qty) || qty <= 0 ? 1 : qty;
-                        let newCost = newTotal / safeQty;
-                        if (purchaseCurrency === 'LBP') newCost = Math.round(newCost);
-                        setItemCostUSD(newCost.toString());
-                      }
-                    }}
-                    onFocus={(e) => {
-                      setIsTotalFocused(true);
-                      e.target.select();
-                    }}
-                    onBlur={() => {
-                      setIsTotalFocused(false);
-                      const raw = itemTotalInput.replace(/,/g, '');
-                      const val = parseFloat(raw) || 0;
-                      setItemTotalInput(val.toString());
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddItemToInvoice();
-                      }
-                    }}
-                    placeholder="Total"
-                    style={{ fieldSizing: "content", minWidth: "100%" } as any}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
+                        )}
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <select
+                          ref={unitInputRef}
+                          value={itemUnit}
+                          onChange={(e) => setItemUnit(e.target.value as 'box' | 'piece')}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              qtyInputRef.current?.focus();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        >
+                          <option value="box">Box</option>
+                          <option value="piece">Piece</option>
+                        </select>
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          ref={qtyInputRef}
+                          type="number"
+                          value={itemQty}
+                          onChange={(e) => setItemQty(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              freeInputRef.current?.focus();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        />
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          ref={freeInputRef}
+                          type="number"
+                          value={itemFree}
+                          onChange={(e) => setItemFree(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              batchInputRef.current?.focus();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        />
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          ref={batchInputRef}
+                          type="text"
+                          value={itemBatch}
+                          onChange={(e) => setItemBatch(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              expiryInputRef.current?.focus();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100 uppercase"
+                        />
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          ref={expiryInputRef}
+                          type="text"
+                          value={displayExpiry}
+                          onChange={handleExpiryChange}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              document.getElementById('input-pub-price')?.focus();
+                            }
+                          }}
+                          placeholder="MM/YYYY"
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        />
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          id="input-pub-price"
+                          type="number"
+                          value={itemPublicPrice}
+                          onChange={(e) => setItemPublicPrice(e.target.value)}
+                          onFocus={(e) => { setIsPublicPriceFocused(true); e.target.select(); }}
+                          onBlur={() => setIsPublicPriceFocused(false)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              document.getElementById('input-discount')?.focus();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        />
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          id="input-discount"
+                          type="number"
+                          value={itemDiscount}
+                          onChange={(e) => setItemDiscount(e.target.value)}
+                          onFocus={(e) => { setIsDiscountFocused(true); e.target.select(); }}
+                          onBlur={() => setIsDiscountFocused(false)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              document.getElementById('input-cost')?.focus();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-teal-700 dark:text-teal-300"
+                        />
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          id="input-cost"
+                          type="number"
+                          value={itemCostUSD}
+                          onChange={(e) => setItemCostUSD(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              document.getElementById('input-vat')?.focus();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        />
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <select
+                          id="input-vat"
+                          value={itemVATChoice}
+                          onChange={(e) => setItemVATChoice(e.target.value as 'setting' | 'none')}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              document.getElementById('input-total')?.focus();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        >
+                          <option value="setting">{selectedProduct && settings.vatRates?.[selectedProduct.category] ? `${settings.vatRates[selectedProduct.category]}%` : '0%'}</option>
+                          <option value="none">0%</option>
+                        </select>
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700 align-middle">
+                        <div className="px-1.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                          {(() => {
+                            const cost = parseFloat(itemCostUSD) || 0;
+                            const pubPrice = parseFloat(itemPublicPrice) || 0;
+                            const p = pubPrice - cost;
+                            if (cost > 0) return ((p / cost) * 100).toFixed(1) + '%';
+                            return '0.0%';
+                          })()}
+                        </div>
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          id="input-total"
+                          type="number"
+                          value={itemTotalInput}
+                          onChange={(e) => setItemTotalInput(e.target.value)}
+                          onFocus={(e) => { setIsTotalFocused(true); e.target.select(); }}
+                          onBlur={() => setIsTotalFocused(false)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddItemToInvoice();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-bold text-slate-800 dark:text-slate-100"
+                        />
+                      </td>
+                      <td className="p-1 text-center align-middle">
+                        <button
+                          type="button"
+                          onClick={handleAddItemToInvoice}
+                          className="text-teal-600 hover:text-teal-800 dark:text-teal-400 p-1 rounded hover:bg-teal-100 dark:hover:bg-teal-900/50"
+                          title="Add Item (Enter)"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-
-              {/* Selected Product Info & Lot Details */}
-              {selectedProduct && (
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70 dark:border-slate-700/70 text-[11px]">
-                  <div className="flex flex-wrap items-center gap-2 text-slate-600 dark:text-slate-300">
-                    <span className="font-bold text-slate-900 dark:text-slate-100">
-                      {selectedProduct.name}
-                    </span>
-                    {(selectedProduct.dosage || selectedProduct.presentation || selectedProduct.form) && (
-                      <span className="text-slate-600 dark:text-slate-400 font-medium">
-                        {[selectedProduct.dosage, selectedProduct.presentation, selectedProduct.form]
-                          .map((s) => s?.trim())
-                          .filter(Boolean)
-                          .join(' ')}
-                      </span>
-                    )}
-                    {selectedProduct.barcode && (
-                      <span className="font-mono text-[10px] bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Barcode className="h-3 w-3" />
-                        {selectedProduct.barcode}
-                      </span>
-                    )}
-                    <span id="purchase-item-stock-qty" className="text-slate-500">
-                      In Stock: <strong className="text-slate-700 dark:text-slate-200">{formatStockBoxesAndPieces(selectedProduct)}</strong>
-                    </span>
-                    {selectedProduct.agent && (
-                      <span className="text-slate-500">
-                        Agent: <strong className="text-slate-700 dark:text-slate-200">{selectedProduct.agent}</strong>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Items List in New Purchase */}
-            <div className="flex-1 min-h-48 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900/40 shadow-sm">
-              {items.length === 0 ? (
-                <div className="p-8 text-center text-slate-400">
-                  <div className="mb-2 flex justify-center">
-                    <FileText className="h-8 w-8 opacity-20" />
-                  </div>
-                  No items added to invoice yet.
-                </div>
-              ) : (
-                items.map((it, idx) => {
-                  const productDetails = products.find(p => p.id === it.productId);
-                  const vatRate = productDetails ? (settings.vatRates?.[productDetails.category] || 0) : 0;
-                  return (
-                    <PurchaseAddedItemRow
-                      key={idx}
-                      item={it}
-                      index={idx}
-                      productDetails={productDetails}
-                      purchaseCurrency={purchaseCurrency}
-                      exchangeRate={exchangeRate}
-                      vatRate={vatRate}
-                      onChange={(index, updated) => {
-                        setItems(prev => {
-                          const newItems = [...prev];
-                          newItems[index] = updated;
-                          return newItems;
-                        });
-                      }}
-                      onRemove={handleRemoveItem}
-                    />
-                  );
-                })
-              )}
             </div>
 
             <div className="mt-auto flex items-end justify-between w-full pt-2">
@@ -2093,6 +2538,20 @@ export const PurchaseView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add Stock Product Modal directly from Purchase Form */}
+      {isAddStockProductModalOpen && (
+        <AddStockProductModal
+          isOpen={isAddStockProductModalOpen}
+          onClose={() => setIsAddStockProductModalOpen(false)}
+          initialBarcode={addStockInitialData.barcode}
+          initialCode={addStockInitialData.code}
+          initialName={addStockInitialData.name}
+          initialBatch={addStockInitialData.batch}
+          initialExpiry={addStockInitialData.expiry}
+          onProductAdded={handleStockProductAdded}
+        />
       )}
     </div>
   );

@@ -176,6 +176,11 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
                 >
                   {product.category}
                 </span>
+                {product.subcategory && (
+                  <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    {product.subcategory}
+                  </span>
+                )}
                 <span
                   className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                     isOutOfStock
@@ -189,9 +194,11 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
                 </span>
               </div>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 flex items-center space-x-2">
-                <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
-                  CODE: {product.code}
-                </span>
+                {product.code && (
+                  <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
+                    CODE: {product.code}
+                  </span>
+                )}
                 {product.dosage && <span>• {product.dosage}</span>}
                 {product.form && <span>• {product.form}</span>}
                 {product.presentation && <span>• {product.presentation}</span>}

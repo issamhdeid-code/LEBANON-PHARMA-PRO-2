@@ -21,6 +21,8 @@ import { PriceUpdaterModal } from './components/stock/PriceUpdaterModal';
 import { CSVImportModal } from './components/stock/CSVImportModal';
 import { MOPHPriceUpdaterModal } from './components/stock/MOPHPriceUpdaterModal';
 import { Product } from './types/pharmacy';
+import { NotificationToastContainer } from './components/common/NotificationToastContainer';
+import { NotificationsModal } from './components/common/NotificationsModal';
 
 const PharmacyAppContent: React.FC = () => {
   const { currentUser, activeTab, setActiveTab, users, settings } = usePharmacy();
@@ -30,6 +32,7 @@ const PharmacyAppContent: React.FC = () => {
   const [priceUpdaterCode, setPriceUpdaterCode] = useState('');
   const [isCSVImportOpen, setIsCSVImportOpen] = useState(false);
   const [isMOPHUpdaterOpen, setIsMOPHUpdaterOpen] = useState(false);
+  const [isGlobalNotificationsOpen, setIsGlobalNotificationsOpen] = useState(false);
 
   // Selected drug for scientifics view
   const [selectedScientificProduct, setSelectedScientificProduct] = useState<Product | null>(null);
@@ -180,6 +183,13 @@ const PharmacyAppContent: React.FC = () => {
       )}
 
       
+      {/* Global In-App Notification Toasts */}
+      <NotificationToastContainer onOpenCenter={() => setIsGlobalNotificationsOpen(true)} />
+
+      {/* Global Notifications Center Modal */}
+      {isGlobalNotificationsOpen && (
+        <NotificationsModal onClose={() => setIsGlobalNotificationsOpen(false)} />
+      )}
     </div>
   );
 };

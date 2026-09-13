@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { Product, ProductCategory } from '../../types/pharmacy';
+import { getSubcategoryOptions } from '../../constants/subcategories';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { formatLBPValue } from '../../utils/priceUtils';
 
@@ -35,11 +36,19 @@ export const BulkEditStockModal: React.FC<BulkEditStockModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const { bulkUpdateProducts, exchangeRate, formatLBP, formatUSD, suppliers } = usePharmacy();
+  const { settings, products, bulkUpdateProducts, exchangeRate, formatLBP, formatUSD, suppliers } = usePharmacy();
 
   // Field activation toggles
   const [applyCategory, setApplyCategory] = useState(false);
   const [categoryValue, setCategoryValue] = useState<ProductCategory>('drug');
+
+  const [applySubcategory, setApplySubcategory] = useState(false);
+  const [subcategoryValue, setSubcategoryValue] = useState('');
+
+  const relevantCategory = applyCategory ? categoryValue : (selectedProducts[0]?.category || 'drug');
+  const availableSubcategories = useMemo(() => {
+    return getSubcategoryOptions(relevantCategory, products, settings.customGlobalSubcategories);
+  }, [relevantCategory, products, settings.customGlobalSubcategories]);
 
   const [applyAgent, setApplyAgent] = useState(false);
   const [agentValue, setAgentValue] = useState(suppliers[0]?.name || 'Mersaco Sal');
@@ -97,6 +106,10 @@ export const BulkEditStockModal: React.FC<BulkEditStockModalProps> = ({
 
     if (applyCategory) {
       updates.category = categoryValue;
+    }
+
+    if (applySubcategory) {
+      updates.subcategory = subcategoryValue.trim() || undefined;
     }
 
     if (applyAgent) {
@@ -187,6 +200,7 @@ export const BulkEditStockModal: React.FC<BulkEditStockModalProps> = ({
   // Check how many changes are enabled
   const activeChangesCount = [
     applyCategory,
+    applySubcategory,
     applyAgent,
     applyForm,
     applyPriceAdjustment,
@@ -210,6 +224,8 @@ export const BulkEditStockModal: React.FC<BulkEditStockModalProps> = ({
     selectedProducts,
     applyCategory,
     categoryValue,
+    applySubcategory,
+    subcategoryValue,
     applyAgent,
     agentValue,
     customAgent,
@@ -308,11 +324,11 @@ export const BulkEditStockModal: React.FC<BulkEditStockModalProps> = ({
 
             {applyCategory && (
               <div className="pl-6 pt-1 flex flex-wrap gap-2">
-                {(['drug', 'vitamins', 'cosmetics', 'para'] as ProductCategory[]).map((cat) => (
+                {([...(['drug', 'vitamins', 'cosmetics', 'para'] as ProductCategory[]), ...(settings.customCategories || [])]).map((cat) => (
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => setCategoryValue(cat)}
+                    onClick={() => setCategoryValue(cat as ProductCategory)}
                     className={`px-3 py-1.5 rounded-md font-bold uppercase text-[11px] transition-all cursor-pointer ${
                       categoryValue === cat
                         ? 'bg-teal-700 text-white shadow-2xs'
@@ -322,6 +338,70 @@ export const BulkEditStockModal: React.FC<BulkEditStockModalProps> = ({
                     {cat}
                   </button>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* Section: Subcategory */}
+          <div
+            className={`p-3 rounded-lg border transition-all ${
+              applySubcategory
+                ? 'bg-white dark:bg-slate-800/90 border-teal-500/80 shadow-xs'
+                : 'bg-white/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 opacity-80'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-900 dark:text-slate-100">
+                <input
+                  type="checkbox"
+                  checked={applySubcategory}
+                  onChange={(e) => setApplySubcategory(e.target.checked)}
+                  className="rounded text-teal-600 focus:ring-teal-500 h-4 w-4 cursor-pointer"
+                />
+                <Tag className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
+                <span>Update Subcategory</span>
+              </label>
+              {applySubcategory && (
+                <span className="text-[10px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">
+                  Armed
+                </span>
+              )}
+            </div>
+
+            {applySubcategory && (
+              <div className="pl-6 pt-1 space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {availableSubcategories.map((sub) => (
+                    <button
+                      key={sub}
+                      type="button"
+                      onClick={() => setSubcategoryValue(sub)}
+                      className={`px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                        subcategoryValue.toLowerCase() === sub.toLowerCase()
+                          ? 'bg-teal-700 text-white font-bold shadow-2xs'
+                          : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                      }`}
+                    >
+                      {sub}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[11px] text-slate-400">Custom Subcategory:</span>
+                  <input
+                    type="text"
+                    list="bulk-edit-subcategories-list"
+                    value={subcategoryValue}
+                    onChange={(e) => setSubcategoryValue(e.target.value)}
+                    placeholder="e.g. Baby Products, Vitamin D Supplements..."
+                    className="flex-1 max-w-sm bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2.5 py-1 text-xs text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                  />
+                  <datalist id="bulk-edit-subcategories-list">
+                    {availableSubcategories.map((sub) => (
+                      <option key={sub} value={sub} />
+                    ))}
+                  </datalist>
+                </div>
               </div>
             )}
           </div>
@@ -881,6 +961,16 @@ export const BulkEditStockModal: React.FC<BulkEditStockModalProps> = ({
                           <ArrowRight className="h-3 w-3 text-teal-500" />
                           <span className="text-purple-600 font-bold uppercase text-[9px]">
                             {updates.category}
+                          </span>
+                        </div>
+                      )}
+
+                      {applySubcategory && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-slate-400 text-[10px]">{original.subcategory || 'None'}</span>
+                          <ArrowRight className="h-3 w-3 text-teal-500" />
+                          <span className="text-teal-600 dark:text-teal-400 font-bold text-[10px]">
+                            {updates.subcategory || 'None'}
                           </span>
                         </div>
                       )}

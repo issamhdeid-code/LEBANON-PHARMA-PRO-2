@@ -24,8 +24,10 @@ import {
   HardDrive,
   Info,
   Monitor,
+  Package,
 } from 'lucide-react';
 import { UsersPanel } from './UsersPanel';
+import { StockSettingsPanel } from './StockSettingsPanel';
 import {
   backupToGoogleDrive,
   restoreFromGoogleDrive,
@@ -41,7 +43,7 @@ import { DesktopWindow } from '../common/DesktopWindow';
 
 export const SettingsView: React.FC = () => {
   const { settings, updateSettings, syncStatus, addNotification, exportBackup, restoreBackup, clearAllData } = usePharmacy();
-  const [settingsTab, setSettingsTab] = useState<'display' | 'network' | 'notifications' | 'backup' | 'users'>('display');
+  const [settingsTab, setSettingsTab] = useState<'display' | 'network' | 'notifications' | 'backup' | 'users' | 'stock'>('display');
   const [isTesting, setIsTesting] = useState(false);
   const [showClearDataModal, setShowClearDataModal] = useState(false);
   const [mode, setMode] = useState<'main' | 'secondary'>(settings.syncMode || 'main');
@@ -288,19 +290,9 @@ export const SettingsView: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full p-6 overflow-y-auto bg-slate-50 dark:bg-slate-900">
-      <div className="max-w-3xl mx-auto space-y-6">
+    <div className="w-full h-full p-4 md:p-6 overflow-y-auto bg-slate-50 dark:bg-slate-900">
+      <div className="max-w-3xl mx-auto space-y-4">
         
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-            <Network className="h-6 w-6 text-teal-600" />
-            Network & Synchronization Settings
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Configure how this PC connects to other instances of the Pharmacy application on your local network.
-          </p>
-        </div>
-
         <div className="flex gap-1 border-b border-slate-200 dark:border-slate-700">
           <button
             onClick={() => setSettingsTab('display')}
@@ -351,6 +343,16 @@ export const SettingsView: React.FC = () => {
             }`}
           >
             <CloudUpload className="h-4 w-4" /> Backup
+          </button>
+          <button
+            onClick={() => setSettingsTab('stock')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              settingsTab === 'stock'
+                ? 'border-teal-600 text-teal-700 dark:text-teal-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            <Package className="h-4 w-4" /> Stock
           </button>
         </div>
 
@@ -409,6 +411,8 @@ export const SettingsView: React.FC = () => {
         )}
 
         {settingsTab === 'users' && <UsersPanel />}
+
+        {settingsTab === 'stock' && <StockSettingsPanel />}
 
         {settingsTab === 'notifications' && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">

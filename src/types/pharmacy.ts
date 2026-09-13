@@ -40,6 +40,7 @@ export interface Product {
   barcode?: string;
   name: string;
   category: ProductCategory;
+  subcategory?: string; // Subclassification (e.g. "Baby Products" for para, "Vitamin D Supplements" for vitamins)
   ingredients: string;
   dosage: string;
   presentation: string;
@@ -133,6 +134,8 @@ export interface PurchaseItem {
   batchNumber: string;
   expiryDate: string;
   isPiece?: boolean;
+  freeQty?: number;
+  vatRate?: number;
 }
 
 export interface PurchaseInvoice {
@@ -195,7 +198,9 @@ export interface PharmacySettings {
   backupLastStatus?: 'success' | 'failed';
   backupLastSummary?: string;
   layoutStyle: 'standard' | 'compact' | 'touch';
+  enableLowStockAlerts?: boolean;
   lowStockThreshold: number;
+  enableExpiryAlerts?: boolean;
   expiryWarningDays: number;
   notificationsEnabled?: boolean;
   notifyInventory: boolean;
@@ -216,6 +221,10 @@ export interface PharmacySettings {
   deviceInstanceId?: string;
   // VAT configuration
   vatRates?: Record<ProductCategory, number>;
+  customCategories?: string[];
+  customGlobalSubcategories?: string[];
+  customForms?: string[];
+  customPresentations?: string[];
 }
 
 export type SyncStatus = 'offline' | 'connecting' | 'connected' | 'error';

@@ -14,8 +14,10 @@ import {
   ArrowRightLeft,
   FileText,
   Settings,
-  Wallet
+  Wallet,
+  Bell
 } from 'lucide-react';
+import { NotificationsModal } from '../common/NotificationsModal';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { RibbonTab } from '../../types/pharmacy';
 
@@ -27,7 +29,9 @@ export const TopRibbon: React.FC = () => {
     logout,
     settings,
     toggleDarkMode,
+    unreadCount,
   } = usePharmacy();
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
   const navItems: { id: RibbonTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -103,6 +107,20 @@ export const TopRibbon: React.FC = () => {
 
         {/* Right Status Actions & Profile */}
         <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
+          {/* Notification Center */}
+          <button
+            onClick={() => setIsNotificationsOpen(true)}
+            className="relative rounded p-1.5 text-teal-100 hover:bg-teal-600 hover:text-white transition-colors cursor-pointer"
+            title="System Notifications & Alerts"
+          >
+            <Bell className="h-4 w-4" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-extrabold text-white shadow-xs animate-pulse">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+          </button>
+
           {/* Dark Mode Toggle */}
           <button
             onClick={toggleDarkMode}
@@ -133,6 +151,9 @@ export const TopRibbon: React.FC = () => {
           )}
         </div>
       </nav>
+      {isNotificationsOpen && (
+        <NotificationsModal onClose={() => setIsNotificationsOpen(false)} />
+      )}
     </header>
   );
 };

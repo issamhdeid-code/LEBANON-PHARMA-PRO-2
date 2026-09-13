@@ -878,35 +878,41 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Check low stock and expiry periodically
   useEffect(() => {
     const checkAlerts = () => {
-      const lowStockItems = products.filter(p => p.stockQuantity <= (p.minStockAlert || settings.lowStockThreshold));
-      if (lowStockItems.length > 0) {
-        const itemNames = lowStockItems.slice(0, 3).map(p => `${p.name} (${p.stockQuantity} left)`).join(', ');
-        const extra = lowStockItems.length > 3 ? ` and ${lowStockItems.length - 3} others` : '';
-        addNotification(
-          'Low Inventory Alert',
-          `Critical stock level for: ${itemNames}${extra}. Replenish from supplier.`,
-          'inventory',
-          'warning'
-        );
+      if (settings.enableLowStockAlerts !== false) {
+        const lowStockItems = products.filter(p => {
+          const threshold = p.minStockAlert !== undefined ? p.minStockAlert : (settings.lowStockThreshold !== undefined ? settings.lowStockThreshold : 5);
+          return p.stockQuantity <= threshold;
+        });
+        if (lowStockItems.length > 0) {
+          const itemNames = lowStockItems.slice(0, 3).map(p => `${p.name} (${p.stockQuantity} left)`).join(', ');
+          const extra = lowStockItems.length > 3 ? ` and ${lowStockItems.length - 3} others` : '';
+          addNotification(
+            'Low Inventory Alert',
+            `Critical stock level for: ${itemNames}${extra}. Replenish from supplier.`,
+            'inventory',
+            'warning'
+          );
+        }
       }
 
-      // Check expiring items (< 90 days)
-      const now = new Date();
-      const warningThreshold = new Date(now.getTime() + settings.expiryWarningDays * 24 * 60 * 60 * 1000);
-      const expiringItems = products.filter(p => {
-        if (!p.expiryDate) return false;
-        const exp = new Date(p.expiryDate);
-        return exp > now && exp <= warningThreshold;
-      });
-
-      if (expiringItems.length > 0) {
-        const first = expiringItems[0];
-        addNotification(
-          'Medication Expiry Alert',
-          `${first.name} expires on ${first.expiryDate} (Batch: ${first.batchNumber}). Check dispensary shelf.`,
-          'expiry',
-          'warning'
-        );
+      if (settings.enableExpiryAlerts !== false) {
+        // Check expiring items (< 90 days)
+        const now = new Date();
+        const warningThreshold = new Date(now.getTime() + settings.expiryWarningDays * 24 * 60 * 60 * 1000);
+        const expiringItems = products.filter(p => {
+          if (!p.expiryDate) return false;
+          const exp = new Date(p.expiryDate);
+          return exp > now && exp <= warningThreshold;
+        });
+        if (expiringItems.length > 0) {
+          const first = expiringItems[0];
+          addNotification(
+            'Medication Expiry Alert',
+            `${first.name} expires on ${first.expiryDate} (Batch: ${first.batchNumber}). Check dispensary shelf.`,
+            'expiry',
+            'warning'
+          );
+        }
       }
     };
 

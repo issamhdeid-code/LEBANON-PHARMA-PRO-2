@@ -20,14 +20,16 @@ import {
   Sparkles,
   RefreshCw,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Dices
 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
 import { useDebounce } from '../../hooks/useDebounce';
 import { Product, ProductCategory, ScientificDrugInfo } from '../../types/pharmacy';
-import { formatStockDisplay } from '../../utils/stockUtils';
+import { getSubcategoryOptions, suggestSubcategory } from '../../constants/subcategories';
+import { formatStockDisplay, generateRandomBarcode } from '../../utils/stockUtils';
 import { resolveStraightforwardScientificInfo } from '../../services/scientificDataService';
 import { getPriceChangeInfoUSD, getPriceChangeInfoLBP, formatLBPValue } from '../../utils/priceUtils';
 import { PriceUpdaterModal } from './PriceUpdaterModal';
@@ -102,8 +104,20 @@ const parseExpiryDate = (dateStr?: string): { date: Date | null; displayMMYYYY: 
   return { date: null, displayMMYYYY: str };
 };
 
-const STOCK_GRID_COLUMNS = '40px 90px 110px minmax(130px, 1.6fr) minmax(125px, 1.2fr) 120px 105px 115px 75px 100px 100px 105px';
-const STOCK_MIN_WIDTH = 1215;
+const DEFAULT_STOCK_COL_WIDTHS: Record<string, number> = {
+  select: 36,
+  code: 80,
+  barcode: 100,
+  name: 200,
+  presentation: 140,
+  category: 110,
+  priceUSD: 85,
+  priceLBP: 110,
+  stockQuantity: 70,
+  expiryDate: 90,
+  agent: 120,
+  actions: 85,
+};
 
 interface StockTableRowProps {
   prod: Product;
@@ -117,9 +131,10 @@ interface StockTableRowProps {
   onOpenPrice: (code: string) => void;
   onViewScientific: (prod: Product) => void;
   onEdit: (prod: Product) => void;
+  onFilterSubcategory?: (subcat: string) => void;
 }
 
-const StockTableRow = React.memo(React.forwardRef<HTMLDivElement, StockTableRowProps & { dataIndex?: number; style?: React.CSSProperties }>(function StockTableRow({
+const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTableRowProps & { dataIndex?: number; style?: React.CSSProperties }>(function StockTableRow({
   prod,
   index,
   isSelected,
@@ -131,6 +146,7 @@ const StockTableRow = React.memo(React.forwardRef<HTMLDivElement, StockTableRowP
   onOpenPrice,
   onViewScientific,
   onEdit,
+  onFilterSubcategory,
   dataIndex,
   style,
 }, ref) {
@@ -215,23 +231,22 @@ const StockTableRow = React.memo(React.forwardRef<HTMLDivElement, StockTableRowP
   }, []);
 
   return (
-    <div
-      role="row"
+    <tr
       ref={ref}
       data-index={dataIndex}
-      style={{ gridTemplateColumns: STOCK_GRID_COLUMNS, ...style }}
       id={`stock-table-row-${prod.id}`}
       onClick={() => onOpenDetails(prod)}
-      className={`grid items-center text-xs hover:bg-blue-50/70 dark:hover:bg-slate-800/60 cursor-pointer border-b transition-colors ${
+      style={style}
+      className={`text-xs hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors ${
         isRowSelected
-          ? 'bg-teal-50/80 dark:bg-teal-950/50 border-teal-200 dark:border-teal-800'
+          ? 'bg-teal-50/80 dark:bg-teal-950/50'
           : isSelected
-          ? 'bg-blue-50/50 dark:bg-slate-800/40 border-gray-100 dark:border-slate-800/80'
-          : 'bg-white dark:bg-slate-900 border-gray-100 dark:border-slate-800/80'
+          ? 'bg-slate-100/70 dark:bg-slate-800/70'
+          : 'bg-white dark:bg-slate-900'
       }`}
     >
-      <div role="cell"
-        className="px-3 py-2 text-center"
+      <td
+        className="p-1 px-2 text-center border-r border-slate-200 dark:border-slate-700 whitespace-nowrap"
         onClick={(e) => {
           e.stopPropagation();
           onToggleRowSelect(prod.id, index, e.shiftKey);
@@ -247,22 +262,22 @@ const StockTableRow = React.memo(React.forwardRef<HTMLDivElement, StockTableRowP
           }}
           className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer align-middle"
         />
-      </div>
-      <div role="cell" className="px-3 py-2 font-mono text-gray-500 dark:text-slate-400">
-        {prod.code}
-      </div>
-      <div role="cell" className="px-3 py-2 font-mono text-gray-500 dark:text-slate-400">
+      </td>
+      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap font-mono text-slate-600 dark:text-slate-300">
+        {prod.code || '-'}
+      </td>
+      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap font-mono text-slate-600 dark:text-slate-300">
         {prod.barcode || '-'}
-      </div>
-      <div role="cell" className="px-3 py-2 font-bold text-slate-900 dark:text-slate-100">
-        <div>{prod.name}</div>
-        <div className="text-[10px] font-normal text-gray-400">
+      </td>
+      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 font-semibold text-slate-800 dark:text-slate-100 min-w-0">
+        <div className="truncate">{prod.name}</div>
+        <div className="text-[10px] font-normal text-slate-400 dark:text-slate-500 truncate">
           {prod.dosage} • {prod.form}
         </div>
-      </div>
-      <div role="cell"
+      </td>
+      <td
         id={`td-stock-presentation-${prod.id}`}
-        className="px-3 py-2 text-slate-700 dark:text-slate-300 min-w-0 truncate"
+        className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-0 truncate"
         title={prod.presentation || ''}
       >
         {prod.presentation ? (
@@ -270,23 +285,37 @@ const StockTableRow = React.memo(React.forwardRef<HTMLDivElement, StockTableRowP
         ) : (
           <span className="text-gray-400 dark:text-slate-500 italic">-</span>
         )}
-      </div>
-      <div role="cell" className="px-3 py-2">
-        <span
-          className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-            prod.category === 'drug'
-              ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300'
-              : prod.category === 'vitamins'
-              ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/70 dark:text-orange-300'
-              : prod.category === 'cosmetics'
-              ? 'bg-pink-100 text-pink-800 dark:bg-pink-950/70 dark:text-pink-300'
-              : 'bg-teal-100 text-teal-800 dark:bg-teal-950/70 dark:text-teal-300'
-          }`}
-        >
-          {prod.category}
-        </span>
-      </div>
-      <div role="cell" className="px-3 py-2 text-right font-medium text-blue-600 dark:text-blue-400">
+      </td>
+      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">
+        <div className="flex flex-col gap-0.5 items-start">
+          <span
+            className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
+              prod.category === 'drug'
+                ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300'
+                : prod.category === 'vitamins'
+                ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/70 dark:text-orange-300'
+                : prod.category === 'cosmetics'
+                ? 'bg-pink-100 text-pink-800 dark:bg-pink-950/70 dark:text-pink-300'
+                : 'bg-teal-100 text-teal-800 dark:bg-teal-950/70 dark:text-teal-300'
+            }`}
+          >
+            {prod.category}
+          </span>
+          {prod.subcategory && (
+            <span
+              className="inline-block text-[9.5px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 px-1 py-0.2 rounded truncate max-w-[120px] cursor-pointer transition-colors"
+              title={`Subcategory: ${prod.subcategory} (Click to filter)`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onFilterSubcategory?.(prod.subcategory!);
+              }}
+            >
+              {prod.subcategory}
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-right font-medium text-slate-800 dark:text-slate-200">
         <div className="flex items-center justify-end gap-1">
           <span>${prod.priceUSD.toFixed(2)}</span>
           {changeUSD && (
@@ -307,8 +336,8 @@ const StockTableRow = React.memo(React.forwardRef<HTMLDivElement, StockTableRowP
             </span>
           )}
         </div>
-      </div>
-      <div role="cell" className="px-3 py-2 text-right font-medium text-green-700 dark:text-green-400">
+      </td>
+      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-right font-medium text-slate-800 dark:text-slate-200">
         <div className="flex items-center justify-end gap-1">
           <span>{formatLBPValue(prod.priceLBP)}</span>
           {changeLBP && (
@@ -329,32 +358,32 @@ const StockTableRow = React.memo(React.forwardRef<HTMLDivElement, StockTableRowP
             </span>
           )}
         </div>
-      </div>
-      <div role="cell" className="px-3 py-2 text-center">
+      </td>
+      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-center font-medium">
         <span
           className={`font-bold ${
             prod.stockQuantity === 0
               ? 'text-red-600 dark:text-red-400 font-extrabold'
               : prod.stockQuantity <= 3
               ? 'text-amber-600 dark:text-amber-400'
-              : 'text-green-600 dark:text-green-400'
+              : 'text-slate-800 dark:text-slate-200'
           }`}
         >
           {formatStockDisplay(prod.stockQuantity, prod.isDivisible, prod.piecesPerBox, prod.pieceName)}
         </span>
-      </div>
-      <div role="cell" className="px-3 py-2 whitespace-nowrap">
+      </td>
+      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">
         {renderExpiryCellView(prod)}
-      </div>
-      <div role="cell" className="px-3 py-2 text-gray-500 dark:text-slate-400 min-w-0 truncate">
-        {prod.agent}
-      </div>
-      <div role="cell" className="px-3 py-2 text-right">
+      </td>
+      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-0 truncate" title={prod.agent || ''}>
+        {prod.agent || '-'}
+      </td>
+      <td className="p-1 px-2 whitespace-nowrap text-right">
         <div className="flex items-center justify-end space-x-1" onClick={(e) => e.stopPropagation()}>
           {/* Quick Price Update by Code Button */}
           <button
             onClick={() => onOpenPrice(prod.code)}
-            className="rounded p-1 text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950/40"
+            className="rounded p-1 text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950/40 cursor-pointer transition-colors"
             title="Update price for this drug"
           >
             <Tag className="h-3.5 w-3.5" />
@@ -364,7 +393,7 @@ const StockTableRow = React.memo(React.forwardRef<HTMLDivElement, StockTableRowP
           {prod.category === 'drug' && (
             <button
               onClick={() => onViewScientific(prod)}
-              className="rounded p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40"
+              className="rounded p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer transition-colors"
               title="View Full Scientific Dossier"
             >
               <BookOpen className="h-3.5 w-3.5" />
@@ -374,14 +403,14 @@ const StockTableRow = React.memo(React.forwardRef<HTMLDivElement, StockTableRowP
           {/* Edit Product */}
           <button
             onClick={() => onEdit(prod)}
-            className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200 cursor-pointer transition-colors"
             title="Edit Item Details"
           >
             <Edit2 className="h-3.5 w-3.5" />
           </button>
         </div>
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }));
 
@@ -401,6 +430,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     suppliers,
     addSupplier,
     searchScientificDataOnline,
+    settings,
   } = usePharmacy();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -413,6 +443,47 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   });
 
   const [sortConfig, setSortConfig] = useState<{ key: SortKey, direction: 'asc' | 'desc' } | null>(null);
+
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('stock_table_col_widths');
+      if (saved) return { ...DEFAULT_STOCK_COL_WIDTHS, ...JSON.parse(saved) };
+    } catch {}
+    return DEFAULT_STOCK_COL_WIDTHS;
+  });
+
+  const handleColResizeStart = (e: React.MouseEvent, col: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.pageX;
+    const startWidth = colWidths[col] || 100;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.pageX - startX;
+      setColWidths((prev) => {
+        const updated = {
+          ...prev,
+          [col]: Math.max(35, startWidth + delta),
+        };
+        try {
+          localStorage.setItem('stock_table_col_widths', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = 'default';
+      document.body.style.userSelect = 'auto';
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
 
   const handleSort = (key: SortKey) => {
     let direction: 'asc' | 'desc' = 'asc';
@@ -440,12 +511,16 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [isFetchingScientifics, setIsFetchingScientifics] = useState(false);
+  const [showDiscardConfirmModal, setShowDiscardConfirmModal] = useState(false);
 
   // Form State
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string>('all');
   const [formCode, setFormCode] = useState('');
   const [formBarcode, setFormBarcode] = useState('');
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState<ProductCategory>('drug');
+  const [formSubcategory, setFormSubcategory] = useState('');
+  const [isCustomFormSubcategory, setIsCustomFormSubcategory] = useState(false);
   const [formIngredients, setFormIngredients] = useState('');
   const [formDosage, setFormDosage] = useState('');
   const [formPediatricDosage, setFormPediatricDosage] = useState('');
@@ -473,10 +548,32 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   const [formSideEffects, setFormSideEffects] = useState('');
   const [formGenerics, setFormGenerics] = useState('');
 
+  // Available subcategories for filtering based on current category
+  const availableFilterSubcategories = useMemo(() => {
+    return getSubcategoryOptions(selectedCategory, products, settings.customGlobalSubcategories);
+  }, [selectedCategory, products, settings.customGlobalSubcategories]);
+
+  // All subcategories for the active modal form (shows all subcategories with custom support)
+  const allFormSubcategories = useMemo(() => {
+    const list = getSubcategoryOptions('all', products, settings.customGlobalSubcategories);
+    if (formSubcategory && !list.includes(formSubcategory) && !isCustomFormSubcategory) {
+      return [formSubcategory, ...list];
+    }
+    return list;
+  }, [products, formSubcategory, isCustomFormSubcategory, settings.customGlobalSubcategories]);
+
+  // Smart suggestion for form subcategory
+  const suggestedFormSubcategory = useMemo(() => {
+    return suggestSubcategory(formName, formCategory, formIngredients);
+  }, [formName, formCategory, formIngredients]);
+
   // Filter products
   const filteredProducts = useMemo(() => {
     return products.filter((prod) => {
       const matchCat = selectedCategory === 'all' || prod.category === selectedCategory;
+      const matchSubcat =
+        selectedSubcategory === 'all' ||
+        (prod.subcategory || '').trim().toLowerCase() === selectedSubcategory.trim().toLowerCase();
       const matchLow = !showLowStockOnly || prod.stockQuantity <= prod.minStockAlert;
       const q = debouncedSearchQuery.trim().toLowerCase();
       const rawExpiry = prod.expiryDate || prod.batches?.[0]?.expiryDate || '';
@@ -486,14 +583,15 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         (prod.code || '').toLowerCase().includes(q) ||
         (prod.barcode || '').toLowerCase().includes(q) ||
         (prod.name || '').toLowerCase().includes(q) ||
+        (prod.subcategory || '').toLowerCase().includes(q) ||
         (prod.presentation || '').toLowerCase().includes(q) ||
         (prod.ingredients || '').toLowerCase().includes(q) ||
         (prod.agent || '').toLowerCase().includes(q) ||
         rawExpiry.toLowerCase().includes(q) ||
         formattedExp.includes(q);
-      return matchCat && matchLow && matchSearch;
+      return matchCat && matchSubcat && matchLow && matchSearch;
     });
-  }, [products, selectedCategory, showLowStockOnly, debouncedSearchQuery]);
+  }, [products, selectedCategory, selectedSubcategory, showLowStockOnly, debouncedSearchQuery]);
 
   const sortedProducts = useMemo(() => {
     let sortableItems = [...filteredProducts];
@@ -632,14 +730,83 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedProductIds.size, isBulkEditModalOpen, isBulkDeleteModalOpen]);
 
+  const hasAddFormFilledData = useCallback(() => {
+    if (editingProductId) {
+      return false;
+    }
+    if (formName.trim() !== '') return true;
+    if (formBarcode.trim() !== '') return true;
+    if (formDosage.trim() !== '') return true;
+    if (formPediatricDosage.trim() !== '') return true;
+    if (formPresentation.trim() !== '') return true;
+    if (formSubcategory.trim() !== '' || isCustomFormSubcategory) return true;
+    if (formIngredients.trim() !== '') return true;
+    if (formPriceLBP.trim() !== '' && formPriceLBP.trim() !== '0') return true;
+    if (formPriceUSD.trim() !== '' && formPriceUSD.trim() !== '0' && formPriceUSD.trim() !== '0.00') return true;
+    if (formIsDivisible) return true;
+    if (formPiecesPerBox !== '' && formPiecesPerBox !== 0) return true;
+    if (formPieceName.trim() !== '') return true;
+    if (formPiecePriceUSD.trim() !== '') return true;
+    if (formCode.trim() !== '') return true;
+    if (formBatches.length > 0 && formBatches.some((b) => !!b.batchNumber?.trim() || !!b.expiryDate?.trim() || (b.quantity && b.quantity > 0))) return true;
+    if (
+      formIndications.trim() !== '' ||
+      formContraindications.trim() !== '' ||
+      formSideEffects.trim() !== '' ||
+      formGenerics.trim() !== ''
+    ) return true;
+    if (formCategory !== 'drug') return true;
+    if (formForm !== 'Tablet') return true;
+    if (suppliers.length > 0 && formAgent !== suppliers[0]?.name) return true;
+
+    return false;
+  }, [
+    editingProductId,
+    formName,
+    formBarcode,
+    formDosage,
+    formPediatricDosage,
+    formPresentation,
+    formSubcategory,
+    isCustomFormSubcategory,
+    formIngredients,
+    formPriceLBP,
+    formPriceUSD,
+    formIsDivisible,
+    formPiecesPerBox,
+    formPieceName,
+    formPiecePriceUSD,
+    formCode,
+    formBatches,
+    formIndications,
+    formContraindications,
+    formSideEffects,
+    formGenerics,
+    formCategory,
+    formForm,
+    formAgent,
+    suppliers
+  ]);
+
+  const handleRequestCloseEditModal = useCallback(() => {
+    if (!editingProductId && hasAddFormFilledData()) {
+      setShowDiscardConfirmModal(true);
+      return;
+    }
+    setIsEditModalOpen(false);
+  }, [editingProductId, hasAddFormFilledData]);
+
   const openAddModal = () => {
     setEditingProductId(null);
-    setFormCode(`DRUG-${Math.floor(100 + Math.random() * 900)}`);
+    setFormCode('');
     setFormBarcode('');
     setFormName('');
     setFormCategory('drug');
+    setFormSubcategory('');
+    setIsCustomFormSubcategory(false);
     setFormIngredients('');
     setFormDosage('');
+    setFormPediatricDosage('');
     setFormPresentation('');
     setFormIsDivisible(false);
     setFormPiecesPerBox('');
@@ -647,8 +814,8 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormPiecePriceUSD('');
     setIsPiecePriceManual(false);
     setFormForm('Tablet');
-    setFormPriceLBP('350000');
-    setFormPriceUSD((350000 / exchangeRate).toFixed(2));
+    setFormPriceLBP('');
+    setFormPriceUSD('');
     setFormMargin('20');
     setFormAgent(suppliers[0]?.name || 'Mersaco Sal');
     setFormBatches([]);
@@ -656,17 +823,23 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormContraindications('');
     setFormSideEffects('');
     setFormGenerics('');
+    setShowDiscardConfirmModal(false);
     setIsEditModalOpen(true);
   };
 
   const openEditModal = (prod: Product) => {
+    setShowDiscardConfirmModal(false);
     setEditingProductId(prod.id);
     setFormCode(prod.code);
     setFormBarcode(prod.barcode || '');
     setFormName(prod.name);
     setFormCategory(prod.category);
+    setFormSubcategory(prod.subcategory || '');
+    const allSubs = getSubcategoryOptions('all', products, settings.customGlobalSubcategories);
+    setIsCustomFormSubcategory(Boolean(prod.subcategory && !allSubs.includes(prod.subcategory)));
     setFormIngredients(prod.ingredients);
     setFormDosage(prod.dosage);
+    setFormPediatricDosage(prod.scientificInfo?.pediatricDosage || '');
     setFormPresentation(prod.presentation);
     setFormIsDivisible(prod.isDivisible || false);
     setFormPiecesPerBox(prod.piecesPerBox || '');
@@ -743,15 +916,17 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     const expiryDate = formBatches.length > 0 ? formBatches[0].expiryDate : '';
     const batchNumber = formBatches.length > 0 ? formBatches[0].batchNumber : '';
     const batches = [...formBatches];
+    const resolvedCode = formCode.trim().toUpperCase();
 
     let scientificInfo: ScientificDrugInfo | undefined = undefined;
     if (formCategory === 'drug') {
        const baseProd: Product = {
          id: editingProductId || 'temp',
-         code: formCode.trim().toUpperCase(),
+         code: resolvedCode,
          barcode: formBarcode.trim(),
          name: formName.trim(),
          category: formCategory,
+         subcategory: formSubcategory.trim() || undefined,
          ingredients: formIngredients,
          dosage: formDosage,
          presentation: formPresentation,
@@ -778,10 +953,11 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
 
     if (editingProductId) {
       updateProduct(editingProductId, {
-        code: formCode.trim().toUpperCase(),
+        code: resolvedCode,
         barcode: formBarcode.trim(),
         name: formName.trim(),
         category: formCategory,
+        subcategory: formSubcategory.trim() || undefined,
         ingredients: formIngredients,
         dosage: formDosage,
         presentation: formPresentation,
@@ -804,10 +980,11 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
       });
     } else {
       addProduct({
-        code: formCode.trim().toUpperCase(),
+        code: resolvedCode,
         barcode: formBarcode.trim(),
         name: formName.trim(),
         category: formCategory,
+        subcategory: formSubcategory.trim() || undefined,
         ingredients: formIngredients,
         dosage: formDosage,
         presentation: formPresentation,
@@ -933,24 +1110,63 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             />
           </div>
 
-          {/* Category Tabs */}
-          <div className="flex items-center gap-1">
-            {(['all', 'drug', 'vitamins', 'cosmetics', 'para'] as const).map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-2.5 py-0.5 rounded text-[11px] font-bold uppercase transition-colors ${
-                  selectedCategory === cat
-                    ? 'bg-teal-700 text-white shadow-2xs'
-                    : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200'
+          {/* Category Tabs & Subcategory Filter */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1">
+              {(['all', 'drug', 'vitamins', 'cosmetics', 'para', ...(settings.customCategories || [])] as any[]).map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => {
+                    setSelectedCategory(cat);
+                    setSelectedSubcategory('all');
+                  }}
+                  className={`px-2.5 py-0.5 rounded text-[11px] font-bold uppercase transition-colors ${
+                    selectedCategory === cat
+                      ? 'bg-teal-700 text-white shadow-2xs'
+                      : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200'
+                  }`}
+                >
+                  {cat === 'all' ? 'All Stock' : cat}
+                </button>
+              ))}
+            </div>
+
+            {/* Subcategory Filter Dropdown */}
+            <div className="flex items-center gap-1">
+              <select
+                value={selectedSubcategory}
+                onChange={(e) => setSelectedSubcategory(e.target.value)}
+                className={`border rounded px-2 py-0.5 text-[11px] font-medium transition-colors focus:outline-hidden focus:ring-1 focus:ring-teal-500 max-w-[170px] truncate ${
+                  selectedSubcategory !== 'all'
+                    ? 'border-teal-500 bg-teal-50 text-teal-900 dark:bg-teal-950 dark:text-teal-200 font-bold'
+                    : 'border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300'
                 }`}
+                title="Filter by Subcategory"
               >
-                {cat === 'all' ? 'All Stock' : cat}
-              </button>
-            ))}
+                <option value="all">
+                  {selectedCategory === 'all' ? 'All Subcategories' : `All ${selectedCategory} subcategories`}
+                </option>
+                {availableFilterSubcategories.map((sub) => (
+                  <option key={sub} value={sub}>
+                    {sub}
+                  </option>
+                ))}
+              </select>
+              {selectedSubcategory !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedSubcategory('all')}
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-0.5 cursor-pointer"
+                  title="Clear subcategory filter"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+
             <button
               onClick={() => setShowLowStockOnly(!showLowStockOnly)}
-              className={`ml-1.5 px-2.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${
+              className={`px-2.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${
                 showLowStockOnly
                   ? 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-300'
                   : 'border-gray-200 text-gray-600 dark:border-slate-700 dark:text-gray-300 hover:bg-gray-50'
@@ -1013,134 +1229,148 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
           </div>
         )}
 
-        {/* High-Density Stock Table */}
-        <div ref={parentRef} className="flex-1 overflow-auto bg-white dark:bg-slate-900">
-          <div style={{ minWidth: STOCK_MIN_WIDTH }}>
-            <div
-              role="rowgroup"
-              className="sticky top-0 z-10 grid items-center text-xs bg-gray-100 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700"
-              style={{ gridTemplateColumns: STOCK_GRID_COLUMNS }}
-            >
-              <div className="px-3 py-2 text-center">
-                <input
-                  type="checkbox"
-                  title={allFilteredSelected ? 'Deselect all in view' : 'Select all in view'}
-                  checked={allFilteredSelected}
-                  ref={headerCheckboxRef}
-                  onChange={handleToggleSelectAll}
-                  className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer align-middle"
-                />
-              </div>
-              <div
-                role="columnheader"
-                className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                onClick={() => handleSort('code')}
-              >
-                <div className="flex items-center gap-1">CODE <ArrowUpDown className="h-3 w-3" /></div>
-              </div>
-              <div
-                role="columnheader"
-                className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                onClick={() => handleSort('barcode')}
-              >
-                <div className="flex items-center gap-1">BARCODE <ArrowUpDown className="h-3 w-3" /></div>
-              </div>
-              <div
-                role="columnheader"
-                className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                onClick={() => handleSort('name')}
-              >
-                <div className="flex items-center gap-1">NAME <ArrowUpDown className="h-3 w-3" /></div>
-              </div>
-              <div
-                role="columnheader"
-                id="th-stock-presentation"
-                className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                onClick={() => handleSort('presentation')}
-              >
-                <div className="flex items-center gap-1">PRESENTATION <ArrowUpDown className="h-3 w-3" /></div>
-              </div>
-              <div
-                role="columnheader"
-                className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                onClick={() => handleSort('category')}
-              >
-                <div className="flex items-center gap-1">CATEGORY <ArrowUpDown className="h-3 w-3" /></div>
-              </div>
-              <div
-                role="columnheader"
-                className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 text-right cursor-pointer hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                onClick={() => handleSort('priceUSD')}
-              >
-                <div className="flex items-center justify-end gap-1"><ArrowUpDown className="h-3 w-3" /> PRICE ($)</div>
-              </div>
-              <div role="columnheader" className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 text-right">PRICE (LBP)</div>
-              <div
-                role="columnheader"
-                className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 text-center cursor-pointer hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                onClick={() => handleSort('stockQuantity')}
-              >
-                <div className="flex items-center justify-center gap-1"><ArrowUpDown className="h-3 w-3" /> QTY</div>
-              </div>
-              <div
-                role="columnheader"
-                className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                onClick={() => handleSort('expiryDate')}
-              >
-                <div className="flex items-center gap-1">EXPIRY <ArrowUpDown className="h-3 w-3" /></div>
-              </div>
-              <div
-                role="columnheader"
-                className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
-                onClick={() => handleSort('agent')}
-              >
-                <div className="flex items-center gap-1">AGENT <ArrowUpDown className="h-3 w-3" /></div>
-              </div>
-              <div role="columnheader" className="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 text-right">ACTIONS</div>
-            </div>
-            <div
-              className="relative"
-              style={{ height: rowVirtualizer.getTotalSize() }}
-            >
+        {/* High-Density Stock Table - Purchase View Style */}
+        <div className="p-3 flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex-1 w-full overflow-hidden border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900/40 shadow-sm flex flex-col">
+            <div ref={parentRef} className="flex-1 w-full overflow-auto">
+              <table className="w-max min-w-full text-left border-collapse table-fixed">
+                <colgroup>
+                  <col style={{ width: colWidths.select }} />
+                  <col style={{ width: colWidths.code }} />
+                  <col style={{ width: colWidths.barcode }} />
+                  <col style={{ width: colWidths.name }} />
+                  <col style={{ width: colWidths.presentation }} />
+                  <col style={{ width: colWidths.category }} />
+                  <col style={{ width: colWidths.priceUSD }} />
+                  <col style={{ width: colWidths.priceLBP }} />
+                  <col style={{ width: colWidths.stockQuantity }} />
+                  <col style={{ width: colWidths.expiryDate }} />
+                  <col style={{ width: colWidths.agent }} />
+                  <col style={{ width: colWidths.actions }} />
+                </colgroup>
+                <thead className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 shadow-2xs">
+                  <tr>
+                    <th className="p-1 pb-1.5 px-2 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap relative group border-r border-slate-200 dark:border-slate-800 select-none">
+                      <input
+                        type="checkbox"
+                        title={allFilteredSelected ? 'Deselect all in view' : 'Select all in view'}
+                        checked={allFilteredSelected}
+                        ref={headerCheckboxRef}
+                        onChange={handleToggleSelectAll}
+                        className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer align-middle"
+                      />
+                      <div
+                        onMouseDown={(e) => handleColResizeStart(e, 'select')}
+                        className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-500/80 transition-colors z-10"
+                        title="Drag to resize"
+                      />
+                    </th>
+                    {[
+                      { id: 'code', label: 'Code', sortKey: 'code' as SortKey },
+                      { id: 'barcode', label: 'Barcode', sortKey: 'barcode' as SortKey },
+                      { id: 'name', label: 'Name', sortKey: 'name' as SortKey },
+                      { id: 'presentation', label: 'Presentation', sortKey: 'presentation' as SortKey, elemId: 'th-stock-presentation' },
+                      { id: 'category', label: 'Category', sortKey: 'category' as SortKey },
+                      { id: 'priceUSD', label: 'Price ($)', sortKey: 'priceUSD' as SortKey, align: 'right' },
+                      { id: 'priceLBP', label: 'Price (LBP)', align: 'right' },
+                      { id: 'stockQuantity', label: 'Qty', sortKey: 'stockQuantity' as SortKey, align: 'center' },
+                      { id: 'expiryDate', label: 'Expiry', sortKey: 'expiryDate' as SortKey },
+                      { id: 'agent', label: 'Agent', sortKey: 'agent' as SortKey },
+                    ].map((col) => (
+                      <th
+                        key={col.id}
+                        id={col.elemId}
+                        className={`p-1 pb-1.5 px-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide whitespace-nowrap relative group border-r border-slate-200 dark:border-slate-800 select-none ${
+                          col.sortKey ? 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors' : ''
+                        } ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'}`}
+                        onClick={col.sortKey ? () => handleSort(col.sortKey!) : undefined}
+                      >
+                        <div className={`flex items-center gap-1 ${col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : 'justify-start'}`}>
+                          {col.align === 'right' && col.sortKey && <ArrowUpDown className="h-2.5 w-2.5 shrink-0 opacity-60" />}
+                          <span className="truncate">{col.label}</span>
+                          {col.align !== 'right' && col.sortKey && <ArrowUpDown className="h-2.5 w-2.5 shrink-0 opacity-60" />}
+                        </div>
+                        <div
+                          onMouseDown={(e) => handleColResizeStart(e, col.id)}
+                          className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-500/80 transition-colors z-10"
+                          title="Drag to resize"
+                        />
+                      </th>
+                    ))}
+                    <th className="p-1 pb-1.5 px-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide whitespace-nowrap text-right relative group select-none">
+                      <span className="truncate">Actions</span>
+                      <div
+                        onMouseDown={(e) => handleColResizeStart(e, 'actions')}
+                        className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-500/80 transition-colors z-10"
+                        title="Drag to resize"
+                      />
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {sortedProducts.length === 0 ? (
-                <div className="py-12 text-center text-gray-400 text-xs">
-                  No items found matching the current criteria.
-                </div>
+                <tr>
+                  <td colSpan={12} className="py-12 text-center text-gray-400 text-xs">
+                    No items found matching the current criteria.
+                  </td>
+                </tr>
               ) : (
-                rowVirtualItems.map((virtualRow) => {
-                  const prod = sortedProducts[virtualRow.index];
-                  const change = priceChangeInfo.get(prod.id);
-                  return (
-                    <StockTableRow
-                      key={prod.id}
-                      ref={rowVirtualizer.measureElement}
-                      data-index={virtualRow.index}
-                      style={{ transform: `translateY(${virtualRow.start}px)`, position: 'absolute', top: 0, left: 0, width: '100%' }}
-                      prod={prod}
-                      index={virtualRow.index}
-                      isSelected={selectedStockProduct?.id === prod.id}
-                      isRowSelected={selectedProductIds.has(prod.id)}
-                      changeUSD={change?.usd}
-                      changeLBP={change?.lbp}
-                      onToggleRowSelect={handleToggleRowSelect}
-                      onOpenDetails={(p) => {
-                        setSelectedStockProduct(p);
-                        setIsDetailsModalOpen(true);
-                      }}
-                      onOpenPrice={(code) => {
-                        setSelectedProductCode(code);
-                        setIsPriceModalOpen(true);
-                      }}
-                      onViewScientific={onViewScientific}
-                      onEdit={openEditModal}
-                    />
-                  );
-                })
+                <>
+                  {rowVirtualItems.length > 0 && rowVirtualItems[0].start > 0 && (
+                    <tr>
+                      <td style={{ height: `${rowVirtualItems[0].start}px`, padding: 0, border: 'none' }} colSpan={12} />
+                    </tr>
+                  )}
+                  {rowVirtualItems.map((virtualRow) => {
+                    const prod = sortedProducts[virtualRow.index];
+                    const change = priceChangeInfo.get(prod.id);
+                    return (
+                      <StockTableRow
+                        key={prod.id}
+                        ref={rowVirtualizer.measureElement}
+                        dataIndex={virtualRow.index}
+                        prod={prod}
+                        index={virtualRow.index}
+                        isSelected={selectedStockProduct?.id === prod.id}
+                        isRowSelected={selectedProductIds.has(prod.id)}
+                        changeUSD={change?.usd}
+                        changeLBP={change?.lbp}
+                        onToggleRowSelect={handleToggleRowSelect}
+                        onOpenDetails={(p) => {
+                          setSelectedStockProduct(p);
+                          setIsDetailsModalOpen(true);
+                        }}
+                        onOpenPrice={(code) => {
+                          setSelectedProductCode(code);
+                          setIsPriceModalOpen(true);
+                        }}
+                        onViewScientific={onViewScientific}
+                        onEdit={openEditModal}
+                        onFilterSubcategory={(subcat) => setSelectedSubcategory(subcat)}
+                      />
+                    );
+                  })}
+                  {rowVirtualItems.length > 0 &&
+                    rowVirtualizer.getTotalSize() - (rowVirtualItems[rowVirtualItems.length - 1]?.end || 0) > 0 && (
+                    <tr>
+                      <td
+                        style={{
+                          height: `${rowVirtualizer.getTotalSize() - (rowVirtualItems[rowVirtualItems.length - 1]?.end || 0)}px`,
+                          padding: 0,
+                          border: 'none',
+                        }}
+                        colSpan={12}
+                      />
+                    </tr>
+                  )}
+                </>
               )}
-            </div>
-          </div>
+            </tbody>
+          </table>
         </div>
       </div>
+    </div>
+  </div>
 
       {/* Price Updater Modal */}
       {isPriceModalOpen && (
@@ -1156,11 +1386,21 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
           title={editingProductId ? 'Edit Pharmacy Item' : 'Add New Inventory Item'}
           isOpen={true}
           section="stock"
-          onClose={() => setIsEditModalOpen(false)}
+          onClose={handleRequestCloseEditModal}
           width="700px"
           height="85vh"
         >
-          <form onSubmit={handleSaveProduct} className="p-6 space-y-4 flex-1 overflow-y-auto text-xs">
+          <form
+            onSubmit={handleSaveProduct}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                handleRequestCloseEditModal();
+              }
+            }}
+            className="p-6 space-y-4 flex-1 overflow-y-auto text-xs"
+          >
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -1170,7 +1410,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                   type="text"
                   value={formCode}
                   onChange={(e) => setFormCode(e.target.value)}
-                  required
+                  placeholder="Optional / Manual Code"
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono font-bold uppercase focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -1178,13 +1418,26 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Barcode
                 </label>
-                <input
-                  type="text"
-                  value={formBarcode}
-                  onChange={(e) => setFormBarcode(e.target.value)}
-                  placeholder="Optional"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono font-bold focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    id="input-stock-barcode"
+                    value={formBarcode}
+                    onChange={(e) => setFormBarcode(e.target.value)}
+                    placeholder="Optional"
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-9 py-2 font-mono font-bold focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    id="btn-generate-barcode"
+                    onClick={() => setFormBarcode(generateRandomBarcode())}
+                    title="Generate random barcode"
+                    aria-label="Generate random barcode"
+                    className="absolute right-1.5 p-1 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 rounded-md transition-colors cursor-pointer"
+                  >
+                    <Dices className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
 
               <div className="sm:col-span-2">
@@ -1203,21 +1456,97 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             </div>
 
             {/* Requirement 21: Category Selection (drug, vitamins, cosmetics, para) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Category
                 </label>
                 <select
                   value={formCategory}
-                  onChange={(e) => setFormCategory(e.target.value as ProductCategory)}
+                  onChange={(e) => {
+                    const newCat = e.target.value as ProductCategory;
+                    setFormCategory(newCat);
+                    if (!formSubcategory && !isCustomFormSubcategory) {
+                      const suggested = suggestSubcategory(formName, newCat, formIngredients);
+                      if (suggested) setFormSubcategory(suggested);
+                    }
+                  }}
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-bold uppercase focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 >
                   <option value="drug">Drug (Medicines)</option>
                   <option value="vitamins">Vitamins</option>
                   <option value="cosmetics">Cosmetics</option>
                   <option value="para">Para (Medical / Diagnostic)</option>
+                  {settings.customCategories?.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
                 </select>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                    Subcategory
+                  </label>
+                  {suggestedFormSubcategory && suggestedFormSubcategory !== formSubcategory && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomFormSubcategory(false);
+                        setFormSubcategory(suggestedFormSubcategory);
+                      }}
+                      className="text-[10px] text-teal-600 hover:text-teal-700 dark:text-teal-400 font-semibold underline cursor-pointer truncate max-w-[130px]"
+                      title={`Click to apply suggestion: ${suggestedFormSubcategory}`}
+                    >
+                      Suggest: {suggestedFormSubcategory}
+                    </button>
+                  )}
+                </div>
+                <select
+                  value={isCustomFormSubcategory ? 'custom' : formSubcategory}
+                  onChange={(e) => {
+                    if (e.target.value === 'custom') {
+                      setIsCustomFormSubcategory(true);
+                      setFormSubcategory('');
+                    } else {
+                      setIsCustomFormSubcategory(false);
+                      setFormSubcategory(e.target.value);
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-medium focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 text-sm"
+                >
+                  <option value="custom">Custom (Create new subcategory...)</option>
+                  <option value="">-- None (No subcategory) --</option>
+                  {allFormSubcategories.map((sub) => (
+                    <option key={sub} value={sub}>
+                      {sub}
+                    </option>
+                  ))}
+                </select>
+
+                {isCustomFormSubcategory && (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={formSubcategory}
+                      onChange={(e) => setFormSubcategory(e.target.value)}
+                      placeholder="Type new custom subcategory..."
+                      className="flex-1 rounded-lg border border-emerald-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-emerald-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomFormSubcategory(false);
+                        setFormSubcategory('');
+                      }}
+                      className="px-2 py-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
+                      title="Cancel custom subcategory"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1239,24 +1568,39 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                 </label>
                 <input
                   type="text"
+                  list="stockview-forms-list"
                   value={formForm}
                   onChange={(e) => setFormForm(e.target.value)}
                   placeholder="e.g. Tablet, Syrup, Cream"
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
+                <datalist id="stockview-forms-list">
+                  <option value="Tablet" />
+                  <option value="Syrup" />
+                  <option value="Cream" />
+                  {settings.customForms?.map((f) => (
+                    <option key={f} value={f} />
+                  ))}
+                </datalist>
               </div>
 
-              <div>
+              <div className="sm:col-span-2 lg:col-span-2">
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Presentation
                 </label>
                 <input
                   type="text"
+                  list="stockview-presentations-list"
                   value={formPresentation}
                   onChange={(e) => setFormPresentation(e.target.value)}
                   placeholder="e.g. 24 Film-Coated Tablets"
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
+                <datalist id="stockview-presentations-list">
+                  {settings.customPresentations?.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
               </div>
             </div>
 
@@ -1412,15 +1756,18 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                   <input
                     type="text"
                     value={formPriceLBP}
+                    placeholder="0"
                     onChange={(e) => {
                       setFormPriceLBP(e.target.value);
                       const num = parseFloat(e.target.value.replace(/[^\d.]/g, ''));
-                      if (!isNaN(num)) {
+                      if (!isNaN(num) && num > 0) {
                         const usdVal = num / exchangeRate;
                         setFormPriceUSD(usdVal.toFixed(2));
                         if (formPiecesPerBox && !formPiecePriceUSD) {
                           setFormPiecePriceUSD((usdVal / Number(formPiecesPerBox)).toFixed(2));
                         }
+                      } else if (!e.target.value.trim()) {
+                        setFormPriceUSD('');
                       }
                     }}
                     required
@@ -1436,14 +1783,17 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                     type="number"
                     step="0.01"
                     value={formPriceUSD}
+                    placeholder="0.00"
                     onChange={(e) => {
                       setFormPriceUSD(e.target.value);
                       const num = parseFloat(e.target.value);
-                      if (!isNaN(num)) {
+                      if (!isNaN(num) && num > 0) {
                         setFormPriceLBP(Math.round(num * exchangeRate).toString());
                         if (formPiecesPerBox && !formPiecePriceUSD) {
                           setFormPiecePriceUSD((num / Number(formPiecesPerBox)).toFixed(2));
                         }
+                      } else if (!e.target.value.trim()) {
+                        setFormPriceLBP('');
                       }
                     }}
                     required
@@ -1502,14 +1852,16 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
-                onClick={() => setIsEditModalOpen(false)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                id="btn-cancel-stock-item-modal"
+                onClick={handleRequestCloseEditModal}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="flex items-center space-x-1.5 rounded-xl bg-emerald-600 px-5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700"
+                id="btn-save-stock-item-modal"
+                className="flex items-center space-x-1.5 rounded-xl bg-emerald-600 px-5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 cursor-pointer"
               >
                 <Check className="h-4 w-4" />
                 <span>{editingProductId ? 'Update Item' : 'Save to Inventory'}</span>
@@ -1517,6 +1869,58 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             </div>
           </form>
         </DesktopWindow>
+      )}
+
+      {/* Discard Confirmation Modal for Add Item */}
+      {showDiscardConfirmModal && (
+        <div
+          id="modal-discard-add-item"
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowDiscardConfirmModal(false);
+            }
+          }}
+        >
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-5">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="space-y-1.5 pt-0.5">
+                  <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">
+                    Discard Unsaved Item?
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                    You have entered information for this new item that has not been saved yet. If you close now, all entered data will be discarded.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                id="btn-keep-editing-item"
+                onClick={() => setShowDiscardConfirmModal(false)}
+                className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer shadow-2xs"
+              >
+                Keep Editing
+              </button>
+              <button
+                type="button"
+                id="btn-discard-and-close-item"
+                onClick={() => {
+                  setShowDiscardConfirmModal(false);
+                  setIsEditModalOpen(false);
+                }}
+                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors cursor-pointer shadow-2xs"
+              >
+                Discard & Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Add Custom Supplier Modal */}
