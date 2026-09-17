@@ -4,6 +4,8 @@ import {
   Customer,
   SaleTransaction,
   PurchaseInvoice,
+  SupplierPayment,
+  CustomerPayment,
   PharmacySettings,
   User,
   AppNotification,
@@ -49,6 +51,30 @@ export const INITIAL_SETTINGS: PharmacySettings = {
     vitamins: 11,
     cosmetics: 11,
     para: 11,
+  },
+  invoiceTemplate: {
+    enabled: false,
+    headerEnglish: {
+      pharmacyName: 'Pharmacie Al-Arz',
+      pharmacistName: 'Dr. John Doe',
+      amendedDegreeNo: '1234',
+      orderRegNo: '5678',
+      cnssNo: '9012',
+      address: 'Hamra Main Street, Beirut',
+      tel: '+961 1 740 000',
+    },
+    headerArabic: {
+      pharmacyName: 'صيدلية الأرز',
+      pharmacistName: 'د. فلان',
+      amendedDegreeNo: '١٢٣٤',
+      orderRegNo: '٥٦٧٨',
+      address: 'الحمراء، بيروت',
+      tel: '٠١ ٧٤٠ ٠٠٠',
+    },
+    centerInfo: {
+      vatNo: '12345678-000',
+      no: '0001',
+    },
   },
 };
 
@@ -1103,6 +1129,7 @@ const STORAGE_KEYS = {
   NOTIFICATIONS: 'pharmalebanon_notifications_v1',
   CURRENT_USER: 'pharmalebanon_current_user_v1',
   LOGS: 'pharmalebanon_app_logs_v1',
+  SUPPLIER_PAYMENTS: 'pharmalebanon_supplier_payments_v1',
 };
 
 // Safe setItem that handles browser quota limits without crashing
@@ -1115,6 +1142,7 @@ export function safeSetItem(key: string, value: string): boolean {
     try {
       // 1. Evict ephemeral app logs first to free up to 2-3MB
       localStorage.removeItem(STORAGE_KEYS.LOGS);
+      localStorage.removeItem(STORAGE_KEYS.SUPPLIER_PAYMENTS);
       localStorage.removeItem(STORAGE_KEYS.CONFLICTS);
       localStorage.removeItem(STORAGE_KEYS.NOTIFICATIONS);
       // Retry write
@@ -1333,6 +1361,37 @@ export class OfflineStorage {
     safeSetItem(STORAGE_KEYS.PURCHASES, JSON.stringify(purchases));
   }
 
+  static getCustomerPayments(): CustomerPayment[] {
+    try {
+      const data = localStorage.getItem('pharmacy_customer_payments');
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveCustomerPayments(payments: CustomerPayment[]): void {
+    try {
+      localStorage.setItem('pharmacy_customer_payments', JSON.stringify(payments));
+    } catch (error) {
+      console.error('Failed to save customer payments to localStorage', error);
+    }
+  }
+
+  static getSupplierPayments(): SupplierPayment[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.SUPPLIER_PAYMENTS);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveSupplierPayments(payments: SupplierPayment[]): void {
+    safeSetItem(STORAGE_KEYS.SUPPLIER_PAYMENTS, JSON.stringify(payments));
+  }
+
+
   static getConflicts(): SyncConflictLog[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.CONFLICTS);
@@ -1398,6 +1457,7 @@ export class OfflineStorage {
   static freeTemporaryQuota(): void {
     try {
       localStorage.removeItem(STORAGE_KEYS.LOGS);
+      localStorage.removeItem(STORAGE_KEYS.SUPPLIER_PAYMENTS);
       localStorage.removeItem(STORAGE_KEYS.CONFLICTS);
       localStorage.removeItem(STORAGE_KEYS.NOTIFICATIONS);
       console.info('Temporary quota reclaimed successfully.');
@@ -1422,6 +1482,8 @@ export class OfflineStorage {
       customers: this.getCustomers(),
       sales: this.getSales(),
       purchases: this.getPurchases(),
+      supplierPayments: this.getSupplierPayments(),
+      customerPayments: this.getCustomerPayments(),
       conflicts: this.getConflicts(),
       notifications: this.getNotifications(),
       currentUser: this.getCurrentUser(),

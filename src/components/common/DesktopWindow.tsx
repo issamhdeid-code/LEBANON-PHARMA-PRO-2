@@ -16,6 +16,9 @@ interface DesktopWindowProps {
   minHeight?: number;
   extraHeader?: React.ReactNode;
   section?: string;
+  startMaximized?: boolean;
+  hideResetButton?: boolean;
+  hideMaximizeButton?: boolean;
 }
 
 const STORAGE_KEY = 'lebanon_pharma_window_prefs';
@@ -89,7 +92,10 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
   minWidth = 340,
   minHeight = 220,
   extraHeader,
-  section
+  section,
+  startMaximized = false,
+  hideResetButton = false,
+  hideMaximizeButton = false,
 }) => {
   const fallbackId = useId();
   const [initialSection] = useState(section);
@@ -119,7 +125,7 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
   const isMinimized = windowState?.isMinimized || false;
   const zIndex = windowState?.zIndex || 100;
 
-  const [isMaximized, setIsMaximized] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(startMaximized);
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const registeredRef = useRef(false);
@@ -426,7 +432,7 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
           {/* Window Header */}
           <div
             onPointerDown={handleHeaderPointerDown}
-            onDoubleClick={() => setIsMaximized(prev => !prev)}
+            onDoubleClick={() => setIsMaximized((prev: boolean) => !prev)}
             className={`flex items-center justify-between px-4 py-2.5 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 select-none touch-none shrink-0 ${
               isMaximized ? 'cursor-default' : isDragging ? 'cursor-grabbing' : 'cursor-grab'
             }`}
@@ -446,17 +452,19 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
                 </div>
               )}
 
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleResetLayout();
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
-                className="p-1.5 text-slate-500 hover:text-teal-600 hover:bg-teal-50 dark:hover:text-teal-400 dark:hover:bg-teal-950/40 rounded transition-colors cursor-pointer"
-                title="Reset window size and position to default"
-              >
-                <RotateCcw size={14} />
-              </button>
+              {!hideResetButton && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleResetLayout();
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="p-1.5 text-slate-500 hover:text-teal-600 hover:bg-teal-50 dark:hover:text-teal-400 dark:hover:bg-teal-950/40 rounded transition-colors cursor-pointer"
+                  title="Reset window size and position to default"
+                >
+                  <RotateCcw size={14} />
+                </button>
+              )}
 
               <button
                 onClick={(e) => {
@@ -470,17 +478,19 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
                 <Minus size={15} />
               </button>
 
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsMaximized(!isMaximized);
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
-                className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200 dark:hover:text-slate-200 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
-                title={isMaximized ? 'Restore Window' : 'Maximize Window'}
-              >
-                {isMaximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-              </button>
+              {!hideMaximizeButton && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsMaximized(!isMaximized);
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200 dark:hover:text-slate-200 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                  title={isMaximized ? 'Restore Window' : 'Maximize Window'}
+                >
+                  {isMaximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                </button>
+              )}
 
               <button
                 onClick={(e) => {

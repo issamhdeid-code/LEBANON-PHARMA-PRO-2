@@ -360,17 +360,39 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
         </div>
       </td>
       <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-center font-medium">
-        <span
-          className={`font-bold ${
+        <div
+          className={`flex flex-col items-center leading-tight ${
             prod.stockQuantity === 0
               ? 'text-red-600 dark:text-red-400 font-extrabold'
               : prod.stockQuantity <= 3
-              ? 'text-amber-600 dark:text-amber-400'
-              : 'text-slate-800 dark:text-slate-200'
+              ? 'text-amber-600 dark:text-amber-400 font-bold'
+              : 'text-slate-800 dark:text-slate-200 font-bold'
           }`}
         >
-          {formatStockDisplay(prod.stockQuantity, prod.isDivisible, prod.piecesPerBox, prod.pieceName)}
-        </span>
+          {(() => {
+            if (!prod.isDivisible || !prod.piecesPerBox || prod.piecesPerBox <= 1) {
+              const qty = Number.isInteger(prod.stockQuantity) ? prod.stockQuantity.toString() : prod.stockQuantity.toFixed(2);
+              return <span>{qty} box</span>;
+            }
+            
+            const totalPieces = Math.round(prod.stockQuantity * prod.piecesPerBox);
+            const boxes = Math.floor(totalPieces / prod.piecesPerBox);
+            const pieces = totalPieces % prod.piecesPerBox;
+            const pieceLabel = prod.pieceName || 'Piece';
+            const pieceLabelPlural = pieces > 1 || pieces === 0 ? 's' : '';
+            const boxLabel = `box${boxes > 1 || boxes === 0 ? 'es' : ''}`;
+            
+            if (boxes === 0 && pieces > 0) return <span>{pieces} {pieceLabel}{pieceLabelPlural}</span>;
+            if (pieces === 0) return <span>{boxes} {boxLabel}</span>;
+            
+            return (
+              <>
+                <span>{boxes} {boxLabel}</span>
+                <span className="text-[11px] text-teal-600 dark:text-teal-400 font-semibold">{pieces} {pieceLabel}{pieceLabelPlural}</span>
+              </>
+            );
+          })()}
+        </div>
       </td>
       <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">
         {renderExpiryCellView(prod)}

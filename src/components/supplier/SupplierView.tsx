@@ -7,7 +7,7 @@ import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { fetchMOPHPriceList } from '../../services/mophApiService';
 
 export const SupplierView: React.FC = () => {
-  const { suppliers, addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier, formatLBP, formatUSD, addNotification } = usePharmacy();
+  const { suppliers, addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier, formatLBP, formatUSD, addNotification, purchases, supplierPayments, exchangeRate } = usePharmacy();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
@@ -15,6 +15,34 @@ export const SupplierView: React.FC = () => {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const calculateSupplierBalance = (supplierId: string) => {
+    const supsInvoices = purchases.filter(p => p.supplierId === supplierId);
+    let debtUSD = 0;
+
+    for (const inv of supsInvoices) {
+      if (inv.paid && !inv.paidAmountUSD && !inv.paidAmountLBP) {
+        continue;
+      }
+      
+      const invRate = inv.exchangeRate || exchangeRate || 89500;
+      const costInUSD = inv.currency === 'USD' ? inv.totalCostUSD : (inv.totalCostLBP / invRate);
+      const paidInUSD = (inv.paidAmountUSD || 0) + ((inv.paidAmountLBP || 0) / invRate);
+      
+      debtUSD += (costInUSD - paidInUSD);
+    }
+
+    const supsPayments = supplierPayments.filter(p => p.supplierId === supplierId && p.isPaymentOnAccount);
+    for (const pay of supsPayments) {
+      if (pay.currency === 'USD') {
+        debtUSD -= pay.amount;
+      } else {
+        debtUSD -= (pay.amount / (exchangeRate || 89500)); 
+      }
+    }
+
+    return debtUSD;
+  };
 
   const filteredAndSortedSuppliers = React.useMemo(() => {
     return suppliers
@@ -195,7 +223,9 @@ export const SupplierView: React.FC = () => {
               No suppliers found matching your criteria.
             </div>
           ) : (
-            filteredAndSortedSuppliers.map((sup) => (
+            filteredAndSortedSuppliers.map((sup) => {
+              const computedBalance = calculateSupplierBalance(sup.id);
+              return (
               <div
               key={sup.id}
               className="flex flex-col justify-between rounded border border-gray-200 bg-white p-3.5 shadow-2xs dark:border-slate-800 dark:bg-slate-900 hover:border-teal-400 transition-colors"
@@ -251,8 +281,8 @@ export const SupplierView: React.FC = () => {
               <div className="mt-3 pt-2.5 border-t border-gray-100 dark:border-slate-800 flex items-center justify-between text-xs">
                 <div>
                   <span className="block text-[10px] uppercase font-semibold text-gray-400">Balance Owed</span>
-                  <span className={`font-bold ${sup.balanceUSD > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-700 dark:text-slate-300'}`}>
-                    ${sup.balanceUSD.toFixed(2)}
+                  <span className={`font-bold ${computedBalance > 0.01 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                    ${computedBalance.toFixed(2)}
                   </span>
                 </div>
                 <div className="text-right">
@@ -263,7 +293,9 @@ export const SupplierView: React.FC = () => {
                 </div>
               </div>
             </div>
-          )))}
+            );
+          })
+          )}
         </div>
       </div>
 

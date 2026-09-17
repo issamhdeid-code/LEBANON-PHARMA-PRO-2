@@ -21,7 +21,8 @@ import {
   Tag,
   Check,
   Percent,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Printer
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
@@ -396,6 +397,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [leftPanelMode, setLeftPanelMode] = useState<'log' | 'catalog'>('log');
   const catalogContainerRef = useRef<HTMLDivElement>(null);
+  const printAfterSaleRef = useRef(false);
 
   const getNumCols = () => (window.innerWidth >= 1280 ? 3 : window.innerWidth >= 640 ? 2 : 1);
 
@@ -821,9 +823,93 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     : 0;
 
   // Complete checkout
-  const handleCheckout = () => {
+
+  const handlePrintClick = () => {
+    if (cart.length === 0) return;
+    
+    const isInvalid = (!selectedCustomerId && !hasEnteredPayment) || (hasEnteredPayment && isUnderpaid && !writeOffDifferences);
+    
+    if (isInvalid) {
+      // Print Draft
+      const currentCustomer = customers.find((c) => c.id === selectedCustomerId);
+      let finalPaidUSD = paidUSD;
+      let finalPaidLBP = paidLBP;
+      let finalMethod: 'cash_lbp' | 'cash_usd' | 'mixed' = 'cash_lbp';
+
+      if (!hasEnteredPayment) {
+        finalPaidUSD = 0;
+        finalPaidLBP = totalLBP;
+        finalMethod = 'cash_lbp';
+      } else {
+        if (finalPaidUSD > 0 && finalPaidLBP > 0) {
+          finalMethod = 'mixed';
+        } else if (finalPaidUSD > 0 && finalPaidLBP === 0) {
+          finalMethod = 'cash_usd';
+        } else if (finalPaidLBP > 0 && finalPaidUSD === 0) {
+          finalMethod = 'cash_lbp';
+        }
+      }
+
+      const draftSale: SaleTransaction = {
+        id: 'DRAFT-' + Date.now(),
+        invoiceNumber: 'DRAFT',
+        date: new Date().toISOString(),
+        timestamp: Date.now(),
+        items: cart.map((item) => {
+          const rate = settings.vatRates?.[item.product.category] || 0;
+          const preTaxUSD = item.unitPriceUSD * item.quantity * (1 - item.discountPercent / 100);
+          const taxUSD = preTaxUSD * (rate / 100);
+          const finalItemTotalUSD = Number((preTaxUSD + taxUSD).toFixed(2));
+          return {
+            productId: item.product.id,
+            productCode: item.product.code,
+            productName: item.product.name,
+            category: item.product.category,
+            quantity: item.quantity,
+            discountPercent: item.discountPercent,
+            unitPriceUSD: item.unitPriceUSD,
+            unitPriceLBP: item.unitPriceLBP,
+            costPriceUSD: item.product.costPriceUSD,
+            totalUSD: finalItemTotalUSD,
+            totalLBP: Math.round(finalItemTotalUSD * exchangeRate),
+            isPiece: item.isPiece,
+            selectedBatchNumber: item.selectedBatchNumber,
+            selectedExpiryDate: item.selectedExpiryDate,
+          };
+        }),
+        totalUSD,
+        totalLBP,
+        exchangeRate,
+        customerId: currentCustomer?.id,
+        customerName: currentCustomer?.name || 'Cash Client',
+        cashierId: currentUser?.id || 'admin',
+        cashierName: currentUser?.name || 'Administrator',
+        paymentMethod: finalMethod,
+        amountPaidUSD: finalPaidUSD,
+        amountPaidLBP: finalPaidLBP,
+        changeGivenUSD: changeUSD,
+        changeGivenLBP: changeLBP,
+        writeOffUSD: 0,
+        writeOffLBP: 0,
+        synced: false,
+      };
+      
+      printAfterSaleRef.current = false; // It's a draft, don't clear cart later
+      setLastCompletedSale(draftSale);
+    } else {
+      handleCheckout(true);
+    }
+  };
+
+  const handleCheckout = (shouldPrint: boolean) => {
+    printAfterSaleRef.current = shouldPrint;
     if (cart.length === 0) {
       setErrorMessage('Cart is empty. Add at least one item to proceed.');
+      return;
+    }
+
+    if (!selectedCustomerId && !hasEnteredPayment) {
+      setErrorMessage('Please enter the received cash amount (USD or LBP) for Cash Client.');
       return;
     }
 
@@ -925,7 +1011,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
           : undefined,
       });
 
-      setLastCompletedSale(saleRecord);
+      if (printAfterSaleRef.current) { setLastCompletedSale(saleRecord); }
       clearCart();
       setTenderedUSD('');
       setTenderedLBP('');
@@ -979,7 +1065,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         notes: 'Charged to customer debt account',
       });
 
-      setLastCompletedSale(saleRecord);
+      if (printAfterSaleRef.current) { setLastCompletedSale(saleRecord); }
       clearCart();
       setTenderedUSD('');
       setTenderedLBP('');
@@ -1645,24 +1731,31 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
 
           {/* Checkout & Write Off Option */}
           <div className="flex gap-1.5 items-stretch h-8 mt-1">
-            {/* Checkout Button */}
+            {/* Checkout Buttons */}
             <button
-              onClick={handleCheckout}
-              disabled={cart.length === 0}
+              onClick={() => handleCheckout(false)}
+              disabled={cart.length === 0 || (isUnderpaid && !writeOffDifferences) || (!selectedCustomerId && !hasEnteredPayment)}
               className={`flex-1 flex items-center justify-center space-x-1 rounded-lg px-2 text-[10px] font-bold shadow-xs transition-all cursor-pointer uppercase tracking-wider ${
                 isUnderpaid && !writeOffDifferences
-                  ? 'bg-amber-600 text-white hover:bg-amber-700 active:scale-[0.99]'
+                  ? 'bg-amber-600 text-white opacity-50'
                   : 'bg-teal-600 text-white hover:bg-teal-700 active:scale-[0.99]'
               } disabled:opacity-40`}
             >
               <span className="truncate">
-                {isUnderpaid
-                  ? writeOffDifferences
-                    ? `Complete Sale (Write Off $${remainingUSD.toFixed(2)}) & Print`
-                    : `Check "Write Off" to Accept`
-                  : 'Complete Sale & Print'}
+                {isUnderpaid && !writeOffDifferences
+                  ? `Check "Write Off"`
+                  : 'Sale'}
               </span>
               <ArrowRight className="h-3 w-3 shrink-0" />
+            </button>
+            
+            <button
+              onClick={handlePrintClick}
+              disabled={cart.length === 0}
+              className="flex-1 flex items-center justify-center space-x-1 rounded-lg px-2 text-[10px] font-bold shadow-xs transition-all cursor-pointer uppercase tracking-wider bg-slate-700 text-white hover:bg-slate-800 active:scale-[0.99] dark:bg-slate-600 dark:hover:bg-slate-500 disabled:opacity-40"
+            >
+              <span className="truncate">Print</span>
+              <Printer className="h-3 w-3 shrink-0" />
             </button>
 
             {/* Option: Write Off Differences */}

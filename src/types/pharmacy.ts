@@ -87,6 +87,7 @@ export interface SaleTransaction {
   receiptNumber?: string;
   date: string; // ISO string
   timestamp: number;
+  invoices?: string[];
   items: {
     productId: string;
     productCode: string;
@@ -151,7 +152,13 @@ export interface PurchaseInvoice {
   status: 'received' | 'pending';
   paid: boolean;
   timestamp: number;
+  invoices?: string[];
   currency?: 'USD' | 'LBP';
+  invoiceDiscount?: number;
+  invoiceDiscountAmount?: number;
+  totalOverride?: number;
+  paidAmountUSD?: number;
+  paidAmountLBP?: number;
 }
 
 export interface Supplier {
@@ -225,6 +232,30 @@ export interface PharmacySettings {
   customGlobalSubcategories?: string[];
   customForms?: string[];
   customPresentations?: string[];
+  invoiceTemplate?: {
+    enabled: boolean;
+    headerEnglish: {
+      pharmacyName: string;
+      pharmacistName: string;
+      amendedDegreeNo: string;
+      orderRegNo: string;
+      cnssNo: string;
+      address: string;
+      tel: string;
+    };
+    headerArabic: {
+      pharmacyName: string;
+      pharmacistName: string;
+      amendedDegreeNo: string;
+      orderRegNo: string;
+      address: string;
+      tel: string;
+    };
+    centerInfo: {
+      vatNo: string;
+      no: string;
+    };
+  };
 }
 
 export type SyncStatus = 'offline' | 'connecting' | 'connected' | 'error';
@@ -233,6 +264,7 @@ export type SyncStatus = 'offline' | 'connecting' | 'connected' | 'error';
 export interface SyncConflictLog {
   id: string;
   timestamp: number;
+  invoices?: string[];
   entityType: 'product' | 'sale' | 'customer';
   entityId: string;
   targetCode?: string;
@@ -249,6 +281,7 @@ export interface AppNotification {
   type: 'inventory' | 'expiry' | 'sync' | 'sale' | 'system';
   severity: 'info' | 'warning' | 'error' | 'success';
   timestamp: number;
+  invoices?: string[];
   read: boolean;
   actionUrl?: string;
 }
@@ -267,6 +300,7 @@ export type LogLevel = 'info' | 'success' | 'warning' | 'error';
 export interface AppLogEntry {
   id: string;
   timestamp: number;
+  invoices?: string[];
   component: LogComponent;
   action: string;
   level: LogLevel;
@@ -297,3 +331,29 @@ export type RibbonTab =
   | 'logs'
   | 'settings'
   | 'adjustments';
+
+export interface CustomerPayment {
+  id: string;
+  customerId: string;
+  customerName: string;
+  amount: number;
+  currency: 'USD' | 'LBP';
+  method: 'cash' | 'card';
+  date: string;
+  timestamp: number;
+  invoices?: string[];
+}
+
+export interface SupplierPayment {
+  id: string;
+  receiptNumber: string;
+  date: string;
+  supplierId: string;
+  supplierName: string;
+  amount: number;
+  currency: 'USD' | 'LBP';
+  invoices: string[]; // IDs of purchase invoices this payment applies to
+  allocations?: { invoiceId: string, amountUSD: number, amountLBP: number }[];
+  isPaymentOnAccount: boolean;
+  timestamp: number;
+}

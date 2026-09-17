@@ -25,9 +25,11 @@ import {
   Info,
   Monitor,
   Package,
+  ShoppingCart,
 } from 'lucide-react';
 import { UsersPanel } from './UsersPanel';
 import { StockSettingsPanel } from './StockSettingsPanel';
+import { SaleSettingsPanel } from './SaleSettingsPanel';
 import {
   backupToGoogleDrive,
   restoreFromGoogleDrive,
@@ -43,7 +45,7 @@ import { DesktopWindow } from '../common/DesktopWindow';
 
 export const SettingsView: React.FC = () => {
   const { settings, updateSettings, syncStatus, addNotification, exportBackup, restoreBackup, clearAllData } = usePharmacy();
-  const [settingsTab, setSettingsTab] = useState<'display' | 'network' | 'notifications' | 'backup' | 'users' | 'stock'>('display');
+  const [settingsTab, setSettingsTab] = useState<'display' | 'network' | 'notifications' | 'backup' | 'users' | 'stock' | 'sale'>('display');
   const [isTesting, setIsTesting] = useState(false);
   const [showClearDataModal, setShowClearDataModal] = useState(false);
   const [mode, setMode] = useState<'main' | 'secondary'>(settings.syncMode || 'main');
@@ -354,6 +356,16 @@ export const SettingsView: React.FC = () => {
           >
             <Package className="h-4 w-4" /> Stock
           </button>
+          <button
+            onClick={() => setSettingsTab('sale')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              settingsTab === 'sale'
+                ? 'border-teal-600 text-teal-700 dark:text-teal-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            <ShoppingCart className="h-4 w-4" /> Sale
+          </button>
         </div>
 
         {settingsTab === 'display' && (
@@ -413,6 +425,7 @@ export const SettingsView: React.FC = () => {
         {settingsTab === 'users' && <UsersPanel />}
 
         {settingsTab === 'stock' && <StockSettingsPanel />}
+        {settingsTab === 'sale' && <SaleSettingsPanel />}
 
         {settingsTab === 'notifications' && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">

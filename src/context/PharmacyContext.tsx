@@ -6,6 +6,8 @@ import {
   Customer,
   SaleTransaction,
   PurchaseInvoice,
+  SupplierPayment,
+  CustomerPayment,
   PharmacySettings,
   User,
   AppNotification,
@@ -234,7 +236,11 @@ interface PharmacyContextType {
 
   // Purchases & Suppliers
   purchases: PurchaseInvoice[];
-  recordPurchase: (purchase: Omit<PurchaseInvoice, 'id' | 'timestamp' | 'invoiceNumber'>) => PurchaseInvoice;
+  supplierPayments: SupplierPayment[];
+  recordSupplierPayment: (payment: Omit<SupplierPayment, 'id' | 'timestamp' | 'allocations'>) => { success: boolean; error?: string };
+  updateSupplierPayment: (paymentId: string, updatedData: Partial<SupplierPayment>) => { success: boolean; error?: string };
+  deleteSupplierPayment: (paymentId: string) => { success: boolean; error?: string };
+  recordPurchase: (purchase: Omit<PurchaseInvoice, 'id' | 'timestamp' | 'invoiceNumber'> & { invoiceNumber?: string }) => PurchaseInvoice;
   updatePurchase: (purchaseId: string, updatedData: Partial<PurchaseInvoice>) => { success: boolean; error?: string };
   deletePurchase: (purchaseId: string) => { success: boolean; error?: string };
   suppliers: Supplier[];
@@ -245,6 +251,11 @@ interface PharmacyContextType {
 
   // Customers
   customers: Customer[];
+  customerPayments: CustomerPayment[];
+  recordCustomerPayment: (payment: Omit<CustomerPayment, 'id' | 'timestamp'>) => { success: boolean; error?: string };
+  updateCustomerPayment: (paymentId: string, updatedData: Partial<CustomerPayment>) => { success: boolean; error?: string };
+  deleteCustomerPayment: (paymentId: string) => { success: boolean; error?: string };
+
   addCustomer: (customer: Omit<Customer, 'id'>) => void;
   updateCustomer: (id: string, updates: Partial<Customer>) => void;
 
@@ -252,6 +263,8 @@ interface PharmacyContextType {
   settings: PharmacySettings;
   updateSettings: (updates: Partial<PharmacySettings>) => void;
   toggleDarkMode: () => void;
+
+
 
   // Notifications
   notifications: AppNotification[];
@@ -346,8 +359,10 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [products, setProducts] = useState<Product[]>(() => OfflineStorage.getProducts());
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => OfflineStorage.getSuppliers());
   const [customers, setCustomers] = useState<Customer[]>(() => OfflineStorage.getCustomers());
+  const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>(() => OfflineStorage.getCustomerPayments());
   const [sales, setSales] = useState<SaleTransaction[]>(() => OfflineStorage.getSales());
   const [purchases, setPurchases] = useState<PurchaseInvoice[]>(() => OfflineStorage.getPurchases());
+  const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>(() => OfflineStorage.getSupplierPayments());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => OfflineStorage.getNotifications());
   const [, setSyncConflicts] = useState<SyncConflictLog[]>(() => OfflineStorage.getConflicts());
   const [logs, setLogs] = useState<AppLogEntry[]>(() => OfflineStorage.getLogs());
@@ -457,6 +472,8 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const formatUSD = useCallback((amount: number): string => {
     return `$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }, []);
+
+
 
   // Notifications helper
   const addNotification = useCallback((
@@ -628,6 +645,24 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             if (!deletedId || !prev.some(s => s.id === deletedId)) return prev;
             const next = prev.filter(s => s.id !== deletedId);
             OfflineStorage.saveSuppliers(next);
+            return next;
+          });
+
+        } else if (payload.type === 'CUSTOMER_PAYMENT_UPSERT') {
+          const remotePayment = payload.data as CustomerPayment;
+          if (!remotePayment) return;
+          setCustomerPayments(prev => {
+            const exists = prev.some(p => p.id === remotePayment.id);
+            const next = exists ? prev.map(p => p.id === remotePayment.id ? remotePayment : p) : [remotePayment, ...prev];
+            OfflineStorage.saveCustomerPayments(next);
+            return next;
+          });
+        } else if (payload.type === 'CUSTOMER_PAYMENT_DELETED') {
+          const deletedId = payload.data.id;
+          if (!deletedId) return;
+          setCustomerPayments(prev => {
+            const next = prev.filter(p => p.id !== deletedId);
+            OfflineStorage.saveCustomerPayments(next);
             return next;
           });
         } else if (payload.type === 'CUSTOMER_UPSERT') {
@@ -2493,10 +2528,301 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return { success: true };
   };
 
+
+
+  // Customer Payments
+  const recordCustomerPayment = (payment: Omit<CustomerPayment, 'id' | 'timestamp'>) => {
+    const fullPayment: CustomerPayment = {
+      ...payment,
+      id: `CUST-PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp: Date.now()
+    };
+    
+    // Update customer balance
+    const cust = customers.find(c => c.id === payment.customerId);
+    if (cust) {
+      if (payment.currency === 'USD') {
+        updateCustomer(cust.id, { balanceUSD: Math.max(0, cust.balanceUSD - payment.amount) });
+      } else {
+        updateCustomer(cust.id, { balanceLBP: Math.max(0, cust.balanceLBP - payment.amount) });
+      }
+    }
+    
+    const newPayments = [fullPayment, ...customerPayments];
+    setCustomerPayments(newPayments);
+    OfflineStorage.saveCustomerPayments(newPayments);
+    
+    syncEngine.broadcast('CUSTOMER_PAYMENT_UPSERT', fullPayment);
+    return { success: true };
+  };
+  
+  const updateCustomerPayment = (paymentId: string, updatedData: Partial<CustomerPayment>) => {
+    const oldPayment = customerPayments.find(p => p.id === paymentId);
+    if (!oldPayment) return { success: false, error: 'Payment not found' };
+
+    const mergedData = { ...oldPayment, ...updatedData, timestamp: Date.now() };
+
+    // Handle balance adjustment if amount or currency changed
+    if (updatedData.amount !== undefined || updatedData.currency !== undefined) {
+      const cust = customers.find(c => c.id === oldPayment.customerId);
+      if (cust) {
+        // Reverse old
+        let currentUsd = cust.balanceUSD;
+        let currentLbp = cust.balanceLBP;
+        if (oldPayment.currency === 'USD') currentUsd += oldPayment.amount;
+        else currentLbp += oldPayment.amount;
+        
+        // Apply new
+        const newCurrency = updatedData.currency || oldPayment.currency;
+        const newAmount = updatedData.amount !== undefined ? updatedData.amount : oldPayment.amount;
+        if (newCurrency === 'USD') currentUsd = Math.max(0, currentUsd - newAmount);
+        else currentLbp = Math.max(0, currentLbp - newAmount);
+        
+        updateCustomer(cust.id, { balanceUSD: currentUsd, balanceLBP: currentLbp });
+      }
+    }
+
+    const newPayments = customerPayments.map(p => p.id === paymentId ? mergedData : p);
+    setCustomerPayments(newPayments);
+    OfflineStorage.saveCustomerPayments(newPayments);
+    
+    syncEngine.broadcast('CUSTOMER_PAYMENT_UPSERT', mergedData);
+    return { success: true };
+  };
+
+  const deleteCustomerPayment = (paymentId: string) => {
+    const payment = customerPayments.find(p => p.id === paymentId);
+    if (!payment) return { success: false, error: 'Payment not found' };
+    
+    // Reverse customer balance
+    const cust = customers.find(c => c.id === payment.customerId);
+    if (cust) {
+      if (payment.currency === 'USD') {
+        updateCustomer(cust.id, { balanceUSD: cust.balanceUSD + payment.amount });
+      } else {
+        updateCustomer(cust.id, { balanceLBP: cust.balanceLBP + payment.amount });
+      }
+    }
+    
+    const newPayments = customerPayments.filter(p => p.id !== paymentId);
+    setCustomerPayments(newPayments);
+    OfflineStorage.saveCustomerPayments(newPayments);
+    
+    syncEngine.broadcast('CUSTOMER_PAYMENT_DELETED', { id: paymentId });
+    return { success: true };
+  };
+
   // Purchases
-  const recordPurchase = (purchaseData: Omit<PurchaseInvoice, 'id' | 'timestamp' | 'invoiceNumber'>): PurchaseInvoice => {
-    const purchaseId = `pur-${Date.now()}`;
-    const invoiceNumber = nextInvoiceNumber(purchases, 'PINV', purchases.length + 500);
+
+const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp' | 'allocations'>) => {
+    const currentYear = new Date().getFullYear().toString().slice(-2);
+    const yearPayments = supplierPayments.filter(p => p.id && p.id.startsWith(`RCT-${currentYear}-`));
+    let nextNum = 1;
+    if (yearPayments.length > 0) {
+      const maxNum = Math.max(...yearPayments.map(p => parseInt(p.id.split('-')[2], 10) || 0));
+      nextNum = maxNum + 1;
+    }
+    const paymentId = `RCT-${currentYear}-${nextNum}`;
+
+    let fullPayment: SupplierPayment = {
+      ...payment,
+      id: paymentId,
+      timestamp: Date.now(),
+      allocations: []
+    };
+
+    // Calculate allocations and update invoices
+    if (fullPayment.invoices.length > 0 && !fullPayment.isPaymentOnAccount) {
+      setPurchases(prev => {
+        let remainingAmount = fullPayment.amount;
+        const next = [...prev];
+        
+        // Sort selected invoices by date ascending (oldest first)
+        const selectedInvoices = next.filter(inv => fullPayment.invoices.includes(inv.id))
+                                     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        
+        const allocations: { invoiceId: string, amountUSD: number, amountLBP: number }[] = [];
+
+        for (const inv of selectedInvoices) {
+          if (remainingAmount <= 0) break;
+          
+          const index = next.findIndex(i => i.id === inv.id);
+          if (index === -1) continue;
+          
+          const updatedInv = { ...next[index] };
+          
+          // Calculate amount left in payment currency
+          let amountLeftInPaymentCurrency = 0;
+          if (fullPayment.currency === 'USD') {
+             const costInUSD = updatedInv.currency === 'USD' ? updatedInv.totalCostUSD : (updatedInv.totalCostLBP / (updatedInv.exchangeRate || 1));
+             const paidInUSD = (updatedInv.paidAmountUSD || 0) + ((updatedInv.paidAmountLBP || 0) / (updatedInv.exchangeRate || 1));
+             amountLeftInPaymentCurrency = costInUSD - paidInUSD;
+          } else {
+             const costInLBP = updatedInv.currency === 'LBP' ? updatedInv.totalCostLBP : (updatedInv.totalCostUSD * (updatedInv.exchangeRate || 1));
+             const paidInLBP = (updatedInv.paidAmountLBP || 0) + ((updatedInv.paidAmountUSD || 0) * (updatedInv.exchangeRate || 1));
+             amountLeftInPaymentCurrency = costInLBP - paidInLBP;
+          }
+          
+          if (amountLeftInPaymentCurrency <= 0.01) continue; // Already paid
+          
+          const amountToApplyInPaymentCurrency = Math.min(remainingAmount, amountLeftInPaymentCurrency);
+          remainingAmount -= amountToApplyInPaymentCurrency;
+          
+          // Convert applied amount to invoice currency
+          let appliedUSD = 0;
+          let appliedLBP = 0;
+          
+          if (fullPayment.currency === 'USD') {
+             appliedUSD = amountToApplyInPaymentCurrency;
+             appliedLBP = amountToApplyInPaymentCurrency * (updatedInv.exchangeRate || 1);
+          } else {
+             appliedLBP = amountToApplyInPaymentCurrency;
+             appliedUSD = amountToApplyInPaymentCurrency / (updatedInv.exchangeRate || 1);
+          }
+          
+          if (updatedInv.currency === 'USD') {
+             updatedInv.paidAmountUSD = (updatedInv.paidAmountUSD || 0) + appliedUSD;
+          } else {
+             updatedInv.paidAmountLBP = (updatedInv.paidAmountLBP || 0) + appliedLBP;
+          }
+          
+          allocations.push({
+            invoiceId: updatedInv.id,
+            amountUSD: appliedUSD,
+            amountLBP: appliedLBP
+          });
+          
+          // Check if fully paid
+          const newAmountLeft = amountLeftInPaymentCurrency - amountToApplyInPaymentCurrency;
+          if (newAmountLeft <= 0.01) {
+             updatedInv.paid = true;
+          }
+          
+          next[index] = updatedInv;
+        }
+        
+        fullPayment.allocations = allocations;
+        OfflineStorage.savePurchases(next);
+        return next;
+      });
+    }
+
+    const newPayments = [fullPayment, ...supplierPayments];
+    setSupplierPayments(newPayments);
+    OfflineStorage.saveSupplierPayments(newPayments);
+
+    // Update supplier balance
+    setSuppliers(prev => {
+      const next = prev.map(s => {
+        if (s.id === fullPayment.supplierId) {
+          return {
+            ...s,
+            balanceUSD: fullPayment.currency === 'USD' ? Math.max(0, s.balanceUSD - fullPayment.amount) : s.balanceUSD,
+            balanceLBP: fullPayment.currency === 'LBP' ? Math.max(0, s.balanceLBP - fullPayment.amount) : s.balanceLBP,
+          };
+        }
+        return s;
+      });
+      OfflineStorage.saveSuppliers(next);
+      return next;
+    });
+
+    return { success: true };
+  };
+
+  const deleteSupplierPayment = (paymentId: string) => {
+    const payment = supplierPayments.find(p => p.id === paymentId);
+    if (!payment) return { success: false, error: 'Payment not found' };
+
+    // Remove from payments list
+    const newPayments = supplierPayments.filter(p => p.id !== paymentId);
+    setSupplierPayments(newPayments);
+    OfflineStorage.saveSupplierPayments(newPayments);
+
+    // Revert supplier balance
+    setSuppliers(prev => {
+      const next = prev.map(s => {
+        if (s.id === payment.supplierId) {
+          return {
+            ...s,
+            balanceUSD: payment.currency === 'USD' ? (s.balanceUSD || 0) + payment.amount : (s.balanceUSD || 0),
+            balanceLBP: payment.currency === 'LBP' ? (s.balanceLBP || 0) + payment.amount : (s.balanceLBP || 0),
+          };
+        }
+        return s;
+      });
+      OfflineStorage.saveSuppliers(next);
+      return next;
+    });
+
+    // Revert invoices exactly using allocations
+    if (payment.allocations && payment.allocations.length > 0 && !payment.isPaymentOnAccount) {
+      setPurchases(prev => {
+        const next = [...prev];
+        for (const alloc of payment.allocations!) {
+          const index = next.findIndex(inv => inv.id === alloc.invoiceId);
+          if (index !== -1) {
+             const updatedInv = { ...next[index] };
+             
+             if (updatedInv.currency === 'USD') {
+                updatedInv.paidAmountUSD = Math.max(0, (updatedInv.paidAmountUSD || 0) - alloc.amountUSD);
+             } else {
+                updatedInv.paidAmountLBP = Math.max(0, (updatedInv.paidAmountLBP || 0) - alloc.amountLBP);
+             }
+             
+             // Unmark fully paid if it was
+             updatedInv.paid = false; 
+             next[index] = updatedInv;
+          }
+        }
+        OfflineStorage.savePurchases(next);
+        return next;
+      });
+    } else if (payment.invoices.length > 0 && !payment.isPaymentOnAccount && (!payment.allocations || payment.allocations.length === 0)) {
+      // Fallback for older payments that didn't have allocations recorded
+      setPurchases(prev => {
+        const next = prev.map(inv => {
+          if (payment.invoices.includes(inv.id)) {
+            return { ...inv, paid: false, paidAmountUSD: 0, paidAmountLBP: 0 };
+          }
+          return inv;
+        });
+        OfflineStorage.savePurchases(next);
+        return next;
+      });
+    }
+
+    return { success: true };
+  };
+
+  const updateSupplierPayment = (paymentId: string, updatedData: Partial<SupplierPayment>) => {
+    const oldPayment = supplierPayments.find(p => p.id === paymentId);
+    if (!oldPayment) return { success: false, error: 'Payment not found' };
+
+    const mergedData = { ...oldPayment, ...updatedData };
+    
+    // First, revert the old payment
+    deleteSupplierPayment(paymentId);
+    
+    // Then, record the new payment. The new recording flow will recreate allocations.
+    // We intentionally omit ID, timestamp, and allocations so they are freshly generated by recordSupplierPayment
+    const { id, timestamp, allocations, ...dataToRecord } = mergedData;
+    
+    recordSupplierPayment(dataToRecord);
+
+    return { success: true };
+  };
+
+  const recordPurchase = (purchaseData: Omit<PurchaseInvoice, 'id' | 'timestamp' | 'invoiceNumber'> & { invoiceNumber?: string }): PurchaseInvoice => {
+    const currentYear = new Date().getFullYear().toString().slice(-2);
+    const yearPurchases = purchases.filter(p => p.id && p.id.startsWith(`INV-${currentYear}-`));
+    let nextNum = 1;
+    if (yearPurchases.length > 0) {
+      const maxNum = Math.max(...yearPurchases.map(p => parseInt(p.id.split('-')[2], 10) || 0));
+      nextNum = maxNum + 1;
+    }
+    const purchaseId = `INV-${currentYear}-${nextNum}`;
+    const invoiceNumber = purchaseData.invoiceNumber || nextInvoiceNumber(purchases, 'PINV', purchases.length + 500);
 
     const fullPurchase: PurchaseInvoice = {
       ...purchaseData,
@@ -2876,6 +3202,16 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (e) {}
   };
 
+  const deleteCustomer = (id: string) => {
+    const updated = customers.filter(c => c.id !== id);
+    setCustomers(updated);
+    OfflineStorage.saveCustomers(updated);
+    try { syncEngine.broadcast('CUSTOMER_DELETED', { id }); } catch (e) {}
+  };
+
+
+
+
   // Notifications
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -3014,6 +3350,10 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     deleteSale,
 
     purchases,
+    supplierPayments,
+    recordSupplierPayment,
+    updateSupplierPayment,
+    deleteSupplierPayment,
     recordPurchase,
     updatePurchase,
     deletePurchase,
@@ -3026,6 +3366,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     customers,
     addCustomer,
     updateCustomer,
+    deleteCustomer,
+    customerPayments,
+    recordCustomerPayment,
+    updateCustomerPayment,
+    deleteCustomerPayment,
 
     settings,
     updateSettings,

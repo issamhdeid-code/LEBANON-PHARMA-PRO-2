@@ -1,3 +1,4 @@
+import { SupplierPaymentModal } from './SupplierPaymentModal';
 import { motion } from "motion/react";
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
@@ -19,6 +20,7 @@ import {
   Eye,
   Pencil,
   Trash2,
+Receipt,
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
@@ -61,7 +63,9 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
   const [discountInput, setDiscountInput] = useState(() => (item.discount || 0).toString());
   const [priceInput, setPriceInput] = useState(() => {
     const val = purchaseCurrency === 'USD' ? item.sellingPriceUSD : item.sellingPriceLBP;
-    return (val || 0).toString();
+  
+
+  return (val || 0).toString();
   });
 
   const total = (purchaseCurrency === 'USD' ? item.unitCostUSD : item.unitCostLBP) * item.quantity;
@@ -253,10 +257,78 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
   );
 };
 
+export const parseNumber = (val: string | number): number => {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
+  return parseInt(val.toString().replace(/,/g, ''), 10) || 0;
+};
+
+
+
+export const formatInvoiceDate = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};
+export const formatExpiryDate = (dateStr: string | undefined): string => {
+  if (!dateStr) return '-';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[1]}/${parts[0]}`; // MM/YYYY
+  }
+  return dateStr;
+};
+export const formatNumber = (val: string | number): string => {
+  if (val === undefined || val === null || val === '') return '';
+  
+  const rawStr = val.toString().replace(/,/g, '');
+  const parsedFloat = parseFloat(rawStr);
+  
+  if (!isNaN(parsedFloat)) {
+    return Math.round(parsedFloat).toLocaleString('en-US');
+  }
+
+  const numStr = val.toString().replace(/[^\d]/g, '');
+  if (!numStr) return '';
+  const num = parseInt(numStr, 10);
+  if (isNaN(num)) return '';
+  return num.toLocaleString('en-US');
+};
 export const PurchaseView: React.FC = () => {
-  const { purchases, suppliers, products, recordPurchase, updatePurchase, deletePurchase, exchangeRate, formatLBP, formatUSD, settings, addNotification } = usePharmacy();
+  const { purchases, supplierPayments, suppliers, products, recordPurchase, updatePurchase, deletePurchase, updateSupplierPayment, deleteSupplierPayment, exchangeRate, formatLBP, formatUSD, settings, addNotification } = usePharmacy();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentToEdit, setPaymentToEdit] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<'invoices' | 'payments'>('invoices');
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+
+  // Filter invoices and payments based on search query
+  const filteredPurchases = purchases.filter(p => {
+    if (!historySearchQuery.trim()) return true;
+    const query = historySearchQuery.toLowerCase();
+    const shortId = p.id.replace('pur-', '');
+    return (
+      (p.invoiceNumber && p.invoiceNumber.toLowerCase().includes(query)) ||
+      (p.supplierName && p.supplierName.toLowerCase().includes(query)) ||
+      (shortId.includes(query))
+    );
+  });
+
+  const filteredPayments = supplierPayments.filter(p => {
+    if (!historySearchQuery.trim()) return true;
+    const query = historySearchQuery.toLowerCase();
+    const shortId = p.id.startsWith('RCT-') ? p.id : p.id.split('-')[0];
+    return (
+      (p.receiptNumber && p.receiptNumber.toLowerCase().includes(query)) ||
+      (p.supplierName && p.supplierName.toLowerCase().includes(query)) ||
+      (shortId.includes(query))
+    );
+  });
+
   const [editingPurchaseId, setEditingPurchaseId] = useState<string | null>(null);
   const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null);
   const [editRowData, setEditRowData] = useState<{
@@ -276,16 +348,25 @@ export const PurchaseView: React.FC = () => {
     profit: string;
     total: string;
   } | null>(null);
-  const [viewingPurchase, setViewingPurchase] = useState<PurchaseInvoice | null>(null);
+  const [isViewMode, setIsViewMode] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [purchaseToDelete, setPurchaseToDelete] = useState<string | null>(null);
+  const [paymentToDelete, setPaymentToDelete] = useState<string | null>(null);
 
-  const [selectedSupplierId, setSelectedSupplierId] = useState(suppliers[0]?.id || '');
+  const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [supplierSearchQuery, setSupplierSearchQuery] = useState('');
   const [isSupplierDropdownOpen, setIsSupplierDropdownOpen] = useState(false);
   const [supplierHighlightedIndex, setSupplierHighlightedIndex] = useState(0);
   const supplierDropdownRef = useRef<HTMLDivElement>(null);
+  const supplierInputRef = useRef<HTMLInputElement>(null);
   const supplierListContainerRef = useRef<HTMLDivElement>(null);
   const supplierItemRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  useEffect(() => {
+    if (isCreateOpen) {
+      setTimeout(() => supplierInputRef.current?.focus(), 100);
+    }
+  }, [isCreateOpen]);
 
   const filteredSuppliers = useMemo(() => {
     return suppliers.filter(
@@ -351,9 +432,15 @@ export const PurchaseView: React.FC = () => {
   const invoiceDateRef = useRef<HTMLInputElement>(null);
   const paymentStatusRef = useRef<HTMLSelectElement>(null);
   const currencyRef = useRef<HTMLSelectElement>(null);
+  const invoiceNumberRef = useRef<HTMLInputElement>(null);
 
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [invoiceNumberInput, setInvoiceNumberInput] = useState('');
   const [isPaid, setIsPaid] = useState(true);
+  const [invoiceDiscount, setInvoiceDiscount] = useState('0');
+  const [invoiceDiscountAmount, setInvoiceDiscountAmount] = useState('0');
+    const [manualTotal, setManualTotal] = useState('');
+  
 
   useEffect(() => {
     if (!isSupplierDropdownOpen) {
@@ -750,7 +837,7 @@ export const PurchaseView: React.FC = () => {
       selectProduct(match, false);
       showFeedback('success', `Found: ${match.name} (${match.barcode || match.code})`);
       setTimeout(() => {
-        unitInputRef.current?.focus();
+        searchInputRef.current?.focus();
       }, 60);
     } else {
       showFeedback('error', `Barcode "${raw}" not found in stock list.`);
@@ -834,7 +921,7 @@ export const PurchaseView: React.FC = () => {
 
   useEffect(() => {
     if (itemPublicPrice === '0' || itemPublicPrice === '') {
-      const parsedCost = parseFloat(itemCostUSD) || 0;
+      const parsedCost = parseNumber(itemCostUSD) || 0;
       const parsedDiscount = parseFloat(itemDiscount) || 0;
       if (parsedCost > 0 && parsedDiscount < 100) {
         let calc = parsedCost / (1 - parsedDiscount / 100);
@@ -857,7 +944,7 @@ export const PurchaseView: React.FC = () => {
 
   useEffect(() => {
     if (isPublicPriceFocused || isDiscountFocused) {
-      const pubPrice = parseFloat(itemPublicPrice) || 0;
+      const pubPrice = parseNumber(itemPublicPrice) || 0;
       const discount = parseFloat(itemDiscount) || 0;
       
       let newCost = pubPrice - (pubPrice * (discount / 100));
@@ -872,7 +959,7 @@ export const PurchaseView: React.FC = () => {
   useEffect(() => {
     if (!isTotalFocused) {
       const qty = parseInt(itemQty, 10) || 0;
-      const cost = parseFloat(itemCostUSD) || 0;
+      const cost = parseNumber(itemCostUSD) || 0;
       let calculated = qty * cost;
       if (purchaseCurrency !== 'USD') {
         calculated = Math.round(calculated);
@@ -884,17 +971,13 @@ export const PurchaseView: React.FC = () => {
   const handleExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.target.value;
     let digits = input.replace(/[^\d]/g, '');
-    if (digits.length > 8) digits = digits.slice(0, 8);
+    if (digits.length > 6) digits = digits.slice(0, 6);
 
     let formatted = digits;
-    if (digits.length > 4) {
-      formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-    } else if (digits.length > 2) {
+    if (digits.length > 2) {
       formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
     } else if (digits.length === 2 && input.endsWith('/')) {
       formatted = `${digits}/`;
-    } else if (digits.length === 4 && input.endsWith('/')) {
-      formatted = `${digits.slice(0,2)}/${digits.slice(2)}/`;
     }
 
     setDisplayExpiry(formatted);
@@ -908,43 +991,25 @@ export const PurchaseView: React.FC = () => {
     }
 
     const digits = input.replace(/[^\d]/g, '');
-    let d = 0, m = 0, y = 0;
+    let m = 0, y = 0;
 
     if (digits.length === 4) {
       m = parseInt(digits.slice(0, 2), 10);
       y = 2000 + parseInt(digits.slice(2, 4), 10);
     } else if (digits.length === 6) {
-      const p1 = parseInt(digits.slice(0, 2), 10);
-      const p2 = parseInt(digits.slice(2, 4), 10);
-      const p3 = parseInt(digits.slice(4, 6), 10);
-      if (p1 <= 12 && p2 === 20) {
-         m = p1;
-         y = parseInt(digits.slice(2, 6), 10);
-      } else if (p2 <= 12) {
-         d = p1;
-         m = p2;
-         y = 2000 + p3;
-      } else {
-         m = p1;
-         y = parseInt(digits.slice(2, 6), 10);
-      }
-    } else if (digits.length === 8) {
-      d = parseInt(digits.slice(0, 2), 10);
-      m = parseInt(digits.slice(2, 4), 10);
-      y = parseInt(digits.slice(4, 8), 10);
+      m = parseInt(digits.slice(0, 2), 10);
+      y = parseInt(digits.slice(2, 6), 10);
     } else {
       return;
     }
 
     if (m >= 1 && m <= 12) {
-      if (d === 0 || d > 31) {
-        d = new Date(y, m, 0).getDate();
-      }
+      const d = new Date(y, m, 0).getDate();
       const dd = d.toString().padStart(2, '0');
       const mm = m.toString().padStart(2, '0');
       const yyyy = y.toString();
       
-      setDisplayExpiry(`${dd}/${mm}/${yyyy}`);
+      setDisplayExpiry(`${mm}/${yyyy}`);
       setItemExpiry(`${yyyy}-${mm}-${dd}`);
     }
   };
@@ -1026,7 +1091,17 @@ export const PurchaseView: React.FC = () => {
       }
     } else if (e.key === 'Enter') {
       e.preventDefault();
+      
       const q = productSearchQuery.trim().toLowerCase();
+      
+      // If product is already selected and they press enter, just move to unit
+      if (currentProductId) {
+        const prod = products.find(p => p.id === currentProductId);
+        if (prod && productSearchQuery.startsWith(prod.name)) {
+          unitInputRef.current?.focus();
+          return;
+        }
+      }
 
       // If nothing is typed, just open the dropdown and do not auto-select
       if (!q) {
@@ -1145,9 +1220,11 @@ export const PurchaseView: React.FC = () => {
     }
     const parsedQty = parseInt(itemQty, 10);
     const qty = isNaN(parsedQty) ? 0 : parsedQty;
-    const parsedCost = parseFloat(itemCostUSD);
+    const parsedFree = parseInt(itemFree, 10);
+    const free = isNaN(parsedFree) ? 0 : parsedFree;
+    const parsedCost = parseNumber(itemCostUSD);
     const parsedDiscount = parseFloat(itemDiscount) || 0;
-    const parsedPublicPrice = parseFloat(itemPublicPrice) || 0;
+    const parsedPublicPrice = parseNumber(itemPublicPrice) || 0;
     
     let costUSD = 0;
     let costLBP = 0;
@@ -1204,6 +1281,7 @@ export const PurchaseView: React.FC = () => {
         productCode: selectedProduct.code,
         productName: selectedProduct.name,
         quantity: qty,
+        freeQty: free,
         unitCostUSD: costUSD,
         unitCostLBP: costLBP,
         sellingPriceLBP: publicPriceLBP,
@@ -1236,7 +1314,7 @@ export const PurchaseView: React.FC = () => {
     setIsSearchDropdownOpen(false);
 
     setTimeout(() => {
-      searchInputRef.current?.focus();
+      codeInputRef.current?.focus();
     }, 50);
   };
 
@@ -1251,9 +1329,11 @@ export const PurchaseView: React.FC = () => {
     const unitCost = purchaseCurrency === 'USD' ? item.unitCostUSD : item.unitCostLBP;
     const pubPrice = purchaseCurrency === 'USD' ? (item.sellingPriceUSD || 0) : item.sellingPriceLBP;
     const total = unitCost * item.quantity;
-    let profit = pubPrice - unitCost;
-    if (purchaseCurrency !== 'LBP') profit = Number(profit.toFixed(2));
-    const profitPerc = unitCost > 0 ? ((profit / unitCost) * 100).toFixed(1) : '0.0';
+    const totalQty = item.quantity + (item.freeQty || 0);
+    
+    const profitPerc = (pubPrice > 0 && totalQty > 0) 
+      ? (100 - ((((unitCost * item.quantity) / totalQty) * 100) / pubPrice)).toFixed(2)
+      : '0.00';
 
     setEditingRowIndex(index);
     setEditRowData({
@@ -1285,9 +1365,9 @@ export const PurchaseView: React.FC = () => {
     const qty = isNaN(parsedQty) ? 0 : parsedQty;
     const parsedFree = parseInt(editRowData.free, 10);
     const freeQty = isNaN(parsedFree) ? 0 : parsedFree;
-    const parsedCost = parseFloat(editRowData.cost);
+    const parsedCost = parseNumber(editRowData.cost);
     const parsedDiscount = parseFloat(editRowData.discount) || 0;
-    const parsedPublicPrice = parseFloat(editRowData.pubPrice) || 0;
+    const parsedPublicPrice = parseNumber(editRowData.pubPrice) || 0;
     
     let costUSD = 0;
     let costLBP = 0;
@@ -1309,29 +1389,17 @@ export const PurchaseView: React.FC = () => {
     let finalExpiry = editRowData.expiry;
     if (!finalExpiry && editRowData.displayExpiry.trim()) {
       const digits = editRowData.displayExpiry.replace(/\D/g, '');
-      let d = 0, m = 0, y = 0;
+      let m = 0, y = 0;
       if (digits.length === 4) {
         m = parseInt(digits.slice(0, 2), 10);
         y = 2000 + parseInt(digits.slice(2, 4), 10);
       } else if (digits.length === 6) {
-        const p1 = parseInt(digits.slice(0, 2), 10);
-        const p2 = parseInt(digits.slice(2, 4), 10);
-        const p3 = parseInt(digits.slice(4, 6), 10);
-        if (p1 <= 12 && p2 === 20) {
-           m = p1; y = parseInt(digits.slice(2, 6), 10);
-        } else if (p2 <= 12) {
-           d = p1; m = p2; y = 2000 + p3;
-        } else {
-           m = p1; y = parseInt(digits.slice(2, 6), 10);
-        }
-      } else if (digits.length === 8) {
-        d = parseInt(digits.slice(0, 2), 10);
-        m = parseInt(digits.slice(2, 4), 10);
-        y = parseInt(digits.slice(4, 8), 10);
+        m = parseInt(digits.slice(0, 2), 10);
+        y = parseInt(digits.slice(2, 6), 10);
       }
       
-      if (m >= 1 && m <= 12) {
-        if (d === 0 || d > 31) d = new Date(y, m, 0).getDate();
+      if (m >= 1 && m <= 12 && y > 0) {
+        const d = new Date(y, m, 0).getDate();
         finalExpiry = `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
       } else {
         finalExpiry = editRowData.displayExpiry.trim();
@@ -1362,8 +1430,54 @@ export const PurchaseView: React.FC = () => {
     setEditRowData(null);
   };
 
-  const totalCostUSD = items.reduce((sum, item) => sum + item.unitCostUSD * item.quantity, 0);
-  const totalCostLBP = Math.round(totalCostUSD * exchangeRate);
+
+
+    const subtotalUSD = items.reduce((sum, item) => sum + item.unitCostUSD * item.quantity, 0);
+  const subtotalLBP = Math.round(subtotalUSD * exchangeRate);
+  const activeSubtotal = purchaseCurrency === 'USD' ? subtotalUSD : subtotalLBP;
+  
+  const totalVatLBP = Math.round(items.reduce((sum, item) => {
+    const costLBP = item.unitCostLBP * item.quantity;
+    const match = products.find(p => p.id === item.productId);
+    const vRate = item.vatRate !== undefined ? item.vatRate : (match ? (settings.vatRates?.[match.category] || 0) : 0);
+    return sum + (costLBP * (vRate / 100));
+  }, 0));
+
+  const parsedInvoiceDiscountPerc = parseFloat(invoiceDiscount) || 0;
+  const parsedInvoiceDiscountAmt = parseNumber(invoiceDiscountAmount) || 0;
+  
+  let totalCostUSD = 0;
+  let totalCostLBP = 0;
+
+  let calculatedTotalUSD = 0;
+  let calculatedTotalLBP = 0;
+
+  if (purchaseCurrency === 'USD') {
+    const discountAmountUSD = (subtotalUSD * (parsedInvoiceDiscountPerc / 100)) + parsedInvoiceDiscountAmt;
+    const subAfterDiscountUSD = Math.max(0, subtotalUSD - discountAmountUSD);
+    const vatInUSD = totalVatLBP / exchangeRate;
+    calculatedTotalUSD = subAfterDiscountUSD + vatInUSD;
+    calculatedTotalLBP = Math.round(calculatedTotalUSD * exchangeRate);
+  } else {
+    const discountAmountLBP = (subtotalLBP * (parsedInvoiceDiscountPerc / 100)) + parsedInvoiceDiscountAmt;
+    const subAfterDiscountLBP = Math.max(0, subtotalLBP - discountAmountLBP);
+    calculatedTotalLBP = Math.round(subAfterDiscountLBP + totalVatLBP);
+    calculatedTotalUSD = calculatedTotalLBP / exchangeRate;
+  }
+
+  if (manualTotal !== '') {
+    const parsedManual = parseNumber(manualTotal) || 0;
+    if (purchaseCurrency === 'USD') {
+      totalCostUSD = parsedManual;
+      totalCostLBP = Math.round(parsedManual * exchangeRate);
+    } else {
+      totalCostLBP = parsedManual;
+      totalCostUSD = parsedManual / exchangeRate;
+    }
+  } else {
+    totalCostUSD = calculatedTotalUSD;
+    totalCostLBP = calculatedTotalLBP;
+  }
 
   const handleSavePurchase = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1381,6 +1495,9 @@ export const PurchaseView: React.FC = () => {
         totalCostLBP,
         paid: isPaid,
         currency: purchaseCurrency,
+        invoiceDiscount: parsedInvoiceDiscountPerc,
+        invoiceDiscountAmount: parsedInvoiceDiscountAmt,
+        ...(invoiceNumberInput.trim() ? { invoiceNumber: invoiceNumberInput.trim() } : {}),
       });
     } else {
       recordPurchase({
@@ -1394,6 +1511,7 @@ export const PurchaseView: React.FC = () => {
         status: 'received',
         paid: isPaid,
         currency: purchaseCurrency,
+        ...(invoiceNumberInput.trim() ? { invoiceNumber: invoiceNumberInput.trim() } : {}),
       });
     }
 
@@ -1403,12 +1521,18 @@ export const PurchaseView: React.FC = () => {
   };
 
   const handleOpenCreate = () => {
+    setIsViewMode(false);
     setIsCreateOpen(true);
     setEditingPurchaseId(null);
+    setSelectedSupplierId('');
+    setSupplierSearchQuery('');
     setItems([]);
     setInvoiceDate(new Date().toISOString().split('T')[0]);
     setIsPaid(true);
     setPurchaseCurrency('LBP');
+    setInvoiceDiscount('0');
+    setInvoiceDiscountAmount('0');
+    setManualTotal('');
     setCurrentProductId('');
     setProductSearchQuery('');
     setItemQty('0');
@@ -1429,13 +1553,37 @@ export const PurchaseView: React.FC = () => {
     }, 100);
   };
 
-  const handleEditPurchase = (inv: PurchaseInvoice) => {
+  const handleViewPurchase = (inv: PurchaseInvoice) => {
+    setIsViewMode(true);
     setEditingPurchaseId(inv.id);
+    setEditingRowIndex(null);
     setSelectedSupplierId(inv.supplierId);
     setInvoiceDate(inv.date);
+    setInvoiceNumberInput(inv.invoiceNumber || '');
     setIsPaid(inv.paid);
     setPurchaseCurrency(inv.currency || 'LBP');
     setItems(inv.items || []);
+    setInvoiceDiscount((inv.invoiceDiscount || 0).toString());
+    setInvoiceDiscountAmount((inv.invoiceDiscountAmount || 0).toString());
+    setManualTotal(inv.totalOverride?.toString() || '');
+    setCurrentProductId('');
+    setProductSearchQuery('');
+    setItemBarcode('');
+    setIsCreateOpen(true);
+  };
+
+  const handleEditPurchase = (inv: PurchaseInvoice) => {
+    setIsViewMode(false);
+    setEditingPurchaseId(inv.id);
+    setSelectedSupplierId(inv.supplierId);
+    setInvoiceDate(inv.date);
+    setInvoiceNumberInput(inv.invoiceNumber || '');
+    setIsPaid(inv.paid);
+    setPurchaseCurrency(inv.currency || 'LBP');
+    setItems(inv.items || []);
+    setInvoiceDiscount((inv.invoiceDiscount || 0).toString());
+    setInvoiceDiscountAmount((inv.invoiceDiscountAmount || 0).toString());
+    setManualTotal('');
     setCurrentProductId('');
     setProductSearchQuery('');
     setItemQty('0');
@@ -1455,69 +1603,206 @@ export const PurchaseView: React.FC = () => {
   };
 
   const handleDeletePurchase = (id: string) => {
-    if (confirm('Are you sure you want to delete this purchase? This will revert the stock added.')) {
-      deletePurchase(id);
-    }
+    setPurchaseToDelete(id);
+  };
+
+  const calculateProfitPerc = (pubPrice: number, cost: number, qty: number, free: number) => {
+    const totalQty = qty + free;
+    return (pubPrice > 0 && totalQty > 0) ? (100 - ((((cost * qty) / totalQty) * 100) / pubPrice)).toFixed(2) : '0.00';
   };
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[#f8fafc] dark:bg-slate-950 p-3.5 space-y-3 select-none">
       {/* Header Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2.5 rounded border border-gray-200 bg-white p-3 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-        <div>
-          <div className="flex items-center space-x-2">
-            <SectionRestoreButton section="purchase" />
-            <Truck className="h-4 w-4 text-teal-600 dark:text-teal-400" />
-            <h2 className="text-sm font-bold tracking-tight text-slate-900 dark:text-slate-100 uppercase">
-              Purchases & Supplier Invoices
-            </h2>
+      <div className="flex flex-col gap-2.5 rounded border border-gray-200 bg-white px-3 pt-3 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center justify-between">
+          <div>
+            <div className="flex items-center space-x-2">
+              <SectionRestoreButton section="purchase" />
+              <Truck className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+              <h2 className="text-sm font-bold tracking-tight text-slate-900 dark:text-slate-100 uppercase">
+                Purchases & Supplier Invoices
+              </h2>
+            </div>
+            <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
+              Restock inventory from Lebanese agents (Mersaco, Omnipharma, Fattal) & track shipment arrivals.
+            </p>
           </div>
-          <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-            Restock inventory from Lebanese agents (Mersaco, Omnipharma, Fattal) & track shipment arrivals.
-          </p>
+
+          <div className="flex items-center gap-2">
+            {activeTab === 'invoices' && (
+              <button
+                onClick={handleOpenCreate}
+                className="flex items-center space-x-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-teal-700 shadow-2xs transition-colors cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>New Purchase Invoice</span>
+              </button>
+            )}
+            {activeTab === 'payments' && (
+              <button
+                onClick={() => setIsPaymentModalOpen(true)}
+                className="flex items-center space-x-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-teal-700 shadow-2xs transition-colors cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Record Payment</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        <button
-          onClick={handleOpenCreate}
-          className="flex items-center space-x-1 rounded bg-teal-600 px-2 py-1 text-xs font-bold text-white hover:bg-teal-700 shadow-2xs transition-colors cursor-pointer"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          <span>New Purchase Invoice</span>
-        </button>
+        {/* Sub Tabs */}
+        <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-1 -mx-3 px-3">
+          <div className="flex overflow-x-auto">
+            <button
+              onClick={() => setActiveTab('invoices')}
+              className={`px-4 py-2 text-sm font-bold border-b-2 whitespace-nowrap transition-colors ${
+                activeTab === 'invoices'
+                  ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              Invoices
+            </button>
+            <button
+              onClick={() => setActiveTab('payments')}
+              className={`px-4 py-2 text-sm font-bold border-b-2 whitespace-nowrap transition-colors ${
+                activeTab === 'payments'
+                  ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              Payments
+            </button>
+          </div>
+          <div className="relative mb-1 shrink-0">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              value={historySearchQuery}
+              onChange={(e) => setHistorySearchQuery(e.target.value)}
+              placeholder="Search number or supplier..."
+              className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 w-48 sm:w-64"
+            />
+          </div>
+        </div>
       </div>
 
-      {/* Invoices Table */}
+      {activeTab === 'payments' ? (
+        <div className="flex-1 overflow-hidden rounded border border-gray-200 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col">
+          <div className="flex-1 overflow-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="sticky top-0 z-10 border-b border-gray-200 bg-gray-50 text-[10px] font-bold uppercase tracking-wider text-gray-600 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300">
+                <tr>
+                  <th className="py-2 px-3">ID</th>
+                  <th className="py-2 px-3">Receipt #</th>
+                  <th className="py-2 px-3">Date</th>
+                  <th className="py-2 px-3">Supplier</th>
+                  <th className="py-2 px-3">Amount</th>
+                  <th className="py-2 px-3">Payment Type</th>
+                  <th className="py-2 px-3">Invoices Covered</th>
+                  <th className="py-2 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                {filteredPayments && filteredPayments.length > 0 ? (
+                  filteredPayments.map((payment) => (
+                    <tr key={payment.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                      <td className="py-2 px-3 font-mono font-bold text-teal-600 dark:text-teal-400">{payment.id.startsWith('RCT-') ? payment.id : payment.id.split('-')[0]}</td>
+                      <td className="py-2 px-3 font-mono font-bold text-slate-900 dark:text-slate-100">{payment.receiptNumber}</td>
+                      <td className="py-2 px-3 text-gray-600 dark:text-slate-300">{payment.date}</td>
+                      <td className="py-2 px-3 font-semibold text-slate-900 dark:text-slate-100">{payment.supplierName}</td>
+                      <td className="py-2 px-3 font-bold text-teal-600 dark:text-teal-400">
+                        {payment.currency === 'USD' ? `$${formatNumber(payment.amount)}` : `${formatLBPValue(payment.amount)} LBP`}
+                      </td>
+                      <td className="py-2 px-3">
+                        <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${payment.isPaymentOnAccount ? 'bg-indigo-50 text-indigo-800 border border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300' : 'bg-green-50 text-green-800 border border-green-200 dark:bg-green-950 dark:text-green-300'}`}>
+                          {payment.isPaymentOnAccount ? 'On Account' : 'Specific Invoices'}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-gray-500">
+                        {payment.invoices.length > 0 ? `${payment.invoices.length} invoices` : 'N/A'}
+                      </td>
+                      <td className="py-2 px-3 text-right">
+                        <div className="flex items-center justify-end space-x-2">
+                          <button
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              setPaymentToEdit(payment);
+                              setIsPaymentModalOpen(true);
+                            }}
+                            className="p-1.5 text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:text-teal-400 dark:hover:bg-teal-900/30 rounded"
+                            title="Edit Payment"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              setPaymentToDelete(payment.id);
+                            }}
+                            className="p-1.5 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/30 rounded"
+                            title="Delete Payment"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="py-10 text-center text-gray-400">
+                      No supplier payments recorded yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+      <> {/* Invoices Table */}
       <div className="flex-1 overflow-hidden rounded border border-gray-200 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col">
         <div className="flex-1 overflow-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead className="sticky top-0 z-10 border-b border-gray-200 bg-gray-50 text-[10px] font-bold uppercase tracking-wider text-gray-600 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300">
               <tr>
+                <th className="py-2 px-3">ID</th>
                 <th className="py-2 px-3">Invoice #</th>
                 <th className="py-2 px-3">Date</th>
                 <th className="py-2 px-3">Supplier</th>
                 <th className="py-2 px-3">Items Received</th>
                 <th className="py-2 px-3">Total USD ($)</th>
                 <th className="py-2 px-3">Total LBP</th>
-                <th className="py-2 px-3">Rate Applied</th>
+                <th className="py-2 px-3">Amount Left</th>
                 <th className="py-2 px-3">Payment Status</th>
+                <th className="py-2 px-3">Receipt #</th>
                 <th className="py-2 px-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-              {purchases.length === 0 ? (
+              {filteredPurchases.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-10 text-center text-gray-400">
+                  <td colSpan={11} className="py-10 text-center text-gray-400">
                     No purchase invoices registered yet.
                   </td>
                 </tr>
               ) : (
-                purchases.map((inv) => (
-                  <tr key={inv.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                filteredPurchases.map((inv) => (
+                  <tr 
+                    key={inv.id} 
+                    className="hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer"
+                    onClick={() => handleViewPurchase(inv)}
+                  >
+                    <td className="py-2 px-3 font-mono font-bold text-teal-600 dark:text-teal-400">
+                      {inv.id.replace('pur-', '')}
+                    </td>
                     <td className="py-2 px-3 font-mono font-bold text-slate-900 dark:text-slate-100">
                       {inv.invoiceNumber}
                     </td>
                     <td className="py-2 px-3 text-gray-600 dark:text-slate-300">
-                      {inv.date}
+                      {formatInvoiceDate(inv.date)}
                     </td>
                     <td className="py-2 px-3 font-semibold text-slate-900 dark:text-slate-100">
                       {inv.supplierName}
@@ -1533,8 +1818,14 @@ export const PurchaseView: React.FC = () => {
                     <td className="py-2 px-3 font-medium text-green-700 dark:text-green-400">
                       {formatLBPValue(inv.totalCostLBP)} LBP
                     </td>
-                    <td className="py-2 px-3 text-gray-500 font-mono text-[10px]">
-                      1$ = {formatLBPValue(inv.exchangeRate)} LBP
+                    <td className="py-2 px-3 font-bold text-slate-700 dark:text-slate-300">
+                      {(() => {
+                        const amountLeftUSD = inv.paid ? 0 : (inv.totalCostUSD - (inv.paidAmountUSD || 0) - ((inv.paidAmountLBP || 0) / (inv.exchangeRate || 1)));
+                        const amountLeftLBP = inv.paid ? 0 : (inv.totalCostLBP - (inv.paidAmountLBP || 0) - ((inv.paidAmountUSD || 0) * (inv.exchangeRate || 1)));
+                        return inv.currency === 'USD' 
+                          ? `$${formatNumber(Math.max(0, amountLeftUSD))}` 
+                          : `${formatLBPValue(Math.max(0, amountLeftLBP))} LBP`;
+                      })()}
                     </td>
                     <td className="py-2 px-3">
                       <span
@@ -1547,24 +1838,20 @@ export const PurchaseView: React.FC = () => {
                         {inv.paid ? 'Settled (Paid)' : 'Pending Debt'}
                       </span>
                     </td>
+                    <td className="py-2 px-3 font-mono text-[11px] font-medium text-slate-600 dark:text-slate-400 max-w-[120px] truncate" title={supplierPayments.filter(p => p.invoices && p.invoices.includes(inv.id)).map(p => p.receiptNumber).join(', ')}>
+                      {supplierPayments.filter(p => p.invoices && p.invoices.includes(inv.id)).map(p => p.receiptNumber).join(', ') || '-'}
+                    </td>
                     <td className="py-2 px-3 text-right">
                       <div className="flex items-center justify-end space-x-2">
                         <button
-                          onClick={() => setViewingPurchase(inv)}
-                          className="p-1.5 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/30 rounded"
-                          title="View Details"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => handleEditPurchase(inv)}
+                          onClick={(e) => { e.stopPropagation(); handleEditPurchase(inv); }}
                           className="p-1.5 text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:text-teal-400 dark:hover:bg-teal-900/30 rounded"
                           title="Edit Purchase"
                         >
                           <Pencil className="h-4 w-4" />
                         </button>
                         <button
-                          onClick={() => handleDeletePurchase(inv.id)}
+                          onClick={(e) => { e.stopPropagation(); handleDeletePurchase(inv.id); }}
                           className="p-1.5 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/30 rounded"
                           title="Delete Purchase"
                         >
@@ -1580,102 +1867,22 @@ export const PurchaseView: React.FC = () => {
         </div>
       </div>
 
-      {viewingPurchase && (
-        <DesktopWindow
-          title={`Purchase Invoice Details - ${viewingPurchase.invoiceNumber}`}
-          isOpen={true}
-          section="purchase"
-          onClose={() => setViewingPurchase(null)}
-          width="600px"
-          height="auto"
-        >
-          <div className="p-5 space-y-4 text-sm text-slate-800 dark:text-slate-200">
-            <div className="grid grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-900 p-4 rounded-lg">
-              <div>
-                <span className="block text-[10px] uppercase font-bold text-slate-500">Supplier</span>
-                <span className="font-semibold">{viewingPurchase.supplierName}</span>
-              </div>
-              <div>
-                <span className="block text-[10px] uppercase font-bold text-slate-500">Date</span>
-                <span className="font-semibold">{viewingPurchase.date}</span>
-              </div>
-              <div>
-                <span className="block text-[10px] uppercase font-bold text-slate-500">Payment Status</span>
-                <span className={`inline-block mt-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
-                  viewingPurchase.paid
-                    ? 'bg-teal-50 text-teal-800 border border-teal-200 dark:bg-teal-950 dark:text-teal-300'
-                    : 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950 dark:text-amber-300'
-                }`}>
-                  {viewingPurchase.paid ? 'Paid' : 'Unpaid Debt'}
-                </span>
-              </div>
-              <div>
-                <span className="block text-[10px] uppercase font-bold text-slate-500">Exchange Rate</span>
-                <span className="font-semibold">{formatLBPValue(viewingPurchase.exchangeRate)} LBP</span>
-              </div>
-            </div>
+      
 
-            <div>
-              <h4 className="font-bold text-slate-700 dark:text-slate-300 mb-2 border-b border-slate-200 dark:border-slate-800 pb-1">Items</h4>
-              <div className="max-h-60 overflow-y-auto space-y-2">
-                {viewingPurchase.items.map((it, idx) => {
-                  const productDetails = products.find(p => p.id === it.productId);
-                  return (
-                  <div key={idx} className="flex justify-between items-center bg-white dark:bg-slate-800 p-2 rounded border border-slate-100 dark:border-slate-700">
-                    <div>
-                      <div className="font-bold">
-                        {it.productName}
-                        {productDetails && (
-                          <span className="ml-1.5 font-normal text-slate-500 text-[11px]">
-                            {productDetails.dosage} {productDetails.presentation} {productDetails.form}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        {it.quantity} {it.isPiece ? 'pieces' : 'units'} • Batch: {it.batchNumber} • Exp: {it.expiryDate}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-bold text-blue-600 dark:text-blue-400">${(it.quantity * it.unitCostUSD).toFixed(2)}</div>
-                      <div className="text-[10px] text-slate-500">@ ${it.unitCostUSD.toFixed(2)} / ea</div>
-                    </div>
-                  </div>
-                )})}
-              </div>
-            </div>
-
-            <div className="flex justify-end items-center bg-slate-50 dark:bg-slate-900 p-4 rounded-lg space-x-4">
-              <div className="text-right">
-                <span className="block text-[10px] uppercase font-bold text-slate-500">Total USD</span>
-                <span className="text-lg font-bold text-blue-600 dark:text-blue-400">${viewingPurchase.totalCostUSD.toFixed(2)}</span>
-              </div>
-              <div className="text-right border-l border-slate-200 dark:border-slate-700 pl-4">
-                <span className="block text-[10px] uppercase font-bold text-slate-500">Total LBP</span>
-                <span className="text-lg font-bold text-green-600 dark:text-green-400">{formatLBPValue(viewingPurchase.totalCostLBP)}</span>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                onClick={() => setViewingPurchase(null)}
-                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded font-bold transition-colors dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </DesktopWindow>
+      </>
       )}
 
       {/* New Purchase Modal */}
       {isCreateOpen && (
         <DesktopWindow
-          title={editingPurchaseId ? "Edit Purchase Invoice" : "Receive Supplier Shipment (Restock Inventory)"}
+          title={isViewMode ? `View Purchase (ID: ${editingPurchaseId?.replace('pur-', '')})` : editingPurchaseId ? `Edit Purchase (ID: ${editingPurchaseId.replace('pur-', '')})` : "Receive Supplier Shipment (Restock Inventory)"}
           isOpen={true}
           section="purchase"
+          startMaximized={true}
+          hideResetButton={true}
+          hideMaximizeButton={true}
           onClose={() => {
-            if (items.length > 0) {
+            if (!isViewMode && items.length > 0) {
               setShowCloseConfirm(true);
             } else {
               setIsCreateOpen(false);
@@ -1690,16 +1897,38 @@ export const PurchaseView: React.FC = () => {
               if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).tagName !== 'TEXTAREA') {
                 e.preventDefault();
               }
+              if (e.key === 'Escape') {
+                if (isSupplierDropdownOpen) {
+                  setIsSupplierDropdownOpen(false);
+                  e.preventDefault();
+                  e.stopPropagation();
+                } else if (isSearchDropdownOpen) {
+                  setIsSearchDropdownOpen(false);
+                  e.preventDefault();
+                  e.stopPropagation();
+                } else {
+                  const target = e.target as HTMLElement;
+                  if (target.tagName === 'INPUT' && (target as HTMLInputElement).type !== 'checkbox' && (target as HTMLInputElement).type !== 'radio') {
+                    const inputElement = target as HTMLInputElement;
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+                    if (nativeInputValueSetter) {
+                      nativeInputValueSetter.call(inputElement, '');
+                      inputElement.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                  }
+                }
+              }
             }}
             className="px-3 pt-2 pb-3 space-y-2 text-xs flex-1 flex flex-col justify-start overflow-auto min-h-0"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1.2fr_1fr] gap-3">
               <div ref={supplierDropdownRef} className="relative">
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Supplier
                 </label>
                 <div className="relative">
                   <input
+                    ref={supplierInputRef}
                     type="text"
                     value={supplierSearchQuery}
                     onChange={(e) => {
@@ -1707,10 +1936,11 @@ export const PurchaseView: React.FC = () => {
                       setIsSupplierDropdownOpen(true);
                       setSupplierHighlightedIndex(0);
                     }}
-                    onFocus={() => setIsSupplierDropdownOpen(true)}
+                    onClick={() => setIsSupplierDropdownOpen(true)}
                     onKeyDown={handleSupplierKeyDown}
                     placeholder="Search supplier..."
-                    className="w-full rounded border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    disabled={isViewMode}
+                    className="w-full rounded border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 disabled:opacity-75 disabled:bg-slate-50 dark:disabled:bg-slate-900"
                   />
                   <ChevronDown className="absolute right-2 top-1.5 h-4 w-4 text-slate-400 pointer-events-none" />
                 </div>
@@ -1779,7 +2009,8 @@ export const PurchaseView: React.FC = () => {
                     }
                   }}
                   required
-                  className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  disabled={isViewMode}
+                  className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 disabled:opacity-75 disabled:bg-slate-50 dark:disabled:bg-slate-900"
                 />
               </div>
 
@@ -1802,14 +2033,56 @@ export const PurchaseView: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      // Next focus
+                      paymentStatusRef.current?.focus();
                     }
                   }}
-                  className="w-full rounded border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  disabled={isViewMode}
+                  className="w-full rounded border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 disabled:opacity-75 disabled:bg-slate-50 dark:disabled:bg-slate-900"
                 >
                   <option value="LBP">LBP (ل.ل)</option>
                   <option value="USD">USD ($)</option>
                 </select>
+              </div>
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Payment Status
+                </label>
+                <select
+                  ref={paymentStatusRef}
+                  value={isPaid ? 'paid' : 'unpaid'}
+                  onChange={(e) => setIsPaid(e.target.value === 'paid')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      invoiceNumberRef.current?.focus();
+                    }
+                  }}
+                  disabled={isViewMode}
+                  className="w-full rounded border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 disabled:opacity-75 disabled:bg-slate-50 dark:disabled:bg-slate-900"
+                >
+                  <option value="unpaid">Unpaid / On Account</option>
+                  <option value="paid">Settled (Paid)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Invoice #
+                </label>
+                <input
+                  ref={invoiceNumberRef}
+                  type="text"
+                  value={invoiceNumberInput}
+                  onChange={(e) => setInvoiceNumberInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      codeInputRef.current?.focus();
+                    }
+                  }}
+                  disabled={isViewMode}
+                  placeholder={editingPurchaseId ? '' : 'Auto-generated if empty'}
+                  className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 disabled:opacity-75 disabled:bg-slate-50 dark:disabled:bg-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                />
               </div>
             </div>
 
@@ -1905,9 +2178,11 @@ export const PurchaseView: React.FC = () => {
           />
         </th>
       ))}
+      {!isViewMode && (
       <th className="p-1 pb-1.5 px-2 text-[10px] font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap">
         {/* Actions empty header */}
       </th>
+      )}
     </tr>
   </thead>
   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1918,10 +2193,11 @@ export const PurchaseView: React.FC = () => {
                       const unitCost = purchaseCurrency === 'USD' ? it.unitCostUSD : it.unitCostLBP;
                       const pubPrice = purchaseCurrency === 'USD' ? (it.sellingPriceUSD || 0) : it.sellingPriceLBP;
                       const total = unitCost * it.quantity;
+                      const totalQty = it.quantity + (it.freeQty || 0);
                       
-                      let profit = pubPrice - unitCost;
-                      if (purchaseCurrency !== 'LBP') profit = Number(profit.toFixed(2));
-                      const profitPerc = unitCost > 0 ? ((profit / unitCost) * 100).toFixed(1) : '0.0';
+                      const profitPerc = (pubPrice > 0 && totalQty > 0)
+                        ? (100 - ((((unitCost * it.quantity) / totalQty) * 100) / pubPrice)).toFixed(2)
+                        : '0.00';
 
                       const isEditing = editingRowIndex === idx && editRowData;
 
@@ -1960,7 +2236,14 @@ export const PurchaseView: React.FC = () => {
                                 className="w-full px-1 py-1 text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
                               />
                             ) : (
-                              <span className="px-2 font-semibold text-slate-800 dark:text-slate-100 ">{it.productName}</span>
+                              <div className="px-2">
+                                <span className="font-semibold text-slate-800 dark:text-slate-100">{it.productName}</span>
+                                {productDetails && (
+                                  <span className="ml-1.5 font-normal text-slate-500 text-[10px]">
+                                    {productDetails.dosage} {productDetails.presentation} {productDetails.form}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
@@ -1986,8 +2269,11 @@ export const PurchaseView: React.FC = () => {
                                 onChange={(e) => {
                                   const newQty = e.target.value;
                                   const q = parseInt(newQty, 10) || 0;
-                                  const c = parseFloat(editRowData.cost) || 0;
-                                  setEditRowData({ ...editRowData, qty: newQty, total: (q * c).toFixed(2) });
+                                  const f = parseInt(editRowData.free, 10) || 0;
+                                  const p = parseNumber(editRowData.pubPrice) || 0;
+                                  const c = parseNumber(editRowData.cost) || 0;
+                                  const profitPerc = calculateProfitPerc(p, c, q, f);
+                                  setEditRowData({ ...editRowData, qty: newQty, total: (q * c).toFixed(2), profit: profitPerc });
                                 }}
                                 className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-teal-500 rounded outline-none"
                               />
@@ -2001,7 +2287,15 @@ export const PurchaseView: React.FC = () => {
                                 type="number"
                                 min="0"
                                 value={editRowData.free}
-                                onChange={(e) => setEditRowData({ ...editRowData, free: e.target.value })}
+                                onChange={(e) => {
+                                  const newFree = e.target.value;
+                                  const f = parseInt(newFree, 10) || 0;
+                                  const q = parseInt(editRowData.qty, 10) || 0;
+                                  const p = parseNumber(editRowData.pubPrice) || 0;
+                                  const c = parseNumber(editRowData.cost) || 0;
+                                  const profitPerc = calculateProfitPerc(p, c, q, f);
+                                  setEditRowData({ ...editRowData, free: newFree, profit: profitPerc });
+                                }}
                                 className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
                               />
                             ) : (
@@ -2025,31 +2319,60 @@ export const PurchaseView: React.FC = () => {
                               <input
                                 type="text"
                                 value={editRowData.displayExpiry}
-                                onChange={(e) => setEditRowData({ ...editRowData, displayExpiry: e.target.value, expiry: '' })}
+                                onChange={(e) => {
+                                  const input = e.target.value;
+                                  let digits = input.replace(/[^\d]/g, '');
+                                  if (digits.length > 6) digits = digits.slice(0, 6);
+                                  let formatted = digits;
+                                  if (digits.length > 2) {
+                                    formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+                                  } else if (digits.length === 2 && input.endsWith('/')) {
+                                    formatted = `${digits}/`;
+                                  }
+                                  setEditRowData({ ...editRowData, displayExpiry: formatted, expiry: '' });
+                                }}
+                                onBlur={() => {
+                                  let input = editRowData.displayExpiry.trim();
+                                  if (!input) return;
+                                  const digits = input.replace(/[^\d]/g, '');
+                                  let m = 0, y = 0;
+                                  if (digits.length === 4) {
+                                    m = parseInt(digits.slice(0, 2), 10);
+                                    y = 2000 + parseInt(digits.slice(2, 4), 10);
+                                  } else if (digits.length === 6) {
+                                    m = parseInt(digits.slice(0, 2), 10);
+                                    y = parseInt(digits.slice(2, 6), 10);
+                                  }
+                                  if (m >= 1 && m <= 12 && y > 0) {
+                                    const mm = m.toString().padStart(2, '0');
+                                    const yyyy = y.toString();
+                                    setEditRowData({ ...editRowData, displayExpiry: `${mm}/${yyyy}` });
+                                  }
+                                }}
                                 className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
                               />
                             ) : (
-                              <span className="px-2 text-slate-600 dark:text-slate-300">{it.expiryDate}</span>
+                              <span className="px-2 text-slate-600 dark:text-slate-300">{formatExpiryDate(it.expiryDate)}</span>
                             )}
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                             {isEditing ? (
                               <input
-                                type="number"
-                                step="any"
-                                value={editRowData.pubPrice}
+                                type="text"
+                                value={formatNumber(editRowData.pubPrice)}
                                 onChange={(e) => {
-                                  const newPubPrice = e.target.value;
-                                  const p = parseFloat(newPubPrice) || 0;
-                                  const c = parseFloat(editRowData.cost) || 0;
-                                  const pr = p - c;
-                                  const profitPerc = c > 0 ? ((pr / c) * 100).toFixed(1) : '0.0';
+                                  const newPubPrice = formatNumber(e.target.value);
+                                  const p = parseNumber(newPubPrice) || 0;
+                                  const c = parseNumber(editRowData.cost) || 0;
+                                  const q = parseInt(editRowData.qty, 10) || 0;
+                                  const f = parseInt(editRowData.free, 10) || 0;
+                                  const profitPerc = calculateProfitPerc(p, c, q, f);
                                   setEditRowData({ ...editRowData, pubPrice: newPubPrice, profit: profitPerc });
                                 }}
                                 className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
                               />
                             ) : (
-                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">{pubPrice}</span>
+                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">{formatNumber(pubPrice)}</span>
                             )}
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
@@ -2068,22 +2391,21 @@ export const PurchaseView: React.FC = () => {
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                             {isEditing ? (
                               <input
-                                type="number"
-                                step="any"
-                                value={editRowData.cost}
+                                type="text"
+                                value={formatNumber(editRowData.cost)}
                                 onChange={(e) => {
-                                  const newCost = e.target.value;
-                                  const c = parseFloat(newCost) || 0;
+                                  const newCost = formatNumber(e.target.value);
+                                  const c = parseNumber(newCost) || 0;
                                   const q = parseInt(editRowData.qty, 10) || 0;
-                                  const p = parseFloat(editRowData.pubPrice) || 0;
-                                  const pr = p - c;
-                                  const profitPerc = c > 0 ? ((pr / c) * 100).toFixed(1) : '0.0';
+                                  const f = parseInt(editRowData.free, 10) || 0;
+                                  const p = parseNumber(editRowData.pubPrice) || 0;
+                                  const profitPerc = calculateProfitPerc(p, c, q, f);
                                   setEditRowData({ ...editRowData, cost: newCost, total: (c * q).toFixed(2), profit: profitPerc });
                                 }}
                                 className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
                               />
                             ) : (
-                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">{unitCost}</span>
+                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">{formatNumber(unitCost)}</span>
                             )}
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
@@ -2111,8 +2433,15 @@ export const PurchaseView: React.FC = () => {
                                   value={editRowData.profit}
                                   onChange={(e) => {
                                     const newProfit = e.target.value;
-                                    const c = parseFloat(editRowData.cost) || 0;
-                                    const pr = c + (c * (parseFloat(newProfit) || 0) / 100);
+                                    const c = parseNumber(editRowData.cost) || 0;
+                                    const q = parseInt(editRowData.qty, 10) || 0;
+                                    const f = parseInt(editRowData.free, 10) || 0;
+                                    const profitFloat = parseFloat(newProfit) || 0;
+                                    const totalQty = q + f;
+                                    let pr = 0;
+                                    if (totalQty > 0 && profitFloat < 100) {
+                                      pr = ((c * q) / totalQty) / (1 - (profitFloat / 100));
+                                    }
                                     setEditRowData({ ...editRowData, profit: newProfit, pubPrice: pr.toFixed(2) });
                                   }}
                                   className="w-full px-1 py-1 pr-4 text-[11px] font-medium bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none text-right text-emerald-600 dark:text-emerald-400"
@@ -2126,21 +2455,21 @@ export const PurchaseView: React.FC = () => {
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                             {isEditing ? (
                               <input
-                                type="number"
-                                step="any"
-                                value={editRowData.total}
+                                type="text"
+                                value={formatNumber(editRowData.total)}
                                 onChange={(e) => {
-                                  const newTotal = e.target.value;
+                                  const newTotal = formatNumber(e.target.value);
                                   const q = parseInt(editRowData.qty, 10) || 1;
-                                  const newCost = (parseFloat(newTotal) || 0) / q;
+                                  const newCost = (parseNumber(newTotal) || 0) / q;
                                   setEditRowData({ ...editRowData, total: newTotal, cost: newCost.toFixed(2) });
                                 }}
                                 className="w-full px-1 py-1 text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none text-right"
                               />
                             ) : (
-                              <span className="px-2 font-bold text-slate-800 dark:text-slate-200">{total}</span>
+                              <span className="px-2 font-bold text-slate-800 dark:text-slate-200">{formatNumber(total)}</span>
                             )}
                           </td>
+                          {!isViewMode && (
                           <td className="p-1 px-2 whitespace-nowrap text-center">
                             {isEditing ? (
                               <div className="flex items-center justify-center gap-1">
@@ -2185,11 +2514,13 @@ export const PurchaseView: React.FC = () => {
                               </div>
                             )}
                           </td>
+                          )}
                         </tr>
                       );
                     })}
 
                     {/* Active Input Row */}
+                    {!isViewMode && (
                     <tr className="bg-teal-50/40 dark:bg-teal-900/20">
                       <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                         <input
@@ -2206,8 +2537,7 @@ export const PurchaseView: React.FC = () => {
                                 if (match) {
                                   selectProduct(match, false);
                                   showFeedback('success', `Found: ${match.name}`);
-                                  // Skip barcode/name, go straight to unit
-                                  setTimeout(() => unitInputRef.current?.focus(), 50);
+                                  setTimeout(() => barcodeInputRef.current?.focus(), 50);
                                 } else {
                                   showFeedback('error', `Code "${itemCode}" not found in stock list.`);
                                   e.currentTarget.select();
@@ -2253,7 +2583,7 @@ export const PurchaseView: React.FC = () => {
                         {isSearchDropdownOpen && (
                           <div
                             ref={listContainerRef}
-                            className="absolute left-0 top-full mt-1 w-[300px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xl z-50 rounded-lg max-h-48 overflow-y-auto"
+                            className="absolute left-0 top-full mt-1 w-[400px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xl z-50 rounded-lg max-h-48 overflow-y-auto"
                           >
                             {filteredProducts.map((p, idx) => (
                               <div
@@ -2270,12 +2600,14 @@ export const PurchaseView: React.FC = () => {
                                 }`}
                               >
                                 <span className="flex-1 overflow-hidden whitespace-nowrap text-ellipsis pr-2">
-                                  {p.name}
-                                  {p.dosage && ` ${p.dosage}`}
-                                  {p.presentation && ` ${p.presentation}`}
-                                  {p.form && ` ${p.form}`}
+                                  <span className="font-bold">{p.name}</span>
+                                  {p.dosage && <span>&nbsp;&nbsp;{p.dosage}</span>}
+                                  {p.presentation && <span>&nbsp;&nbsp;{p.presentation}</span>}
+                                  {p.form && <span>&nbsp;&nbsp;{p.form}</span>}
                                 </span>
-                                <span className="text-[10px] text-slate-400 whitespace-nowrap shrink-0">{p.code}</span>
+                                <span className="text-[10px] whitespace-nowrap shrink-0 font-medium text-teal-600 dark:text-teal-400">
+                                  {formatStockBoxesAndPieces(p)}
+                                </span>
                               </div>
                             ))}
                             {filteredProducts.length === 0 && (
@@ -2360,16 +2692,16 @@ export const PurchaseView: React.FC = () => {
                               document.getElementById('input-pub-price')?.focus();
                             }
                           }}
-                          placeholder="MM/YYYY"
+                          placeholder="MM/YY"
                           className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
                         />
                       </td>
                       <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                         <input
                           id="input-pub-price"
-                          type="number"
-                          value={itemPublicPrice}
-                          onChange={(e) => setItemPublicPrice(e.target.value)}
+                          type="text"
+                          value={formatNumber(itemPublicPrice)}
+                          onChange={(e) => setItemPublicPrice(formatNumber(e.target.value))}
                           onFocus={(e) => { setIsPublicPriceFocused(true); e.target.select(); }}
                           onBlur={() => setIsPublicPriceFocused(false)}
                           onKeyDown={(e) => {
@@ -2401,9 +2733,9 @@ export const PurchaseView: React.FC = () => {
                       <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                         <input
                           id="input-cost"
-                          type="number"
-                          value={itemCostUSD}
-                          onChange={(e) => setItemCostUSD(e.target.value)}
+                          type="text"
+                          value={formatNumber(itemCostUSD)}
+                          onChange={(e) => setItemCostUSD(formatNumber(e.target.value))}
                           onFocus={(e) => e.target.select()}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
@@ -2434,20 +2766,26 @@ export const PurchaseView: React.FC = () => {
                       <td className="p-1 border-r border-slate-200 dark:border-slate-700 align-middle">
                         <div className="px-1.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
                           {(() => {
-                            const cost = parseFloat(itemCostUSD) || 0;
-                            const pubPrice = parseFloat(itemPublicPrice) || 0;
-                            const p = pubPrice - cost;
-                            if (cost > 0) return ((p / cost) * 100).toFixed(1) + '%';
-                            return '0.0%';
+                            const cost = parseNumber(itemCostUSD) || 0;
+                            const pubPrice = parseNumber(itemPublicPrice) || 0;
+                            const qty = parseInt(itemQty, 10) || 0;
+                            const free = parseInt(itemFree, 10) || 0;
+                            const totalQty = qty + free;
+                            
+                            if (pubPrice > 0 && totalQty > 0) {
+                              const profitPerc = 100 - ((((cost * qty) / totalQty) * 100) / pubPrice);
+                              return profitPerc.toFixed(2) + '%';
+                            }
+                            return '0.00%';
                           })()}
                         </div>
                       </td>
                       <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                         <input
                           id="input-total"
-                          type="number"
-                          value={itemTotalInput}
-                          onChange={(e) => setItemTotalInput(e.target.value)}
+                          type="text"
+                          value={formatNumber(itemTotalInput)}
+                          onChange={(e) => setItemTotalInput(formatNumber(e.target.value))}
                           onFocus={(e) => { setIsTotalFocused(true); e.target.select(); }}
                           onBlur={() => setIsTotalFocused(false)}
                           onKeyDown={(e) => {
@@ -2470,12 +2808,59 @@ export const PurchaseView: React.FC = () => {
                         </button>
                       </td>
                     </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
             </div>
 
             <div className="mt-auto flex items-end justify-between w-full pt-2">
+              {isViewMode && editingPurchaseId && (
+                <div className="flex flex-col text-green-600 dark:text-green-400 font-bold text-xs bg-green-50 dark:bg-green-900/20 px-3 py-1.5 rounded-lg border border-green-200 dark:border-green-800">
+                  {(() => {
+                    const currentInvoice = purchases.find(p => p.id === editingPurchaseId);
+                    const invoicePayments = supplierPayments.filter(p => p.invoices && p.invoices.includes(editingPurchaseId));
+                    const receipts = invoicePayments.map(p => p.receiptNumber).join(', ') || 'None';
+                    const paidUSD = currentInvoice?.paidAmountUSD || 0;
+                    const paidLBP = currentInvoice?.paidAmountLBP || 0;
+                    const isFullyPaid = currentInvoice?.paid;
+                    
+                    return (
+                      <>
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span>Receipt(s):</span>
+                          <span className="font-mono">{receipts}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span>Amount Paid:</span>
+                          <span>
+                            {paidUSD > 0 && `$${formatNumber(paidUSD)}`}
+                            {paidUSD > 0 && paidLBP > 0 && ' + '}
+                            {paidLBP > 0 && `${formatLBPValue(paidLBP)} LBP`}
+                            {paidUSD === 0 && paidLBP === 0 && '0'}
+                            {isFullyPaid ? ' (Fully Settled)' : ''}
+                          </span>
+                        </div>
+                        {!isFullyPaid && (
+                          <div className="flex items-center gap-2 mt-1 pt-1 border-t border-green-200/50 dark:border-green-800/50">
+                            <span>Amount Left:</span>
+                            <span className="text-rose-600 dark:text-rose-400">
+                              {(() => {
+                                const amountLeftUSD = currentInvoice ? (currentInvoice.totalCostUSD - (currentInvoice.paidAmountUSD || 0) - ((currentInvoice.paidAmountLBP || 0) / (currentInvoice.exchangeRate || 1))) : 0;
+                                const amountLeftLBP = currentInvoice ? (currentInvoice.totalCostLBP - (currentInvoice.paidAmountLBP || 0) - ((currentInvoice.paidAmountUSD || 0) * (currentInvoice.exchangeRate || 1))) : 0;
+                                return purchaseCurrency === 'USD' 
+                                  ? `$${formatNumber(Math.max(0, amountLeftUSD))}` 
+                                  : `${formatLBPValue(Math.max(0, amountLeftLBP))} LBP`;
+                              })()}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+              {!isViewMode && (
               <button
                 type="submit"
                 disabled={items.length === 0}
@@ -2484,20 +2869,106 @@ export const PurchaseView: React.FC = () => {
                 <Check className="h-3.5 w-3.5" />
                 <span>{editingPurchaseId ? 'Save Changes' : 'Receive & Restock Items'}</span>
               </button>
+              )}
 
               {/* Total Summary */}
               {items.length > 0 && (
-                <div className="flex items-center justify-between rounded-xl bg-teal-50 border border-teal-100 px-3 py-2 text-teal-950 dark:bg-teal-950/40 dark:text-teal-300 shadow-sm w-fit gap-4 shrink-0">
-                  <span className="shrink-0 uppercase text-[10px] font-bold tracking-wider text-teal-700/80 dark:text-teal-400/80">
-                    Grand Total
-                  </span>
-                  <div className="flex flex-col items-end">
-                    <div className="text-[14px] font-extrabold leading-none flex items-baseline gap-1">
-                      {formatLBPValue(totalCostLBP)} <span className="text-[10px] font-semibold text-teal-800/60 dark:text-teal-300/60">LBP</span>
+                <div className="flex flex-wrap items-end gap-3 justify-end shrink-0 max-w-full overflow-hidden ml-auto">
+                  {/* Subtotal */}
+                  <div className="flex flex-col items-end justify-center rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 dark:bg-slate-800/40 dark:border-slate-700 min-w-[100px]">
+                    <span className="text-[9px] font-bold tracking-wider text-slate-500 uppercase mb-1">
+                      Subtotal
+                    </span>
+                    <div className="text-[13px] font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap w-full text-right">
+                      {purchaseCurrency === 'USD' ? `$${formatNumber(subtotalUSD)}` : `${formatLBPValue(subtotalLBP)} LBP`}
                     </div>
-                    <div className="w-full h-px bg-teal-200/80 dark:bg-teal-800/80 my-1" />
-                    <div className="text-[12px] font-bold leading-none text-teal-800/90 dark:text-teal-300/90">
-                      ${totalCostUSD.toFixed(2)}
+                  </div>
+                  
+                  {/* VAT */}
+                  <div className="flex flex-col items-end justify-center rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 dark:bg-slate-800/40 dark:border-slate-700 min-w-[100px]">
+                    <span className="text-[9px] font-bold tracking-wider text-slate-500 uppercase mb-1">
+                      VAT
+                    </span>
+                    <div className="text-[13px] font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap w-full text-right">
+                      {formatLBPValue(totalVatLBP)} LBP
+                    </div>
+                  </div>
+                  
+                  {/* Discount (%) */}
+                  <div className="flex flex-col items-end justify-center rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 dark:bg-slate-800/40 dark:border-slate-700 w-[101px]">
+                    <span className="text-[9px] font-bold tracking-wider text-slate-500 uppercase mb-1">
+                      Discount (%)
+                    </span>
+                    <div className="relative w-full">
+                      <input
+                        type="number"
+                        step="any"
+                        value={invoiceDiscount}
+                        onChange={(e) => setInvoiceDiscount(e.target.value)}
+                        disabled={isViewMode}
+                        className="w-full text-right bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-0.5 pr-4 text-[13px] font-bold text-slate-800 dark:text-slate-200 focus:border-teal-500 focus:outline-none disabled:bg-slate-100 dark:disabled:bg-slate-800"
+                      />
+                      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-500">%</span>
+                    </div>
+                  </div>
+                  
+                  {/* Discount Amount */}
+                  <div className="flex flex-col items-end justify-center rounded-xl bg-slate-50 border border-slate-200 pt-[9px] pb-2 pl-[13.5px] pr-[6.5px] mr-0 mb-0 dark:bg-slate-800/40 dark:border-slate-700 w-[150px]">
+                    <span className="text-[9px] font-bold tracking-wider text-slate-500 uppercase mb-1">
+                      Discount ({purchaseCurrency})
+                    </span>
+                    <input
+                      type="text"
+                      value={formatNumber(invoiceDiscountAmount)}
+                      onChange={(e) => setInvoiceDiscountAmount(formatNumber(e.target.value))}
+                      disabled={isViewMode}
+                      className="w-full text-right bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-0.5 text-[13px] font-bold text-slate-800 dark:text-slate-200 focus:border-teal-500 focus:outline-none disabled:bg-slate-100 dark:disabled:bg-slate-800"
+                    />
+                  </div>
+                  
+                  {/* Grand Total */}
+                  <div className="flex items-center justify-between rounded-xl bg-teal-50 border border-teal-100 px-4 py-2 text-teal-950 dark:bg-teal-950/40 dark:text-teal-300 shadow-sm gap-4 w-[220px]">
+                    <span className="uppercase text-[10px] font-bold tracking-wider text-teal-700/80 dark:text-teal-400/80">
+                      Total
+                    </span>
+                    <div className="flex flex-col items-end whitespace-nowrap w-full">
+                      {purchaseCurrency === 'USD' ? (
+                        <>
+                          <div className="text-[14px] font-extrabold leading-none flex items-baseline gap-1 w-full">
+                            <span>$</span>
+                            <input
+                              type="text"
+                              value={manualTotal !== '' ? formatNumber(manualTotal) : ''}
+                              onChange={(e) => setManualTotal(e.target.value)}
+                              placeholder={formatNumber(totalCostUSD)}
+                              disabled={isViewMode}
+                              className="w-full text-right bg-transparent border-b border-transparent focus:border-teal-400 focus:outline-none placeholder-teal-950 dark:placeholder-teal-300 font-extrabold"
+                            />
+                          </div>
+                          <div className="w-full h-px bg-teal-200/80 dark:bg-teal-800/80 my-1" />
+                          <div className="text-[12px] font-bold leading-none text-teal-800/90 dark:text-teal-300/90">
+                            {formatLBPValue(totalCostLBP)} LBP
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-[14px] font-extrabold leading-none flex items-baseline gap-1 w-full">
+                            <input
+                              type="text"
+                              value={manualTotal !== '' ? formatNumber(manualTotal) : ''}
+                              onChange={(e) => setManualTotal(e.target.value)}
+                              placeholder={formatLBPValue(totalCostLBP)}
+                              disabled={isViewMode}
+                              className="w-full text-right bg-transparent border-b border-transparent focus:border-teal-400 focus:outline-none placeholder-teal-950 dark:placeholder-teal-300 font-extrabold"
+                            />
+                            <span className="text-[10px] font-semibold text-teal-800/60 dark:text-teal-300/60">LBP</span>
+                          </div>
+                          <div className="w-full h-px bg-teal-200/80 dark:bg-teal-800/80 my-1" />
+                          <div className="text-[12px] font-bold leading-none text-teal-800/90 dark:text-teal-300/90">
+                            ${formatNumber(totalCostUSD)}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2538,6 +3009,90 @@ export const PurchaseView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Delete Purchase Confirm Modal */}
+      {purchaseToDelete && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 bg-red-50/50 dark:bg-red-900/20">
+              <h3 className="font-bold text-red-700 dark:text-red-400 flex items-center gap-2">
+                <Trash2 className="h-5 w-5" />
+                Delete Purchase Invoice
+              </h3>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Are you sure you want to delete this purchase? This will revert the stock added.
+              </p>
+            </div>
+            <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2">
+              <button
+                onClick={() => setPurchaseToDelete(null)}
+                className="px-4 py-2 text-sm font-bold text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  deletePurchase(purchaseToDelete);
+                  setPurchaseToDelete(null);
+                }}
+                className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded hover:bg-red-700 transition-colors"
+              >
+                Delete Invoice
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Payment Confirm Modal */}
+      {paymentToDelete && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 bg-red-50/50 dark:bg-red-900/20">
+              <h3 className="font-bold text-red-700 dark:text-red-400 flex items-center gap-2">
+                <Trash2 className="h-5 w-5" />
+                Delete Payment Record
+              </h3>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Are you sure you want to delete this payment? Supplier balances and invoice statuses will be reverted.
+              </p>
+            </div>
+            <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2">
+              <button
+                onClick={() => setPaymentToDelete(null)}
+                className="px-4 py-2 text-sm font-bold text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  deleteSupplierPayment(paymentToDelete);
+                  setPaymentToDelete(null);
+                }}
+                className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded hover:bg-red-700 transition-colors"
+              >
+                Delete Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Modal */}
+      {isPaymentModalOpen && (
+        <SupplierPaymentModal 
+          isOpen={isPaymentModalOpen}
+          onClose={() => {
+            setIsPaymentModalOpen(false);
+            setPaymentToEdit(null);
+          }}
+          paymentToEdit={paymentToEdit}
+        />
       )}
 
       {/* Add Stock Product Modal directly from Purchase Form */}
