@@ -1,92 +1,124 @@
 # AGENTS.md — Lebanon Pharma Pro operational conventions
 
-> If this file exists, agents MUST follow it. If it conflicts with what the user says, follow the user's explicit instruction.
+> If this file exists, agents MUST follow it. User instructions override it.
 
-## 1. Agent Identity & Working Directory
-- Every session starts by reading `WORKLOG.md` (resume state) and `package.json` (current version/deps/scripts).
-- `npm run dev` (NOT `npx vite` or `vite`) is the only way to start the dev server. Verify `http://localhost:3000` responds before claiming "app running."
-- Always run commands from the project root. Never `cd` mid-command — use the `workdir` parameter instead.
-- **Do NOT use path aliases (`@/`)** even if `tsconfig.json` defines one. Use full relative imports (`../../hooks/...`).
+## 1. System model: one authoritative Main + one live Secondary
+- The MAIN PC owns the data: it runs the Express + Socket.IO server
+  (server.ts, port 3000, bound 0.0.0.0) and its storage is the snapshot source.
+  The SECONDARY PC is a live replica that pulls a full snapshot on connect and
+  applies broadcast mutations in real time.
+- Storage is LOCAL-FIRST on every terminal: in-memory cache is the read source,
+  localStorage (via OfflineStorage) is the boot cache, IndexedDB is the full
+  catalog backup. Never bypass OfflineStorage/indexedDbStorage for writers.
+- Not a single core flow may block on the peer or the server: a terminal must
+  keep selling while the LAN link is down (offline retry queue, capped at 500,
+  flushed on reconnect).
 
-## 2. Testing Discipline
-- **After EVERY code change (any block/module/feature):** `npm run lint` (runs `tsc --noEmit`). This is MANDATORY. Only proceed once it passes.
-- **After completing a full task:** run ALL of:
-  ```
-  npm run lint
-  npm run test
-  npm run build
-  ```
-  If any fails, fix before doing anything else.
-- Run **independent gates in parallel** to use CPU cores: issue `npm run lint` and `npm run test` as two bash calls in the SAME message (never sequential round-trips), then `npm run build` last (depends on nothing, keep last so edits are final).
-- Do NOT attempt to start a running dev server — check `localhost:3000` first.
-- Puppeteer tests live in `tests/*.js` (not `*.ts`); run from project root via `node tests/<name>.test.js`.
+## 2. Pairing & sync security (IP-only, no shared key)
+- Pairing a Secondary PC needs ONLY the Main PC's IP address, entered in
+  Settings → Network & Sync. There is NO shared key, sync secret, or provisioning
+  endpoint — do not reintroduce one.
+- The LAN surface is still kept in a locked envelope; never weaken these:
+  - Host-header allow-list (localhost + this machine's own IPv4s + *.run.app)
+    on the HTTP API → blocks DNS rebinding.
+  - Socket.IO origin allow-list matching the host allow-list.
+  - SYNC_PROTOCOL_VERSION checked on every inbound mutation (server-side and in
+    syncEngine); unknown/foreign protocol payloads are dropped.
+  - Timer-based rate limits on all public-data and AI proxy routes.
+- Trade-off (accepted): any device already on the LAN can join the ring or call
+  the rate-limited /api/moph/* and /api/scientifics/enrich routes. Off-LAN access
+  is still refused by the allow-lists above.
 
-## 3. Node Version
-- Currently in use: **v24.20.0**.
+## 3. Adding a new synced entity (mandatory checklist)
+1. Add OfflineStorage get/save pair in storage.ts.
+2. syncEngine.broadcast('ENTITY_UPSERT'|'ENTITY_DELETED', payload) on every write.
+3. Register the type in:
+   - KNOWN_SYNC_TYPES whitelist in server.ts (unknown relay types are dropped),
+   - the SyncPayload union in src/services/syncEngine.ts,
+   - an onSyncUpdate `case` in PharmacyContext.tsx applying to state + storage,
+   - the snapshot request/response payload in PharmacyContext.tsx (snapshot area).
+4. Version-compare merges (Product.version); never merge by array length or
+   `res.length + 1` id/invoice counters (use nextInvoiceNumber).
 
-## 4. Critical Path Protection
-- If your task is NOT specifically about refactoring `syncEngine`, `storage.ts`, `offlineStorage.ts`, or `PharmacyContext.tsx` core sync logic, **do NOT modify those modules**. They are critical-path and any unintended side effect can silently break data sync.
-- Changes to these files require explicit user approval before implementation.
+## 4. Internet-dependent features (online-only, never block the POS)
+The core (sales, stock, customers, purchases, reports) must work fully offline.
+Online features are extensions:
+- MOPH official price list (`/api/moph/price-list`, scraped WebMarketed XLS)
+- LNDD ingredient lookup (`/api/moph/lndd-ingredients`, disk-cached)
+- Gemini drug monographs (`/api/scientifics/enrich`, requires GEMINI_API_KEY
+  on the SERVER only — .env, never in renderer or bundled code)
+- Google Drive backup (user-provided OAuth client ID)
+- Trusted online time (`/api/moph/now`) for the 1-year MOPH unlock — fails
+  CLOSED, never trust the local clock.
+Rules: all external calls are server-side proxies (renderer never fetches
+MOPH/Google/Gemini directly beyond the Drive OAuth flow); respect the rate
+limits, politeness delays and caches (6h price list, 60s trusted time, disk
+LNDD); on any error/timeout degrade gracefully with a fallback message and never
+throw into the checkout path.
 
-## 5. Git Workflow
-- After completing each feature/fix, commit with a descriptive message:
-  ```
-  git add .
-  git commit -m "descriptive message"
-  ```
-- Do NOT auto-push to remote. Only push when the user explicitly requests it.
-- Never use `git commit --amend`, `git rebase`, `git reset --hard`, or `git push --force`.
+## 5. Critical Path Protection
+These files are the sync critical path — do NOT modify unless the task is
+specifically about them, and require explicit user approval: PharmacyContext.tsx,
+syncEngine.ts, storage.ts, indexedDbStorage.ts, and server.ts (sync/handshake/
+security sections).
 
-### 5a. Cross-tool / multi-terminal handoff (opencode ⇄ Google AI Studio)
-The repo may be edited from multiple AI tools/terminals. `main` on GitHub is the
-single source of truth. Follow the loop EXACTLY on every switch:
-1. **Pull before you start**: `git pull` + confirm `git status` is clean. Never
-   edit against a remote that is ahead.
-2. **Edit locally**, commit with a descriptive message after each feature/fix.
-3. **Push only when the user asks**, then the OTHER tool/machine MUST `git pull`
-   before it edits.
-- Never have two tools editing the SAME file at the same time. Resolve any
-  conflict with a normal `git pull` merge — never force-push, never rebase.
-- `WORKLOG.md` is write-only from opencode; other tools READ it but do not rewrite
-  it (avoids churn). Same rule for `AGENTS.md`.
-- **Critical-path rule (see §4) applies to every tool**: if another tool touches
-  `PharmacyContext.tsx`/`syncEngine.ts`/`storage.ts`/`offlineStorage.ts`, treat it as
-  a high-risk change — re-verify sync with the harness before committing further work.
-- Line endings are normalized by the repo `.gitattributes`; never hand-edit it
-  to autocrlf settings. If a push looks like a full-file diff, stop and check
-  line-ending normalization before committing.
+## 6. Testing discipline
+- After EVERY code change: `npm run lint` (tsc --noEmit). MANDATORY.
+- After a full task: run `npm run lint` + `npm run test` (vitest) IN PARALLEL in
+  one message, then `npm run build` last.
+- Puppeteer E2E harness lives in tests/*.js (e.g. tests/monthly-usage.js: boots
+  its OWN server on port 3456 with a virtual clock; pass/fail exit code). NEVER
+  touch the dev server and NEVER modify server.ts for tests. Port 3000 is
+  dev-only.
+- Node version in use: v24.20.0. Dev server: `npm run dev` only; verify
+  http://localhost:3000 before claiming "app running".
 
-## 6. Productivity & Reliability Rules
-- **Do NOT hallucinate file contents.** Always read a file before editing it.
-- **Do NOT apologize.** Never say sorry, my mistake, or I forgot.
-- **Do NOT assume files exist** — always verify before referencing or editing.
-- **Do NOT assume a dev server is already running** — verify with `localhost:3000`.
-- **Do NOT use stale state** — re-read files before large edits even if recently read.
-- **When uncertain, ask the user** rather than guessing.
-- **Never create README files** unless explicitly asked.
+## 7. Packaging & deployment
+- Data-free installer: bump buildId in build-data-policy.json (mode "fresh") so
+  first launch wipes ProgramData app-data. Only dist/**/*, main.cjs, package.json,
+  build-data-policy.json + prod deps ship in the exe.
+- main.cjs verifies /api/health fingerprint before loadURL and applies the
+  data-policy wipe once per deliberately-bumped buildId (state file lives in
+  appData, outside the wiped folder).
+- `npm run package-exe` requires the dev server STOPPED (EPERM lock on port 3000).
 
-## 7. Code Output Standards
-- Output **complete, production-ready code** — no truncation, no placeholder comments (`// rest goes here`).
-- Follow the system instructions for UI density, scanner handling, color safety, and keyboard-first navigation.
-- TypeScript strict typing. React 19 functional components. Tailwind CSS only (no separate CSS files, no inline `style` except layout geometry).
-- Follow existing code conventions in the file/area you are editing.
+## 8. Git workflow
+- Commit per feature/fix with a descriptive message. Never auto-push; push only
+  when asked. Never amend, rebase, reset --hard, or force-push.
+- Multi-tool handoff: `git pull` + clean `git status` BEFORE editing; the remote
+  is the single source of truth. WORKLOG.md is write-only from opencode unless
+  the user explicitly asks. Line endings are normalized by .gitattributes —
+  stop and inspect if a push shows a full-file diff.
 
-## 8. Two-PC Sync Model (reference)
-When adding a new synced entity:
-1. After writing locally: `syncEngine.broadcast('ENTITY_UPSERT', entity)` or `syncEngine.broadcast('ENTITY_DELETED', { id })`.
-2. In the `onSyncUpdate` handler in `PharmacyContext.tsx`: add a `case` to receive and apply the payload to local state + storage.
-3. Include the entity type in the snapshot request/response payload (`PharmacyContext.tsx:611`).
+## 9. Code output standards
+- TypeScript strict, React 19 functional components, Tailwind only. Full relative
+  imports (no @/ aliases). No comments unless asked. No README creation.
+- Formatting invariants: LBP amounts as integer strings via formatLBPValue (no
+  dot/decimals), USD with .toFixed(2). Products carry version for sync merges;
+  scientificInfo compaction is handled by compactProductsForStorage — do not
+  inline.
 
-## 9. Puppeteer Testing Patterns
-- Never use a shared browser instance — each test gets its own.
-- Port 3000 is for the Vite dev server only; Puppeteer tests must use separate ports (e.g., 3456+).
-- Never modify `server.ts` for tests — tests launch their own Express app.
-- Log `page.url()` on failure for debugging.
+## 10. UI/UX engineering (pharmacy product rules)
+- Hardware barcode scanners type text + Enter (useBarcodeScanner.ts: cooldown,
+  human-Enter rejection, buffer cap). Enter must never submit a form from a
+  non-checkout field; after a code matches, the scan field resets and regains
+  focus for continuous hand-scanning.
+- Persistent sync status pill (Connected green / Connecting amber / Offline red,
+  distinct error state). Show field-level lock cues while the other terminal
+  edits the same item. Keep an unambiguous Offline / Local Mode marker when
+  disconnected.
+- High-density layouts: compact spacing (p-1/p-2/gap-1/gap-2), typography only
+  text-xs/sm/base, tight but readable line-heights (leading-tight/normal).
+- Keyboard-first: visible focus rings (focus:ring-2 focus:ring-primary
+  focus:outline-none) on every interactive element; keyboard hooks for Enter,
+  Tab/Arrows, and F1-F12 module shortcuts.
+- High-contrast semantic colors only: harsh red (text-red-600/bg-red-50) for
+  expiry/critical/narcotics warnings, amber for restock/controlled substances,
+  emerald/blue for active prescriptions/normal states; font-bold/semibold on
+  dosages, drug names, allergies, and stock alerts.
 
-## 10. Execution Style (GSD + tool batching)
-- **Execution-first:** Do not over-plan. Skip long reasoning chains/verbose discussion blocks before making changes. Prioritize immediate, small file modifications over parsing entire directory trees.
-- **Combined intent:** Batch read + edit + verification of the target file into a single tool-call message where possible (a prior `Read` is still mandatory before `Edit`; "batch" means one message, not multiple conversational round-trips).
-- **Token economy:** Do not inspect broad codebases or unrelated modules. Read only the files target-referenced in the current prompt context.
-- **Batched tool calls:** Favor sending multiple independent tool calls in one message to reduce context-shifting overhead.
-- **Subagents are last-resort:** Only invoke terminal sub-agents or advanced multi-step plans if the single linear execution block is structurally incapable of addressing the issue.
-- Conflicts with the rules above (Critical Path Protection §4, Two-PC Sync Model §8, verify-before-edit §6) take precedence.
+## 11. Execution style
+- Read before edit; no hallucinated file contents; no apologies; ask when
+  uncertain. Batch independent tool calls in one message; token economy: read
+  only target-referenced files. Independent gates run in parallel; verify before
+  claiming success.

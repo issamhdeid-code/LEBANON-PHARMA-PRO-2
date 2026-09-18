@@ -312,3 +312,17 @@ granular product-array mutations, and the alert-check effect — these are safe 
   `enrichAllProductsOnline` (≈PharmacyContext.tsx:1246-1315) overwriting with a stale array, and
   mount-time IDB hydration (≈:336-347). Current harness works around it; fixing the app still
   needs explicit user sign-off per AGENTS §4.
+
+## What was completed in THIS session (instructions rewritten — COMMITTED)
+- **Request**: remove the old system instructions and replace them with the new
+  project-grounded ones (IP-only pairing, no sync secret).
+- **`AGENTS.md`**: fully rewritten — 11 sections grounded in the real architecture
+  (Main/Secondary data-ownership model, IP-only pairing + retained LAN hardening,
+  synced-entity checklist, online-feature rules, critical-path protection, test gates,
+  packaging, git, code standards, UI/UX, execution style). UI/UX rules are now inline
+  (no longer delegated to SYSTEM_INSTRUCTIONS.md).
+- **`SYSTEM_INSTRUCTIONS.md`**: DELETED (superseded by AGENTS.md).
+- **`opencode.json`**: `instructions` now `["AGENTS.md"]` only.
+- **`AI_STUDIO_BRIEF.md`**: header updated (distillation of AGENTS.md alone).
+- Verified: no remaining `SYSTEM_INSTRUCTIONS` references; opencode.json valid JSON.
+- NOT pushed (AGENTS.md convention — push only on request).

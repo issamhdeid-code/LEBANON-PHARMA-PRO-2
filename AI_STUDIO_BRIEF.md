@@ -1,8 +1,8 @@
 # AI_STUDIO_BRIEF — coding cheat sheet for Google AI Studio (Gemini)
 
-> Distilled version of `AGENTS.md` + `SYSTEM_INSTRUCTIONS.md` for use as the
-> System Instruction / context in Google AI Studio. If this repo has changed,
-> re-read `AGENTS.md` first — it wins on any conflict.
+> Distilled version of `AGENTS.md` for use as the System Instruction / context
+> in Google AI Studio. If this repo has changed, re-read `AGENTS.md` first — it
+> wins on any conflict.
 
 ## Project identity
 Lebanon Pharma Pro — two-terminal (LAN, real-time sync) pharmacy management.
