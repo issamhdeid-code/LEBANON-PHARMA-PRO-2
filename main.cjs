@@ -31,11 +31,24 @@ if (!gotSingleInstanceLock) {
   // no backup, so upgrades must bump the buildId deliberately.
   try {
     const dataPolicy = JSON.parse(fs.readFileSync(dataPolicyPath, 'utf8'));
-    const policyMarker = path.join(dataDir, `.build-policy-${dataPolicy.buildId}`);
-    if (dataPolicy.mode === 'fresh' && !fs.existsSync(policyMarker)) {
+    // Record the applied buildId in a state file OUTSIDE the wiped ProgramData folder.
+    // The old implementation stored its marker inside the very dataDir it deletes, so the
+    // marker was wiped along with everything else and the "fresh" policy re-fired on every
+    // launch — silently destroying the pharmacy's data each boot. Keeping the state in
+    // the default appData dir (never touched by the installer or this policy) makes the
+    // "wipe when the buildId changes" contract hold exactly once per deliberately-bumped
+    // buildId, and never on an ordinary restart.
+    const policyStatePath = path.join(app.getPath('appData'), 'Lebanon Pharma Pro', 'build-policy-state.json');
+    let appliedBuildId = null;
+    try {
+      appliedBuildId = JSON.parse(fs.readFileSync(policyStatePath, 'utf8')).buildId ?? null;
+    } catch (err) { /* first run on this machine: no state yet */ }
+
+    if (dataPolicy.mode === 'fresh' && dataPolicy.buildId !== appliedBuildId) {
       fs.rmSync(dataDir, { recursive: true, force: true });
       fs.mkdirSync(dataDir, { recursive: true });
-      fs.writeFileSync(policyMarker, 'applied');
+      fs.mkdirSync(path.dirname(policyStatePath), { recursive: true });
+      fs.writeFileSync(policyStatePath, JSON.stringify({ buildId: dataPolicy.buildId }));
     }
   } catch (err) {
     console.error('Could not apply packaged data policy:', err);
