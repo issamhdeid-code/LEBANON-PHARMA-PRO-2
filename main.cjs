@@ -12,11 +12,46 @@ const dataDir = path.join(process.env.ProgramData || 'C:\\ProgramData', 'Lebanon
 // writable without admin rights and is never touched by the app's installer/uninstaller,
 // so upgrading or uninstalling the app can never wipe the pharmacy's data.
 // Must be set before 'ready' fires, per Electron's app.setPath() requirements.
+
+// Apply the packaged data policy BEFORE Electron initializes userData (Chromium opens
+// handles inside the mounted folder the moment it starts, which makes a recursive delete
+// fail with EPERM). Called only from the single surviving instance below.
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function rmSyncRetry(target, attempts, delayMs) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) sleepSync(delayMs);
+    }
+  }
+  throw lastErr;
+}
+
+// Record the applied buildId in a state file OUTSIDE the wiped ProgramData folder.
+// The old implementation stored its marker inside the very dataDir it deletes, so the
+// marker was wiped along with everything else and the "fresh" policy re-fired on every
+// launch — silently destroying the pharmacy's data each boot. Keeping the state in
+// the default appData dir (never touched by the installer or this policy) makes the
+// "wipe when the buildId changes" contract hold exactly once per deliberately-bumped
+// buildId, and never on an ordinary restart.
+const policyStatePath = path.join(app.getPath('appData'), 'Lebanon Pharma Pro', 'build-policy-state.json');
+let appliedBuildId = null;
 try {
-  fs.mkdirSync(dataDir, { recursive: true });
-  app.setPath('userData', dataDir);
+  appliedBuildId = JSON.parse(fs.readFileSync(policyStatePath, 'utf8')).buildId ?? null;
+} catch (err) { /* first run on this machine: no state yet */ }
+let shouldWipe = false;
+try {
+  const dataPolicy = JSON.parse(fs.readFileSync(dataPolicyPath, 'utf8'));
+  shouldWipe = dataPolicy.mode === 'fresh' && dataPolicy.buildId !== appliedBuildId;
 } catch (err) {
-  console.error('Failed to set custom userData path, falling back to default:', err);
+  console.error('Could not read packaged data policy:', err);
 }
 
 let mainWindow;
@@ -25,33 +60,20 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
-  // Apply the packaged data policy ONLY from the single surviving instance. Running the
-  // wipe in every launching process (as before) could race two rmSync calls. The "fresh"
-  // build data policy wipes the whole ProgramData data folder when the buildId changes —
-  // no backup, so upgrades must bump the buildId deliberately.
-  try {
-    const dataPolicy = JSON.parse(fs.readFileSync(dataPolicyPath, 'utf8'));
-    // Record the applied buildId in a state file OUTSIDE the wiped ProgramData folder.
-    // The old implementation stored its marker inside the very dataDir it deletes, so the
-    // marker was wiped along with everything else and the "fresh" policy re-fired on every
-    // launch — silently destroying the pharmacy's data each boot. Keeping the state in
-    // the default appData dir (never touched by the installer or this policy) makes the
-    // "wipe when the buildId changes" contract hold exactly once per deliberately-bumped
-    // buildId, and never on an ordinary restart.
-    const policyStatePath = path.join(app.getPath('appData'), 'Lebanon Pharma Pro', 'build-policy-state.json');
-    let appliedBuildId = null;
+  if (shouldWipe) {
     try {
-      appliedBuildId = JSON.parse(fs.readFileSync(policyStatePath, 'utf8')).buildId ?? null;
-    } catch (err) { /* first run on this machine: no state yet */ }
-
-    if (dataPolicy.mode === 'fresh' && dataPolicy.buildId !== appliedBuildId) {
-      fs.rmSync(dataDir, { recursive: true, force: true });
-      fs.mkdirSync(dataDir, { recursive: true });
+      rmSyncRetry(dataDir, 20, 250);
       fs.mkdirSync(path.dirname(policyStatePath), { recursive: true });
-      fs.writeFileSync(policyStatePath, JSON.stringify({ buildId: dataPolicy.buildId }));
+      fs.writeFileSync(policyStatePath, JSON.stringify({ buildId: JSON.parse(fs.readFileSync(dataPolicyPath, 'utf8')).buildId }));
+    } catch (err) {
+      console.error('Could not apply packaged data policy:', err);
     }
+  }
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    app.setPath('userData', dataDir);
   } catch (err) {
-    console.error('Could not apply packaged data policy:', err);
+    console.error('Failed to set custom userData path, falling back to default:', err);
   }
 
   app.on('second-instance', () => {
