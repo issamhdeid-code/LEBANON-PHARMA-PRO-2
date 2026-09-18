@@ -31,6 +31,7 @@ import path from 'path';
 import os from 'os';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
+import Papa from 'papaparse';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -1297,6 +1298,117 @@ function readLatestDownload(dir) {
   return null;
 }
 
+function readLatestCsv(dir) {
+  const t = Date.now() - 8000;
+  const files = fs.readdirSync(dir)
+    .map((f) => { const p = path.join(dir, f); try { return { p, m: fs.statSync(p).mtimeMs }; } catch (e) { return null; } })
+    .filter((x) => x && x.m > t && /\.csv$/i.test(x.p))
+    .sort((a, b) => b.m - a.m);
+  for (const f of files) {
+    try { return { path: f.p, content: fs.readFileSync(f.p, 'utf8') }; } catch (e) {}
+  }
+  return null;
+}
+
+// CSV export -> Import CSV round trip: Export CSV must produce a file that the
+// importer accepts, and re-importing it must restore the full product details
+// (stock, batches, barcode, category, packaging, prices, ...).
+const CSV_EXPORT_HEADERS = ['code', 'Name', 'Ingredients', 'Dosage', 'Presentation', 'Form', 'Category', 'Subcategory', 'Barcode', 'Price in LBP', 'Price USD', 'Cost Price USD', 'Pharmacist Margin', 'Agent', 'Stock Quantity', 'Min Stock Alert', 'Expiry Date', 'Batch Number', 'Batches (JSON)', 'Is Divisible', 'Pieces Per Box', 'Piece Name', 'Piece Price USD'];
+async function csvExportRoundTrip(t) {
+  await openTab(t, 'Stock');
+  const dlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pharma-csv-dl-'));
+  const session = await t.page.createCDPSession().catch(() => null);
+  if (session) {
+    try { await session.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir }); } catch (e) {}
+  }
+  const clicked = await clickText(t.page, 'Export CSV');
+  check('csv-export-clicked', !!clicked, 'Export CSV clicked');
+  await sleep(2500);
+  const file = readLatestCsv(dlDir);
+  check('csv-export-file', !!file, file ? file.path.slice(0, 88) : 'no file downloaded');
+  if (!file) return;
+
+  const csvText = file.content.replace(/^\uFEFF/, '');
+  const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+  const fields = parsed.meta.fields || [];
+  check('csv-export-headers', fields.length === CSV_EXPORT_HEADERS.length && CSV_EXPORT_HEADERS.every((h, i) => fields[i] === h), fields.length + ' detail columns');
+  const storeLen = (await getStoreLen(t.page)).products;
+  check('csv-export-rows', parsed.data.length === storeLen, parsed.data.length + ' rows vs store ' + storeLen);
+  if (parsed.data.length !== storeLen || parsed.data.length === 0) return;
+
+  // Re-import the exported file through the Import CSV UI (create path): take the
+  // first exported row, assign a fresh code, and fully populate every detail column
+  // so the round trip must restore them all instead of falling back to defaults.
+  const src = parsed.data[0];
+  const rtCode = 'RT-' + String(src.code || 'X').slice(0, 18);
+  const rtRow = Object.assign({}, src, {
+    code: rtCode,
+    Category: src.Category || 'vitamins',
+    Subcategory: 'RT Subcat',
+    Barcode: '6299999999999',
+    'Stock Quantity': 42,
+    'Min Stock Alert': 3,
+    'Expiry Date': '2029-05-20',
+    'Batch Number': 'BT-RT',
+    'Batches (JSON)': JSON.stringify([{ batchNumber: 'BT-RT', expiryDate: '2029-05-20', quantity: 7 }]),
+    'Is Divisible': 'true',
+    'Pieces Per Box': 10,
+    'Piece Name': 'Sachet',
+    'Piece Price USD': 1.25,
+  });
+  const rtCsv = fields.join(',') + '\n' + Papa.unparse([rtRow], { header: false });
+
+  await openTab(t, 'Stock');
+  let textarea = await t.page.evaluate(() => !!window.__PT.inputByPlaceholder('Paste comma-separated rows here...'));
+  if (!textarea) {
+    for (const lbl of ['Import CSV', 'CSV Import']) {
+      if (await clickText(t.page, lbl, { ci: true })) { await sleep(900); textarea = await t.page.evaluate(() => !!window.__PT.inputByPlaceholder('Paste comma-separated rows here...')); if (textarea) break; }
+    }
+  }
+  check('csv-rt-modal', !!textarea, 'import modal opened for round-trip');
+  if (!textarea) return;
+  await t.page.evaluate((csv) => { const el = window.__PT.inputByPlaceholder('Paste comma-separated rows here...'); window.__PT.setValue(el, csv); }, rtCsv);
+  await sleep(400);
+  const rtImported = await clickText(t.page, 'Import to Inventory');
+  check('csv-rt-imported', rtImported, 'round-trip import clicked');
+  await waitFor(t.page, () => window.__PT.bodyHas('Successfully processed'), { timeout: 60000 }).catch(() => {});
+  await closeModal(t);
+  await sleep(700);
+
+  const rt = (await getStore(t.page, 'pharmalebanon_products_v1')).find((p) => p.code === rtCode);
+  check('csv-rt-created', !!rt, rt ? rt.code : 'RT product not found in store');
+  if (rt) {
+    const num = (s) => parseFloat(String(s || '0')) || 0;
+    const expBatches = [{ batchNumber: 'BT-RT', expiryDate: '2029-05-20', quantity: 7 }];
+    const actBatches = rt.batches || [];
+    const batchesOk = expBatches.length === actBatches.length && expBatches.every((eb, i) =>
+      eb.batchNumber === actBatches[i].batchNumber && eb.expiryDate === actBatches[i].expiryDate && (eb.quantity ?? null) === (actBatches[i].quantity ?? null));
+    check('csv-rt-details',
+      String(rt.stockQuantity) === '42' &&
+      String(rt.minStockAlert) === '3' &&
+      rt.barcode === '6299999999999' &&
+      String(rt.category) === String(src.Category || 'vitamins') &&
+      rt.subcategory === 'RT Subcat' &&
+      (rt.expiryDate || '') === '2029-05-20' &&
+      (rt.batchNumber || '') === 'BT-RT' &&
+      Math.abs(num(rt.priceLBP) - num(src['Price in LBP'])) < 1 &&
+      Math.abs(num(rt.priceUSD) - num(src['Price USD'])) < 0.01 &&
+      Math.abs(num(rt.costPriceUSD) - num(src['Cost Price USD'])) < 0.01 &&
+      Math.abs(num(rt.pharmacistMarginProfit) - num(src['Pharmacist Margin'])) < 0.02 &&
+      String(rt.agent) === String(src.Agent || '') &&
+      rt.isDivisible === true &&
+      num(rt.piecesPerBox) === 10 &&
+      (rt.pieceName || '') === 'Sachet' &&
+      Math.abs(num(rt.piecePriceUSD) - 1.25) < 0.01 &&
+      batchesOk,
+      'qty=' + rt.stockQuantity + ' cat=' + rt.category + ' barcode=' + (rt.barcode || '-') + ' batches=' + actBatches.length + ' cost=' + rt.costPriceUSD + ' margin=' + rt.pharmacistMarginProfit + ' piecePrice=' + rt.piecePriceUSD);
+  }
+
+  await deleteSelected(t, rtCode);
+  const finalStore = await getStore(t.page, 'pharmalebanon_products_v1');
+  check('csv-rt-cleanup', Array.isArray(finalStore) && finalStore.length === storeLen && !finalStore.some((p) => p.code === rtCode), 'store back to ' + storeLen);
+}
+
 // --------------------------------------------------------------- main runner
 async function main() {
   let browser = null;
@@ -1405,6 +1517,9 @@ async function main() {
     await gotoApp(B);
     await secondarySetupAndSync(B);
     const aLen = await getStoreLen(A.page);
+
+    // ---------------- CSV EXPORT -> IMPORT ROUND TRIP (must not disturb counts)
+    await csvExportRoundTrip(A);
 
     // ---------------- CONSOLE ERROR GATE (both terminals)
     const EXTERNAL_HOSTS = /rxnav\.nlm\.nih\.gov|connect\.medlineplus\.gov|generativelanguage\.googleapis\.com|www\.googleapis\.com|accounts\.google\.com|apis\.google\.com/i;

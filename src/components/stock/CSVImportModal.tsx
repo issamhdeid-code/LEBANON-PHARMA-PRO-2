@@ -124,7 +124,10 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
               code, Name, Ingredients, Dosage, Presentation, Form, Price in LBP, Agent, Pharmacist Margin
             </code>
             <p className="mt-1.5 text-[11px] text-blue-700 dark:text-blue-300">
-              * All medicines imported will have category automatically set to <span className="font-bold">drug</span>, default stock quantity set to <span className="font-bold">0</span> with blank expiry, and USD prices calculated via current rate ($1 = {formatLBPValue(exchangeRate)} L.L.).
+              * Export CSV in Stock produces a compatible superset (adds Category, Subcategory, Barcode, Price USD, Cost Price USD, Stock Quantity, Min Stock Alert, Expiry Date, Batch Number, Batches, and packaging/divisibility columns) so the exported file can be imported back exactly.
+            </p>
+            <p className="mt-1 text-[11px] text-blue-700 dark:text-blue-300">
+              * All medicines imported will have category automatically set to <span className="font-bold">drug</span>, default stock quantity set to <span className="font-bold">0</span> with blank expiry, and USD prices calculated via current rate ($1 = {formatLBPValue(exchangeRate)} L.L.) — unless the CSV explicitly provides those columns.
             </p>
             <p className="mt-1 text-[11px] text-blue-700 dark:text-blue-300">
               * <span className="font-semibold">Price Safeguard:</span> If a new price in the CSV is lower than the existing price, the price update is skipped to preserve your current inventory value, while displaying the decrease indicator (red arrow and % change).

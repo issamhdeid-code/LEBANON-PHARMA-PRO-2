@@ -13,6 +13,7 @@ import {
   AppNotification,
   RibbonTab,
   ProductCategory,
+  ProductBatch,
   SyncStatus,
   SyncConflictLog,
   AppLogEntry,
@@ -1721,6 +1722,40 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const lower = h.trim().toLowerCase().replace(/['"]/g, '');
       return lower.includes('pharmacist margin') || lower.includes('margin') || lower.includes('profit');
     });
+    const colCategory = rawHeaders.find(h => {
+      const lower = h.trim().toLowerCase().replace(/['"]/g, '');
+      return lower === 'category' || (lower.includes('categor') && !lower.includes('sub'));
+    });
+    const colSubcategory = rawHeaders.find(h => h.trim().toLowerCase().replace(/['"]/g, '').includes('subcategor'));
+    const colBarcode = rawHeaders.find(h => h.trim().toLowerCase().replace(/['"]/g, '').includes('barcode'));
+    const colStockQty = rawHeaders.find(h => {
+      const lower = h.trim().toLowerCase().replace(/['"]/g, '');
+      return lower.includes('stock quantity') || lower.includes('stock qty') || (lower.includes('quantity') && !lower.includes('min'));
+    });
+    const colMinStock = rawHeaders.find(h => h.trim().toLowerCase().replace(/['"]/g, '').includes('min stock'));
+    const colCostPrice = rawHeaders.find(h => {
+      const lower = h.trim().toLowerCase().replace(/['"]/g, '');
+      return lower.includes('cost') && lower.includes('price');
+    });
+    const colDivisible = rawHeaders.find(h => h.trim().toLowerCase().replace(/['"]/g, '').includes('divisib'));
+    const colPiecesPerBox = rawHeaders.find(h => {
+      const lower = h.trim().toLowerCase().replace(/['"]/g, '');
+      return lower.includes('pieces') && lower.includes('box');
+    });
+    const colPieceName = rawHeaders.find(h => {
+      const lower = h.trim().toLowerCase().replace(/['"]/g, '');
+      return lower.includes('piece') && lower.includes('name');
+    });
+    const colPiecePriceUSD = rawHeaders.find(h => {
+      const lower = h.trim().toLowerCase().replace(/['"]/g, '');
+      return lower.includes('piece') && lower.includes('price');
+    });
+    const colExpiry = rawHeaders.find(h => h.trim().toLowerCase().replace(/['"]/g, '').includes('expiry'));
+    const colBatchNumber = rawHeaders.find(h => {
+      const lower = h.trim().toLowerCase().replace(/['"]/g, '');
+      return lower.includes('batch number') || (lower.includes('batch') && !lower.includes('json'));
+    });
+    const colBatches = rawHeaders.find(h => h.trim().toLowerCase().replace(/['"]/g, '').includes('batches'));
 
     if (!colCode || !colName) {
       return {
@@ -1738,17 +1773,30 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
+      const cellText = (v: unknown): string => (v == null ? '' : String(v).replace(/^["']+|["']+$/g, '').trim());
+      const cellNum = (v: unknown): number | undefined => {
+        const s = v == null ? '' : String(v).replace(/[^\d.]/g, '');
+        if (!s) return undefined;
+        const n = parseFloat(s);
+        return isNaN(n) ? undefined : n;
+      };
+      const cellBool = (v: unknown): boolean | undefined => {
+        const s = cellText(v).toLowerCase();
+        if (s === '1' || s === 'true' || s === 'yes' || s === 'y') return true;
+        if (s === '0' || s === 'false' || s === 'no' || s === 'n' || s === '') return false;
+        return undefined;
+      };
       const rawCodeStr = colCode ? row[colCode] : '';
-      const rawCode = rawCodeStr ? rawCodeStr.replace(/['"]/g, '').trim() : '';
+      const rawCode = rawCodeStr ? cellText(rawCodeStr) : '';
       const code = rawCode || `BLANK-CODE-${Date.now()}-${i}`;
       
       const rawNameStr = colName ? row[colName] : '';
-      const name = rawNameStr ? rawNameStr.replace(/['"]/g, '').trim() : '';
+      const name = rawNameStr ? cellText(rawNameStr) : '';
 
-      const ingredients = colIngredients && row[colIngredients] ? row[colIngredients].replace(/['"]/g, '').trim() : '';
-      const dosage = colDosage && row[colDosage] ? row[colDosage].replace(/['"]/g, '').trim() : '';
-      const presentation = colPresentation && row[colPresentation] ? row[colPresentation].replace(/['"]/g, '').trim() : '';
-      const form = colForm && row[colForm] ? row[colForm].replace(/['"]/g, '').trim() : '';
+      const ingredients = colIngredients && row[colIngredients] ? cellText(row[colIngredients]) : '';
+      const dosage = colDosage && row[colDosage] ? cellText(row[colDosage]) : '';
+      const presentation = colPresentation && row[colPresentation] ? cellText(row[colPresentation]) : '';
+      const form = colForm && row[colForm] ? cellText(row[colForm]) : '';
       
       const rawPriceLBPStr = colPriceLBP && row[colPriceLBP] ? row[colPriceLBP].replace(/[^\d.]/g, '') : '';
       const rawPriceUSDStr = colPriceUSD && row[colPriceUSD] ? row[colPriceUSD].replace(/[^\d.]/g, '') : '';
@@ -1766,7 +1814,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       const hasPriceInCSV = Boolean((colPriceLBP && rawPriceLBPStr !== '') || (colPriceUSD && rawPriceUSDStr !== ''));
 
-      const agent = colAgent && row[colAgent] ? row[colAgent].replace(/['"]/g, '').trim() : '';
+      const agent = colAgent && row[colAgent] ? cellText(row[colAgent]) : '';
       const rawMarginStr = colMargin && row[colMargin] ? row[colMargin].replace(/[^\d.]/g, '') : '0';
       let margin = parseFloat(rawMarginStr) || 0;
       
@@ -1777,10 +1825,48 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       const costPriceUSD = priceUSD > 0 ? Number((priceUSD * (1 - margin / 100)).toFixed(2)) : 0;
 
+      const categoryFromCsv = (() => {
+        if (!colCategory) return undefined;
+        const rawCat = cellText(row[colCategory]).toLowerCase();
+        if (rawCat === 'drug' || rawCat === 'vitamins' || rawCat === 'cosmetics' || rawCat === 'para') return rawCat as ProductCategory;
+        return undefined;
+      })();
+      const subcategoryFromCsv = colSubcategory ? cellText(row[colSubcategory]) || undefined : undefined;
+      const barcodeFromCsv = colBarcode ? cellText(row[colBarcode]) || undefined : undefined;
+      const stockQtyFromCsv = colStockQty ? cellNum(row[colStockQty]) : undefined;
+      const minStockFromCsv = colMinStock ? cellNum(row[colMinStock]) : undefined;
+      const costPriceFromCsv = colCostPrice ? cellNum(row[colCostPrice]) : undefined;
+      const divisibleFromCsv = colDivisible ? cellBool(row[colDivisible]) : undefined;
+      const piecesPerBoxFromCsv = colPiecesPerBox ? cellNum(row[colPiecesPerBox]) : undefined;
+      const pieceNameFromCsv = colPieceName ? cellText(row[colPieceName]) || undefined : undefined;
+      const piecePriceUSDFromCsv = colPiecePriceUSD ? cellNum(row[colPiecePriceUSD]) : undefined;
+      const expiryFromCsv = colExpiry ? cellText(row[colExpiry]) : undefined;
+      const batchNoFromCsv = colBatchNumber ? cellText(row[colBatchNumber]) : undefined;
+      let batchesFromCsv: ProductBatch[] | undefined;
+      if (colBatches) {
+        const rawBatches = row[colBatches];
+        if (rawBatches != null && String(rawBatches).trim()) {
+          try {
+            const parsed = JSON.parse(String(rawBatches));
+            if (Array.isArray(parsed)) {
+              batchesFromCsv = parsed.filter((b: unknown): b is ProductBatch =>
+                !!b && typeof b === 'object' && typeof (b as { batchNumber?: unknown }).batchNumber === 'string'
+              ).map((b) => ({
+                batchNumber: b.batchNumber,
+                expiryDate: typeof (b as { expiryDate?: unknown }).expiryDate === 'string' ? (b as { expiryDate: string }).expiryDate : '',
+                ...(typeof (b as { quantity?: unknown }).quantity === 'number' ? { quantity: (b as { quantity: number }).quantity } : {}),
+              }));
+            }
+          } catch {
+            // ignore malformed batch JSON
+          }
+        }
+      }
+
       const existing = rawCode ? currentProductsMap.get(code.toUpperCase()) : undefined;
 
-      // Requirement 21: all medicines have category set as drug
-      const category: ProductCategory = 'drug';
+      // Requirement 21: all medicines have category set as drug unless the CSV carries an explicit category
+      const category: ProductCategory = categoryFromCsv ?? 'drug';
 
       if (existing) {
         // Update existing drug
@@ -1874,9 +1960,21 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           skippedDecreasedPriceLBP: finalSkippedDecreasedLBP,
           skippedDecreasedPriceUSD: finalSkippedDecreasedUSD,
           priceChangedAt: finalPriceChangedAt,
-          costPriceUSD: finalCostPriceUSD,
+          costPriceUSD: colCostPrice && costPriceFromCsv != null ? costPriceFromCsv : finalCostPriceUSD,
           pharmacistMarginProfit: colMargin ? margin : existing.pharmacistMarginProfit,
           agent: colAgent ? agent : existing.agent,
+          category: colCategory ? category : existing.category,
+          subcategory: subcategoryFromCsv ?? existing.subcategory,
+          barcode: barcodeFromCsv ?? existing.barcode,
+          stockQuantity: stockQtyFromCsv ?? existing.stockQuantity,
+          minStockAlert: minStockFromCsv ?? existing.minStockAlert,
+          expiryDate: expiryFromCsv ?? existing.expiryDate,
+          batchNumber: batchNoFromCsv ?? existing.batchNumber,
+          batches: batchesFromCsv ?? existing.batches,
+          isDivisible: divisibleFromCsv ?? existing.isDivisible,
+          piecesPerBox: piecesPerBoxFromCsv ?? existing.piecesPerBox,
+          pieceName: pieceNameFromCsv ?? existing.pieceName,
+          piecePriceUSD: piecePriceUSDFromCsv ?? existing.piecePriceUSD,
           updatedAt: Date.now(),
           version: (existing.version || 1) + 1,
         };
@@ -1889,20 +1987,26 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           code: code.toUpperCase(),
           name,
           category,
+          subcategory: subcategoryFromCsv,
+          barcode: barcodeFromCsv,
           ingredients,
           dosage,
           presentation,
           form,
           priceLBP,
           priceUSD,
-          costPriceUSD,
+          costPriceUSD: colCostPrice && costPriceFromCsv != null ? costPriceFromCsv : costPriceUSD,
           pharmacistMarginProfit: margin,
           agent,
-          stockQuantity: 0,
-          minStockAlert: 5,
-          expiryDate: '',
-          batchNumber: '',
-          batches: [],
+          stockQuantity: stockQtyFromCsv ?? 0,
+          minStockAlert: minStockFromCsv ?? 5,
+          expiryDate: expiryFromCsv ?? '',
+          batchNumber: batchNoFromCsv ?? '',
+          batches: batchesFromCsv ?? [],
+          isDivisible: divisibleFromCsv,
+          piecesPerBox: piecesPerBoxFromCsv,
+          pieceName: pieceNameFromCsv,
+          piecePriceUSD: piecePriceUSDFromCsv,
           updatedAt: Date.now(),
           version: 1,
           scientificInfo: (() => {

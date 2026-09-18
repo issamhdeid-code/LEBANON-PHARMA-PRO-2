@@ -1032,6 +1032,47 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setIsEditModalOpen(false);
   };
 
+  const handleExportStockCSV = useCallback(() => {
+    const escapeCsvCell = (value: string): string => {
+      if (/[",\n\r]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
+      return value;
+    };
+    const headers = ['code', 'Name', 'Ingredients', 'Dosage', 'Presentation', 'Form', 'Category', 'Subcategory', 'Barcode', 'Price in LBP', 'Price USD', 'Cost Price USD', 'Pharmacist Margin', 'Agent', 'Stock Quantity', 'Min Stock Alert', 'Expiry Date', 'Batch Number', 'Batches (JSON)', 'Is Divisible', 'Pieces Per Box', 'Piece Name', 'Piece Price USD'];
+    const rows = products.map((p) => [
+      String(p.code || ''),
+      p.name || '',
+      p.ingredients || '',
+      p.dosage || '',
+      p.presentation || '',
+      p.form || '',
+      p.category || '',
+      p.subcategory || '',
+      p.barcode || '',
+      p.priceLBP > 0 ? String(Math.round(p.priceLBP)) : '',
+      p.priceUSD > 0 ? p.priceUSD.toFixed(2) : '',
+      p.costPriceUSD != null && p.costPriceUSD > 0 ? p.costPriceUSD.toFixed(2) : '',
+      p.pharmacistMarginProfit != null ? String(p.pharmacistMarginProfit) : '',
+      p.agent || '',
+      String(p.stockQuantity ?? 0),
+      String(p.minStockAlert ?? 5),
+      p.expiryDate || '',
+      p.batchNumber || '',
+      JSON.stringify(p.batches || []),
+      p.isDivisible != null ? String(p.isDivisible) : '',
+      p.piecesPerBox != null ? String(p.piecesPerBox) : '',
+      p.pieceName || '',
+      p.piecePriceUSD != null ? p.piecePriceUSD.toFixed(2) : '',
+    ]);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.map(escapeCsvCell).join(','))].join('\n');
+    const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pharmalebanon_stock_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [products]);
+
   return (
     <div className="flex h-full w-full overflow-hidden bg-[#f8fafc] dark:bg-slate-950 select-none">
       {/* Main Inventory Table Section */}
@@ -1091,6 +1132,14 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               className="text-xs border border-gray-300 dark:border-slate-700 px-2.5 py-1 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 rounded cursor-pointer font-medium text-gray-700 dark:text-gray-200"
             >
               Import CSV
+            </button>
+            <button
+              onClick={handleExportStockCSV}
+              className="text-xs border border-gray-300 dark:border-slate-700 px-2.5 py-1 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 rounded cursor-pointer font-medium text-gray-700 dark:text-gray-200 flex items-center gap-1.5"
+              title="Export the full stock list with all product details to a CSV file (re-importable via Import CSV)"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+              Export CSV
             </button>
             <button
               onClick={onOpenMOPHUpdater}
