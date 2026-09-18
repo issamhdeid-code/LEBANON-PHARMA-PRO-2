@@ -23,7 +23,6 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 
@@ -46,7 +45,6 @@ if (!CHROME) {
 }
 
 const DAY_MS = 24 * 3600 * 1000;
-const SECRET = crypto.randomBytes(24).toString('hex');
 const STORE_KEYS = {
   products: 'pharmalebanon_products_v1',
   sales: 'pharmalebanon_sales_v1',
@@ -82,9 +80,6 @@ function check(name, cond, detail = '') {
 
 // ---------------------------------------------------------------- server boot
 function bootServer() {
-  const secretDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pharma-secret-'));
-  const secretFile = path.join(secretDir, 'sync-secret.json');
-  fs.writeFileSync(secretFile, JSON.stringify({ secret: SECRET })); // must match INJECT value
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['dist/server.cjs'], {
       cwd: ROOT,
@@ -93,7 +88,6 @@ function bootServer() {
         PORT: String(PORT),
         HOST,
         NODE_ENV: 'production',
-        SYNC_SECRET_FILE: secretFile,
         GOOGLE_API_KEY: '',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -237,14 +231,6 @@ async function newTerminal(browser, label) {
   page.setDefaultTimeout(120000);
   await page.evaluateOnNewDocument(INPAGE);
   await page.evaluateOnNewDocument(INJECT);
-  await page.evaluateOnNewDocument(
-    (s) => {
-      try {
-        localStorage.setItem('pharmalebanon_sync_secret_v1', s);
-      } catch (e) {}
-    },
-    SECRET
-  );
   page.on('console', (msg) => {
     const t = msg.type();
     if (t === 'error' || t === 'warning') {

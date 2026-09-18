@@ -48,8 +48,8 @@ module is safe.
 ## Authentication / data notes
 - Main PC seeds admin (`admin`/`admin123`); the SECOND PC signs in as a
   different account (the app blocks one identity on two devices).
-- Sync runs over Socket.IO with a shared secret; Settings → Network → "Sync
-  Security Key". Server stores it in `.cache/sync-secret.json` (gitignored).
+- Pairing needs ONLY the Main PC's IP address (Settings → Network & Sync). The
+  old shared sync key was removed — no secret to provision or copy.
 - localStorage keys: `pharmalebanon_*_v1` (products, sales, purchases, users,
   settings...). E2E harness uses separate browser profiles + virtual clock.
 - The MOPH price-list modal is password-locked (`pharma2026`, 1-year unlock).

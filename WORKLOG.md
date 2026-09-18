@@ -240,3 +240,34 @@ granular product-array mutations, and the alert-check effect — these are safe 
   project root (long; logs each step). The harness boots its OWN server — never touch the running dev
   server.
 - NOT pushed (AGENTS.md convention — push only on request).
+
+## What was completed in THIS session (sync-secret removed — COMMITTED)
+- **Request**: drop the 24-byte shared sync secret entirely. Pairing the Secondary PC
+  with the Main PC now needs ONLY the Main PC's IP address (Settings → Network & Sync).
+- **`server.ts`**: removed the sync-secret file (`.cache/sync-secret.json` /
+  `ProgramData\Lebanon Pharma Pro\sync-secret.json`), the `io.use` handshake auth that
+  required `auth.syncSecret`, the `requireSyncSecret` middleware on `/api/scientifics/enrich`
+  + `/api/moph/price-list` + `/api/moph/lndd-ingredients`, the `POST /api/sync/secret`
+  provisioning endpoint, the `X-Sync-Secret` CORS header, `isLoopbackAddress`, and the
+  now-unused `crypto` import. Retained LAN hardening: Host-header allow-list, Socket.IO
+  origin allow-list, `SYNC_PROTOCOL_VERSION` checks, and route rate limits.
+- **`src/services/syncSecret.ts`**: DELETED (`getSyncSecret`/`setSyncSecret`/`clearSyncSecret`/
+  `pushSyncSecretToServer`/`regenerateSyncSecret`).
+- **`syncEngine.ts`**: removed the `syncSecret` field, the 8th `init` param, the socket `auth`
+  callback, and the dead 'Unauthorized' connect_error branch.
+- **`PharmacyContext.tsx`**: removed the boot-time `pushSyncSecretToServer` handshake (socket
+  connects immediately); added a one-time `localStorage.removeItem('pharmalebanon_sync_secret_v1')`
+  cleanup so stale keys from older builds are erased.
+- **`mophApiService.ts` / `scientificDataService.ts`**: dropped `getSyncSecret` + the
+  `X-Sync-Secret` header (native fetch headers only).
+- **`SettingsView.tsx`**: removed the "Sync Security Key" card (Copy/Regenerate), its handlers,
+  state, and the `KeyRound`/`RefreshCw` icon imports. Network tab now shows Main/Secondary mode
+  + Main PC IP only.
+- **Tests**: `monthly-usage.js` + `full-walkthrough.js` no longer pre-provision a secret file
+  (`SYNC_SECRET_FILE`) or inject `pharmalebanon_sync_secret_v1` into pages; removed the now-unused
+  `crypto` import.
+- **`AI_STUDIO_BRIEF.md`**: pairing note updated (IP only, no secret).
+- Trade-off accepted: any device on the LAN can now join the sync ring / call the rate-limited
+  public-data and AI endpoints (still blocked off-LAN by the host + origin allow-lists).
+- Verified: `npm run lint` / `npm run test` (8) / `npm run build` all GREEN.
+- NOT pushed (AGENTS.md convention — push only on request).

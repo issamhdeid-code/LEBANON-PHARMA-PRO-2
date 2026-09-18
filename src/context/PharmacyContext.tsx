@@ -20,7 +20,6 @@ import {
   LogLevel
 } from '../types/pharmacy';
 import { syncEngine } from '../services/syncEngine';
-import { pushSyncSecretToServer, getSyncSecret } from '../services/syncSecret';
 import { OfflineStorage, INITIAL_PRODUCTS } from '../services/storage';
 import { notificationService } from '../services/notificationService';
 import {
@@ -888,22 +887,18 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         users: usersRef.current,
         notifications: notificationsRef.current,
         logs: logsRef.current,
-      }),
-      getSyncSecret() || ''
+      })
     );
   }, [addNotification]);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      // Provision/refresh the shared sync secret on the local server first, then
-      // open the socket — otherwise the first connection attempt is rejected.
-      const secret = await pushSyncSecretToServer();
-      if (!secret) {
-        console.warn('[sync] No sync secret available; socket may be rejected.');
-      }
-      if (!cancelled) connectSyncEngine();
-    })();
+    // Forget any sync secret an older build may have written locally; pairing
+    // with the Main PC now needs only its IP address.
+    try {
+      localStorage.removeItem('pharmalebanon_sync_secret_v1');
+    } catch { /* ignore */ }
+    if (!cancelled) connectSyncEngine();
     return () => {
       cancelled = true;
       syncEngine.disconnect();

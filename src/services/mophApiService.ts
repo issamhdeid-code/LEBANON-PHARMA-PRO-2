@@ -1,6 +1,8 @@
-import { getSyncSecret } from './syncSecret';
-
 const API_BASE = '';
+
+function protectedHeaders(): Record<string, string> {
+  return { 'Content-Type': 'application/json' };
+}
 
 export interface MOPHPriceListRow {
   code: number | string;
@@ -15,13 +17,6 @@ export interface MOPHPriceListRow {
   publicPriceLBP: number | null;
   pharmacistMargin: number | null;
   stratum: string;
-}
-
-function protectedHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const secret = getSyncSecret();
-  if (secret) headers['X-Sync-Secret'] = secret;
-  return headers;
 }
 
 export async function fetchMOPHPriceList(): Promise<MOPHPriceListRow[]> {

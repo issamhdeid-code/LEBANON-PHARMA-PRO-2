@@ -22,7 +22,6 @@ class SyncEngine {
   private socket: Socket | null = null;
   private mode: 'main' | 'secondary' = 'main';
   private targetIp: string = '';
-  private syncSecret: string = '';
   private deviceId: string = Math.random().toString(36).substring(7);
   private status: SyncStatus = 'offline';
   private pendingQueue: SyncPayload[] = [];
@@ -45,8 +44,7 @@ class SyncEngine {
     onMessage: (payload: SyncPayload) => void,
     onSnapshotRequested?: (requesterId: string, requesterData: any) => void,
     onSnapshotData?: (data: any) => void,
-    getLocalSnapshot?: () => any,
-    syncSecret?: string
+    getLocalSnapshot?: () => any
   ) {
     this.mode = mode;
     this.targetIp = targetIp;
@@ -55,7 +53,6 @@ class SyncEngine {
     this.onSnapshotRequested = onSnapshotRequested;
     this.onSnapshotData = onSnapshotData;
     this.getLocalSnapshot = getLocalSnapshot;
-    this.syncSecret = syncSecret || '';
 
     this.connect();
   }
@@ -98,9 +95,6 @@ class SyncEngine {
       this.socket = io(serverUrl, {
         reconnectionDelayMax: 10000,
         transports: ['websocket', 'polling'],
-        auth: (cb: (args: { syncSecret: string }) => void) => {
-          cb({ syncSecret: this.syncSecret });
-        },
       });
 
       this.socket.on('connect', () => {
@@ -119,11 +113,6 @@ class SyncEngine {
       });
       
       this.socket.on('connect_error', (err) => {
-        const message = err?.message || '';
-        if (message.includes('Unauthorized') || message.includes('not provisioned')) {
-          // Bad/missing sync secret — surface as error, socket.io will keep retrying on its own.
-          console.warn('[sync] Peer rejected connection:', message);
-        }
         this.updateStatus('error');
       });
 

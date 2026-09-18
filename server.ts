@@ -4,7 +4,6 @@ import { Server } from 'socket.io';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import * as XLSX from 'xlsx';
@@ -23,16 +22,14 @@ dotenv.config();
 // Local-only network envelope.
 //
 // The app's HTTP API and Socket.IO sync relay are reachable from the whole LAN
-// because the paired Secondary PC must reach the Main PC over the network. That
-// same reachability made the whole system an open target (any LAN device — or
-// any website via DNS rebinding on a bound 0.0.0.0 port — could pull a full
-// data snapshot or inject forged mutations). We now enforce:
+// because the paired Secondary PC must reach the Main PC over the network — by
+// design, pairing requires ONLY the Main PC's IP address (Settings → Network &
+// Sync). To keep this exposed LAN surface from being an easy target we still
+// enforce:
 //   1. Host-header allow-list (localhost + this machine's own IPs) on the API.
-//   2. Socket.IO origin allow-list + a shared-secret handshake (`syncSecret`).
-//   3. `x-sync-secret` header required on data-consuming API routes.
-//   4. Rate limiting on the public-data proxies as defense-in-depth.
-// The sync secret is generated on first boot and != synced over the wire by the
-// app itself; the pharmacy owner sets the SAME secret in Settings on both PCs.
+//   2. Socket.IO origin allow-list matching the host allow-list.
+//   3. Sync protocol version checks on every inbound mutation.
+//   4. Rate limiting on the public-data / AI proxies as defense-in-depth.
 // ---------------------------------------------------------------------------
 
 const PORT = Number(process.env.PORT || 3000);
@@ -75,46 +72,6 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   }
 }
 
-function isLoopbackAddress(addr: string | undefined): boolean {
-  const a = String(addr || '').toLowerCase();
-  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1' || a.startsWith('127.');
-}
-
-// ---- Persistent shared sync secret ----------------------------------------
-// Kept OUT of the synced settings payload and out of IndexedDB snapshots: it
-// marks which peer is allowed to join the sync ring. Stored on the server in a
-// local file so it survives restarts and never travels over the wire from us.
-const SYNC_SECRET_FILE = process.env.SYNC_SECRET_FILE
-  || (process.env.NODE_ENV === 'production'
-    ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'Lebanon Pharma Pro', 'sync-secret.json')
-    : path.join(process.cwd(), '.cache', 'sync-secret.json'));
-
-let storedSyncSecret: string | null = null;
-function loadSyncSecret(): void {
-  try {
-    if (fs.existsSync(SYNC_SECRET_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(SYNC_SECRET_FILE, 'utf8'));
-      if (raw && typeof raw.secret === 'string' && raw.secret.length >= 8) {
-        storedSyncSecret = raw.secret;
-      }
-    }
-  } catch (e) {
-    console.warn('Failed to load sync secret:', e);
-  }
-}
-function persistSyncSecret(secret: string): void {
-  try {
-    fs.mkdirSync(path.dirname(SYNC_SECRET_FILE), { recursive: true });
-    fs.writeFileSync(SYNC_SECRET_FILE, JSON.stringify({ secret }));
-  } catch (e) {
-    console.warn('Failed to persist sync secret:', e);
-  }
-}
-function generateSyncSecret(): string {
-  return crypto.randomBytes(24).toString('hex');
-}
-loadSyncSecret();
-
 // ---- Per-IP sliding-window rate limiter (no external dependency) -----------
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 function rateLimit(max: number, windowMs: number) {
@@ -152,19 +109,6 @@ const io = new Server(httpServer, {
     },
     methods: ['GET', 'POST'],
   },
-});
-
-// Only sockets presenting the shared sync secret (or, before the server has any
-// secret configured, sockets arriving from loopback) may join the sync ring.
-io.use((socket, next) => {
-  const presented: unknown = socket.handshake.auth?.syncSecret;
-  if (storedSyncSecret && (typeof presented !== 'string' || presented !== storedSyncSecret)) {
-    return next(new Error('Unauthorized sync secret'));
-  }
-  if (!storedSyncSecret) {
-    return next(new Error('Sync server not provisioned'));
-  }
-  next();
 });
 
 function isValidSyncPayload(data: unknown): data is { type: string; senderId: string; data?: unknown; protocol?: number } {
@@ -221,7 +165,7 @@ app.use((req, res, next) => {
   // res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Sync-Secret');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   const origin = req.headers.origin;
   if (origin && isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -231,41 +175,6 @@ app.use((req, res, next) => {
     return res.sendStatus(200);
   }
   next();
-});
-
-// Most API routes consume the pharmacy's data / paid quota. They only ever need
-// to be called by the local renderer, which sends the shared sync secret.
-function requireSyncSecret(req: express.Request, res: express.Response, next: express.NextFunction): void {
-  const header = String(req.headers['x-sync-secret'] || '');
-  if (!storedSyncSecret || header !== storedSyncSecret) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-  next();
-}
-
-// The local renderer provisions / rotates the sync secret through this endpoint.
-// Bootstrap (no secret stored yet) is only accepted from the loopback interface.
-app.post('/api/sync/secret', (req, res) => {
-  const incoming = String(req.body?.secret || '').trim();
-  const header = String(req.headers['x-sync-secret'] || '');
-
-  if (storedSyncSecret) {
-    if (header !== storedSyncSecret) return res.status(401).json({ error: 'Unauthorized' });
-    if (!incoming || incoming.length < 8) return res.status(400).json({ error: 'Secret too short' });
-    storedSyncSecret = incoming;
-    persistSyncSecret(incoming);
-    return res.json({ ok: true, secret: incoming });
-  }
-
-  // Bootstrap: provision a secret for the first time.
-  // if (!isLoopbackAddress(req.socket.remoteAddress)) {
-    // return res.status(403).json({ error: 'Provisioning only allowed from this machine' });
-  // }
-  const secret = incoming || generateSyncSecret();
-  storedSyncSecret = secret;
-  persistSyncSecret(secret);
-  return res.json({ ok: true, secret });
 });
 
 // Health check endpoint — also serves as the fingerprint the Electron main
@@ -297,7 +206,7 @@ function getAIClient(): GoogleGenAI | null {
 }
 
 // Endpoint to enrich scientific drug monographs with AI
-app.post('/api/scientifics/enrich', requireSyncSecret, rateLimit(12, 60_000), async (req, res) => {
+app.post('/api/scientifics/enrich', rateLimit(12, 60_000), async (req, res) => {
   try {
     const sanitize = (v: unknown): string => String(v ?? '')
       .replace(/[\u0000-\u001f\u007f]/g, ' ')   // strip control chars (incl. newlines) -> no prompt smuggling
@@ -546,7 +455,7 @@ async function getPriceListRows(): Promise<MOPHPriceListRow[]> {
 }
 
 // GET /api/moph/price-list -> parsed official marketed drug price list
-app.get('/api/moph/price-list', requireSyncSecret, rateLimit(10, 60_000), async (req, res) => {
+app.get('/api/moph/price-list', rateLimit(10, 60_000), async (req, res) => {
   try {
     const rows = await getPriceListRows();
     return res.json(rows);
@@ -724,7 +633,7 @@ const MAX_LNDD_ITEMS_PER_REQUEST = 100;
 const LNDD_LOOKUP_CONCURRENCY = 10;
 const LNDD_POLITENESS_DELAY_MS = 50;
 
-app.post('/api/moph/lndd-ingredients', requireSyncSecret, rateLimit(120, 60_000), async (req, res) => {
+app.post('/api/moph/lndd-ingredients', rateLimit(120, 60_000), async (req, res) => {
   try {
     const items: Array<{ name?: string; dosage?: string; form?: string }> =
       Array.isArray(req.body?.items) ? req.body.items : [];

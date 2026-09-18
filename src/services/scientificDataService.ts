@@ -1,5 +1,4 @@
 import { Product, ScientificDrugInfo } from '../types/pharmacy';
-import { getSyncSecret } from './syncSecret';
 
 /**
  * Normalizes an active ingredient or molecule string by stripping salts, esters,
@@ -1931,11 +1930,9 @@ export async function searchOnlineScientificData(
   try {
     const aiController = new AbortController();
     const aiTimeout = setTimeout(() => aiController.abort(), 45_000);
-    let aiHeaders: Record<string, string> = {
+    const aiHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    const syncSecret = getSyncSecret();
-    if (syncSecret) aiHeaders['X-Sync-Secret'] = syncSecret;
     const aiRes = await fetch('/api/scientifics/enrich', {
       method: 'POST',
       headers: aiHeaders,
