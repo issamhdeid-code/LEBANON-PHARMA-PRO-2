@@ -187,6 +187,13 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Local IPv4 addresses of this machine, so the Main PC can show the Secondary
+// exactly which address to pair with. Reuses the security envelope's own cache.
+app.get('/api/network/ipv4', rateLimit(30, 60_000), (_req, res) => {
+  refreshLocalIpv4();
+  res.json({ addresses: localIpv4Cache });
+});
+
 // Lazy initialize Gemini AI client
 let aiClient: GoogleGenAI | null = null;
 function getAIClient(): GoogleGenAI | null {

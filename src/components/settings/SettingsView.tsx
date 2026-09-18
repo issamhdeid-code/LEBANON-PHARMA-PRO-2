@@ -54,9 +54,29 @@ export const SettingsView: React.FC = () => {
   const [availableBackups, setAvailableBackups] = useState<GoogleDriveBackupVersion[]>([]);
   const [isSelectingBackup, setIsSelectingBackup] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [localIps, setLocalIps] = useState<string[]>([]);
+  const [ipFetchFailed, setIpFetchFailed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentOrigin = getCurrentAppOrigin();
+  const syncPort = (() => { try { return new URL(currentOrigin).port || '3000'; } catch { return '3000'; } })();
+
+  useEffect(() => {
+    if (mode !== 'main') return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/network/ipv4');
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data?.addresses)) setLocalIps(data.addresses);
+      } catch {
+        if (!cancelled) setIpFetchFailed(true);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [mode]);
 
   const handleGoogleDriveRestore = async () => {
     const trimmed = googleClientId.trim();
@@ -984,6 +1004,51 @@ export const SettingsView: React.FC = () => {
                 </p>
               </div>
             </div>
+
+            {mode === 'main' && (
+              <div className="animate-in fade-in slide-in-from-top-4 duration-300">
+                <div className="p-4 bg-teal-50/60 dark:bg-teal-900/20 rounded-lg border border-teal-200 dark:border-teal-800">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Info className="h-4 w-4 text-teal-700 dark:text-teal-300" />
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      This PC's local IP address (enter it on the Secondary PC)
+                    </label>
+                  </div>
+                  {localIps.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {localIps.map((addr) => (
+                        <div key={addr} className="flex items-center gap-1 px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg">
+                          <code className="text-sm font-mono text-slate-800 dark:text-slate-200">{addr}</code>
+                          <button
+                            onClick={() => handleCopy(`${addr}:${syncPort}`, `mainIp-${addr}`)}
+                            className="p-1 text-slate-400 hover:text-teal-600 transition-colors focus:outline-hidden focus:ring-2 focus:ring-primary"
+                            aria-label={`Copy ${addr} for the Secondary PC`}
+                            title="Copy IP + port"
+                          >
+                            {copiedKey === `mainIp-${addr}` ? <Check className="h-3.5 w-3.5 text-teal-600" /> : <Copy className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {ipFetchFailed
+                        ? "Could not detect this PC's local IP address. Open a command prompt and run the following to find it:"
+                        : "Detecting this PC's local IP address..."}
+                    </p>
+                  )}
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                    On the Secondary PC: Settings → Network & Sync → choose <strong>Secondary PC</strong>, then enter
+                    this address (port :{syncPort} is added automatically if you leave it out).
+                  </p>
+                  {ipFetchFailed && (
+                    <code className="mt-2 inline-block text-xs font-mono bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded text-slate-700 dark:text-slate-300">
+                      ipconfig
+                    </code>
+                  )}
+                </div>
+              </div>
+            )}
 
             {mode === 'secondary' && (
               <div className="animate-in fade-in slide-in-from-top-4 duration-300">
