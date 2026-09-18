@@ -14,6 +14,7 @@ import {
   parseLnddSearchTable,
   pickBestIngredient,
   MOPHPriceListRow,
+  LnddRow,
 } from './src/services/mophParsers';
 
 dotenv.config();
@@ -537,6 +538,45 @@ app.get('/api/moph/now', rateLimit(40, 60_000), async (req, res) => {
 const lnddIngredientsCache = new Map<string, string>();
 const lnddIngredientsInflight = new Map<string, Promise<string>>();
 
+// Parsed search rows cached per raw term (memory only). The public LNDD search
+// returns the same candidates for a given term regardless of dosage/form, so a
+// single fetch serves every drug that shares that term instead of one POST each.
+const lnddTermRowsCache = new Map<string, LnddRow[]>();
+const lnddTermRowsInflight = new Map<string, Promise<LnddRow[]>>();
+
+async function fetchLnddRows(term: string): Promise<LnddRow[]> {
+  const cached = lnddTermRowsCache.get(term);
+  if (cached) return cached;
+
+  const inFlight = lnddTermRowsInflight.get(term);
+  if (inFlight) return inFlight;
+
+  const task = (async () => {
+    // Be polite to the public site: quiet gap before each real POST (parallel
+    // lookups are cheap once terms are deduped, so the delay only gates fetches).
+    if (LNDD_POLITENESS_DELAY_MS > 0) {
+      await new Promise(r => setTimeout(r, LNDD_POLITENESS_DELAY_MS));
+    }
+    const body = new URLSearchParams();
+    body.append('data[Drug][name]', term);
+
+    const searchRes = await fetch(MOPH_LNDD_SEARCH, {
+      method: 'POST',
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+      signal: AbortSignal.timeout(30000),
+    });
+    const html = searchRes.ok ? await searchRes.text() : '';
+    return parseLnddSearchTable(html);
+  })();
+
+  lnddTermRowsInflight.set(term, task);
+  void task
+    .then((rows) => { lnddTermRowsCache.set(term, rows); })
+    .finally(() => { lnddTermRowsInflight.delete(term); });
+  return task;
+}
+
 const LNDD_CACHE_FILE = process.env.LNDD_CACHE_FILE
   || (process.env.NODE_ENV === 'production'
     ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'Lebanon Pharma Pro', 'lndd-ingredients-cache.json')
@@ -602,24 +642,10 @@ async function findLnddIngredient(name: string, dosage: string, form: string): P
   const inflight = (async () => {
     let matched = '';
     for (const term of candidateSearchTerms(name)) {
-      const termSig = lnddRowSignature(term, dosage);
-      if (lnddIngredientsCache.has(termSig)) {
-        matched = lnddIngredientsCache.get(termSig) || '';
-      } else {
-        const body = new URLSearchParams();
-        body.append('data[Drug][name]', term);
-
-        const searchRes = await fetch(MOPH_LNDD_SEARCH, {
-          method: 'POST',
-          headers: { 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
-          signal: AbortSignal.timeout(30000),
-        });
-        const html = searchRes.ok ? await searchRes.text() : '';
-        const rows = parseLnddSearchTable(html);
-        matched = pickBestIngredient(rows, term, dosage, form);
-        lnddIngredientsCache.set(termSig, matched);
-      }
+      const rows = await fetchLnddRows(term);
+      // Search rows are cached per term, but the final best-match is picked per
+      // drug (name/dosage/form), so the full query still scores precisely.
+      matched = pickBestIngredient(rows, name, dosage, form);
       if (matched) break;
     }
 
@@ -636,9 +662,9 @@ async function findLnddIngredient(name: string, dosage: string, form: string): P
 // body: { items: [{ name, dosage, form }] } -> resolves Ingredients per item
 // via one LNDD search per unique (name|dosage). Cached in memory.
 // Lookups run concurrently to keep imports fast; batches are capped per request.
-const MAX_LNDD_ITEMS_PER_REQUEST = 100;
-const LNDD_LOOKUP_CONCURRENCY = 10;
-const LNDD_POLITENESS_DELAY_MS = 50;
+const MAX_LNDD_ITEMS_PER_REQUEST = 200;
+const LNDD_LOOKUP_CONCURRENCY = 20;
+const LNDD_POLITENESS_DELAY_MS = 80;
 
 app.post('/api/moph/lndd-ingredients', rateLimit(120, 60_000), async (req, res) => {
   try {
@@ -669,8 +695,6 @@ app.post('/api/moph/lndd-ingredients', rateLimit(120, 60_000), async (req, res) 
           console.warn(`LNDD ingredients lookup failed for ${name}:`, e?.message || e);
           results.push({ name, dosage, form, ingredients: '' });
         }
-        // Be polite to the public site between searches (parallelized, so short delay).
-        await new Promise(r => setTimeout(r, LNDD_POLITENESS_DELAY_MS));
       }
     }
 

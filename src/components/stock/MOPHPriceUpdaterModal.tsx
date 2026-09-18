@@ -71,7 +71,7 @@ interface NewImportItem {
 type PreviewTab = 'matched' | 'import-items';
 
 // LNDD ingredients come from public POSTs (slow); never blast thousands at once.
-const MAX_INGREDIENTS_BATCH = 100;
+const MAX_INGREDIENTS_BATCH = 200;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lock for the "Update from MOPH" feature.
