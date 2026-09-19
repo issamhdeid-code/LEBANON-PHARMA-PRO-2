@@ -1,11 +1,20 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Check, X, Plus, Sparkles, AlertTriangle, Dices } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Check, X, Plus, Sparkles, AlertTriangle, Dices, ChevronDown, Search } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { Product, ProductCategory, ScientificDrugInfo, MoleculeStrength } from '../../types/pharmacy';
 import { resolveStraightforwardScientificInfo } from '../../services/scientificDataService';
 import { generateRandomBarcode } from '../../utils/stockUtils';
 import { getSubcategoryOptions, suggestSubcategory } from '../../constants/subcategories';
 import { DesktopWindow } from '../common/DesktopWindow';
+import {
+  getStandardPharmaceuticalForms,
+  normalizePharmaceuticalForm,
+  isCanonicalPharmaceuticalForm,
+} from '../../utils/pharmaceuticalFormUtils';
+import {
+  getStandardPresentations,
+  normalizePresentation,
+} from '../../utils/presentationUtils';
 
 export interface AddStockProductModalProps {
   isOpen: boolean;
@@ -30,6 +39,7 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
 }) => {
   const {
     settings,
+    updateSettings,
     addProduct,
     products,
     suppliers,
@@ -43,7 +53,12 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
   const [formCode, setFormCode] = useState('');
   const [formBarcode, setFormBarcode] = useState('');
   const [formName, setFormName] = useState('');
-  const [formCategory, setFormCategory] = useState<ProductCategory>('drug');
+  const [formCategory, setFormCategory] = useState<ProductCategory | string>('');
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
+  const [categorySearchQuery, setCategorySearchQuery] = useState('');
+  const [isAddingCustomCategory, setIsAddingCustomCategory] = useState(false);
+  const [customCategoryInput, setCustomCategoryInput] = useState('');
+  const categoryDropdownRef = useRef<HTMLDivElement>(null);
   const [formSubcategory, setFormSubcategory] = useState('');
   const [isCustomSubcategory, setIsCustomSubcategory] = useState(false);
   const [formMolecules, setFormMolecules] = useState<MoleculeStrength[]>([{ name: '', strength: '' }]);
@@ -56,7 +71,9 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
   const [formPieceName, setFormPieceName] = useState('');
   const [formPiecePriceUSD, setFormPiecePriceUSD] = useState('');
   const [isPiecePriceManual, setIsPiecePriceManual] = useState(false);
-  const [formForm, setFormForm] = useState('Tablet');
+  const [formForm, setFormForm] = useState('');
+  const [isCustomFormForm, setIsCustomFormForm] = useState(false);
+  const [customFormInput, setCustomFormInput] = useState('');
   const [formPriceLBP, setFormPriceLBP] = useState('350000');
   const [formPriceUSD, setFormPriceUSD] = useState('3.89');
   const [formMargin, setFormMargin] = useState('20');
@@ -91,9 +108,90 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
     return list;
   }, [products, formSubcategory, isCustomSubcategory, settings.customGlobalSubcategories]);
 
-  const suggestedSubcategory = React.useMemo(() => {
-    return suggestSubcategory(formName, formCategory, formIngredients);
+  const suggestedSubcategory = useMemo(() => {
+    if (!formCategory) return '';
+    return suggestSubcategory(formName, formCategory as ProductCategory, formIngredients);
   }, [formName, formCategory, formIngredients]);
+
+  // 24 standard canonical forms + genuine custom forms from settings
+  const allAvailableForms = useMemo(() => {
+    return getStandardPharmaceuticalForms(settings.customForms);
+  }, [settings.customForms]);
+
+  // Canonical presentation standards + custom presentations from settings
+  const allAvailablePresentations = useMemo(() => {
+    return getStandardPresentations(settings.customPresentations);
+  }, [settings.customPresentations]);
+
+  const handleAddCustomForm = (newForm: string) => {
+    const trimmed = newForm.trim();
+    if (!trimmed) return;
+    const normalized = normalizePharmaceuticalForm(trimmed);
+    setFormForm(normalized);
+    setIsCustomFormForm(false);
+    setCustomFormInput('');
+    // If no new form other than the 24 standard forms, don't add anything to customForms
+    if (!isCanonicalPharmaceuticalForm(normalized)) {
+      const existing = settings.customForms || [];
+      if (!existing.some((f) => f.toLowerCase() === normalized.toLowerCase())) {
+        updateSettings({ customForms: [...existing, normalized] });
+      }
+    }
+  };
+
+  // Click outside category dropdown
+  useEffect(() => {
+    if (!isCategoryDropdownOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target as Node)) {
+        setIsCategoryDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isCategoryDropdownOpen]);
+
+  const standardCategories: { value: ProductCategory; label: string }[] = useMemo(() => [
+    { value: 'cosmetics', label: 'Cosmetics' },
+    { value: 'drug', label: 'Drug' },
+    { value: 'para', label: 'Para' },
+    { value: 'vitamins', label: 'Vitamins' },
+  ], []);
+
+  const allCategoryOptions = useMemo(() => {
+    const customList = (settings.customCategories || []).map((c) => ({ value: c as ProductCategory, label: c }));
+    return [...standardCategories, ...customList].sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
+    );
+  }, [settings.customCategories, standardCategories]);
+
+  const filteredCategories = useMemo(() => {
+    if (!categorySearchQuery.trim()) return allCategoryOptions;
+    const q = categorySearchQuery.toLowerCase().trim();
+    return allCategoryOptions.filter((c) => c.label.toLowerCase().includes(q));
+  }, [allCategoryOptions, categorySearchQuery]);
+
+  const handleSelectCategory = (newCat: string) => {
+    setFormCategory(newCat);
+    setIsCategoryDropdownOpen(false);
+    setCategorySearchQuery('');
+    if (!formSubcategory && !isCustomSubcategory) {
+      const suggested = suggestSubcategory(formName, newCat as ProductCategory, formIngredients);
+      if (suggested) setFormSubcategory(suggested);
+    }
+  };
+
+  const handleAddCustomCategory = (newCatName: string) => {
+    const trimmed = newCatName.trim();
+    if (!trimmed) return;
+    const currentCustom = settings.customCategories || [];
+    if (!currentCustom.includes(trimmed) && !['drug', 'vitamins', 'cosmetics', 'para'].includes(trimmed.toLowerCase())) {
+      updateSettings({ customCategories: [...currentCustom, trimmed] });
+    }
+    handleSelectCategory(trimmed);
+    setIsAddingCustomCategory(false);
+    setCustomCategoryInput('');
+  };
 
   // Initialize fields on open
   useEffect(() => {
@@ -101,7 +199,11 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
       setFormCode(initialCode.trim() || '');
       setFormBarcode(initialBarcode.trim());
       setFormName(initialName.trim());
-      setFormCategory('drug');
+      setFormCategory('');
+      setIsCategoryDropdownOpen(false);
+      setCategorySearchQuery('');
+      setIsAddingCustomCategory(false);
+      setCustomCategoryInput('');
       setFormSubcategory('');
       setIsCustomSubcategory(false);
       setFormMolecules([{ name: '', strength: '' }]);
@@ -112,7 +214,9 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
       setFormPieceName('');
       setFormPiecePriceUSD('');
       setIsPiecePriceManual(false);
-      setFormForm('Tablet');
+      setFormForm('');
+      setIsCustomFormForm(false);
+      setCustomFormInput('');
       setFormPriceLBP('');
       setFormPriceUSD('');
       setFormMargin('20');
@@ -151,7 +255,7 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
       formGenerics.trim() !== ''
     ) return true;
     if (formCategory !== 'drug') return true;
-    if (formForm !== 'Tablet') return true;
+    if (formForm.trim() !== '') return true;
     if (suppliers.length > 0 && formAgent !== suppliers[0]?.name) return true;
     return false;
   };
@@ -211,18 +315,19 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
     const batchNumber = formBatchNumber.trim();
     const expiryDate = formExpiryDate.trim();
     const resolvedCode = formCode.trim().toUpperCase();
+    const resolvedCat = (formCategory || 'drug') as ProductCategory;
     const molecules = formMolecules
       .filter((m) => m.name.trim())
       .map((m) => ({ name: m.name.trim(), strength: m.strength.trim() }));
 
     let scientificInfo: ScientificDrugInfo | undefined = undefined;
-    if (formCategory === 'drug') {
+    if (resolvedCat === 'drug') {
       const baseProd: Product = {
         id: 'temp-preview',
         code: resolvedCode,
         barcode: formBarcode.trim(),
         name: formName.trim(),
-        category: formCategory,
+        category: resolvedCat,
         subcategory: formSubcategory.trim() || undefined,
         ingredients: formIngredients,
         dosage: formDosage,
@@ -261,13 +366,13 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
       code: resolvedCode,
       barcode: formBarcode.trim(),
       name: formName.trim(),
-      category: formCategory,
+      category: resolvedCat,
       subcategory: formSubcategory.trim() || undefined,
       ingredients: formIngredients,
       dosage: formDosage,
       molecules,
       presentation: formPresentation,
-      form: formForm,
+      form: formForm ? normalizePharmaceuticalForm(formForm) : 'Tablet',
       isDivisible: formIsDivisible,
       piecesPerBox: formIsDivisible ? Number(formPiecesPerBox) || 0 : undefined,
       pieceName: formIsDivisible ? formPieceName : undefined,
@@ -332,19 +437,18 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
         >
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div>
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Drug Code
+              <label className="block font-bold not-italic text-slate-700 dark:text-slate-300 mb-1">
+                Item Code
               </label>
               <input
                 type="text"
                 value={formCode}
                 onChange={(e) => setFormCode(e.target.value)}
-                placeholder="Optional / Manual Code"
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono font-bold uppercase focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono font-normal uppercase focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Barcode
               </label>
               <div className="relative flex items-center">
@@ -353,8 +457,7 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                   id="input-add-product-barcode"
                   value={formBarcode}
                   onChange={(e) => setFormBarcode(e.target.value)}
-                  placeholder="Optional / EAN"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-9 py-2 font-mono font-bold focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-9 py-2 font-mono font-normal focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
                 <button
                   type="button"
@@ -370,50 +473,222 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
             </div>
 
             <div className="sm:col-span-2">
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Product Trade Name *
+              <label className="block font-bold text-left text-slate-700 dark:text-slate-300 mb-1">
+                Product Name *
               </label>
               <input
                 type="text"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
                 required
-                placeholder="e.g. Panadol Extra"
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            <div>
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            <div className="relative" ref={categoryDropdownRef}>
+              <label className="block font-bold leading-4 text-slate-700 dark:text-slate-300 mb-1">
                 Category
               </label>
+
+              {/* Backwards-compatible select for form DOM query compatibility */}
               <select
                 value={formCategory}
                 onChange={(e) => {
-                  const newCat = e.target.value as ProductCategory;
-                  setFormCategory(newCat);
-                  if (!formSubcategory && !isCustomSubcategory) {
-                    const suggested = suggestSubcategory(formName, newCat, formIngredients);
-                    if (suggested) setFormSubcategory(suggested);
+                  const val = e.target.value;
+                  if (val === 'custom') {
+                    setIsAddingCustomCategory(true);
+                    setIsCategoryDropdownOpen(false);
+                  } else {
+                    handleSelectCategory(val);
                   }
                 }}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-bold uppercase focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
               >
-                <option value="drug">Drug (Medicines)</option>
-                <option value="vitamins">Vitamins</option>
-                <option value="cosmetics">Cosmetics</option>
-                <option value="para">Para (Medical / Diagnostic)</option>
-                {settings.customCategories?.map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
+                <option value="" className="text-slate-400">Choose Category</option>
+                {allCategoryOptions.map((cat) => (
+                  <option key={cat.value} value={cat.value}>{cat.label}</option>
                 ))}
+                <option value="custom">Custom Category</option>
               </select>
+
+              {/* Searchable Combobox Trigger */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCategoryDropdownOpen((prev) => !prev);
+                  setCategorySearchQuery('');
+                }}
+                className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs normal-case flex items-center justify-between focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 cursor-pointer ${
+                  !formCategory
+                    ? 'text-slate-400 dark:text-slate-500 font-normal'
+                    : 'text-slate-800 dark:text-slate-100 font-normal'
+                }`}
+              >
+                <span className="truncate normal-case">
+                  {allCategoryOptions.find((c) => c.value === formCategory)?.label || (formCategory ? formCategory : 'Choose Category')}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isCategoryDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Searchable Dropdown Menu */}
+              {isCategoryDropdownOpen && (
+                <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                  {/* Search by typing */}
+                  <div className="p-1.5 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/80">
+                    <div className="relative flex items-center">
+                      <Search className="w-3.5 h-3.5 absolute left-2 text-slate-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="Search category..."
+                        value={categorySearchQuery}
+                        onChange={(e) => setCategorySearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (filteredCategories.length > 0) {
+                              handleSelectCategory(filteredCategories[0].value);
+                            } else if (categorySearchQuery.trim()) {
+                              handleAddCustomCategory(categorySearchQuery.trim());
+                            }
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setIsCategoryDropdownOpen(false);
+                          }
+                        }}
+                        className="w-full pl-7 pr-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Options list */}
+                  <div className="max-h-48 overflow-y-auto p-1 space-y-0.5">
+                    {!categorySearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormCategory('');
+                          setIsCategoryDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded text-xs italic transition-colors cursor-pointer ${
+                          !formCategory
+                            ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 font-medium'
+                            : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700/50'
+                        }`}
+                      >
+                        Choose Category
+                      </button>
+                    )}
+
+                    {filteredCategories.map((cat) => {
+                      const isSelected = formCategory === cat.value;
+                      return (
+                        <button
+                          key={cat.value}
+                          type="button"
+                          onClick={() => handleSelectCategory(cat.value)}
+                          className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 font-semibold'
+                              : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          <span>{cat.label}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-teal-600" />}
+                        </button>
+                      );
+                    })}
+
+                    {filteredCategories.length === 0 && (
+                      <div className="px-2.5 py-2 text-xs text-slate-400 dark:text-slate-500 text-center">
+                        No categories found
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Custom Category Button */}
+                  <div className="border-t border-slate-100 dark:border-slate-700/60 p-1 bg-slate-50/50 dark:bg-slate-800/40">
+                    {categorySearchQuery.trim() && !allCategoryOptions.some((c) => c.label.toLowerCase() === categorySearchQuery.trim().toLowerCase()) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleAddCustomCategory(categorySearchQuery.trim())}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add "{categorySearchQuery.trim()}" as Category</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingCustomCategory(true);
+                          setIsCategoryDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Custom Category</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Inline custom category input */}
+              {isAddingCustomCategory && (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Enter new category name..."
+                    value={customCategoryInput}
+                    onChange={(e) => setCustomCategoryInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (customCategoryInput.trim()) {
+                          handleAddCustomCategory(customCategoryInput.trim());
+                        }
+                      } else if (e.key === 'Escape') {
+                        setIsAddingCustomCategory(false);
+                        setCustomCategoryInput('');
+                      }
+                    }}
+                    className="flex-1 rounded-lg border border-teal-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-teal-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (customCategoryInput.trim()) {
+                        handleAddCustomCategory(customCategoryInput.trim());
+                      }
+                    }}
+                    disabled={!customCategoryInput.trim()}
+                    className="rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-40 cursor-pointer shrink-0"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingCustomCategory(false);
+                      setCustomCategoryInput('');
+                    }}
+                    className="rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
                   Subcategory
                 </label>
                 {suggestedSubcategory && suggestedSubcategory !== formSubcategory && (
@@ -441,25 +716,28 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                     setFormSubcategory(e.target.value);
                   }
                 }}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-medium focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 text-sm"
+                className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-normal focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 text-xs ${
+                  !formSubcategory && !isCustomSubcategory
+                    ? 'text-slate-400 dark:text-slate-500'
+                    : 'text-slate-700 dark:text-slate-100'
+                }`}
               >
-                <option value="custom">Custom (Create new subcategory...)</option>
-                <option value="">-- None (No subcategory) --</option>
+                <option value="custom" className="text-slate-700 dark:text-slate-100">Custom (Create new subcategory...)</option>
+                <option value="" className="text-slate-400 dark:text-slate-500">Choose Subcategory</option>
                 {allSubcategories.map((sub) => (
-                  <option key={sub} value={sub}>
+                  <option key={sub} value={sub} className="text-slate-700 dark:text-slate-100">
                     {sub}
                   </option>
                 ))}
               </select>
 
-              {isCustomSubcategory && (
+                {isCustomSubcategory && (
                 <div className="mt-1.5 flex items-center gap-1.5">
                   <input
                     type="text"
                     autoFocus
                     value={formSubcategory}
                     onChange={(e) => setFormSubcategory(e.target.value)}
-                    placeholder="Type new custom subcategory..."
                     className="flex-1 rounded-lg border border-teal-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-teal-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
                   />
                   <button
@@ -478,29 +756,88 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Form
               </label>
-              <input
-                type="text"
-                list="forms-list"
-                value={formForm}
-                onChange={(e) => setFormForm(e.target.value)}
-                placeholder="e.g. Tablet, Syrup, Cream"
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-              <datalist id="forms-list">
-                <option value="Tablet" />
-                <option value="Syrup" />
-                <option value="Cream" />
-                {settings.customForms?.map((f) => (
-                  <option key={f} value={f} />
+              <select
+                value={isCustomFormForm ? 'custom' : formForm}
+                onChange={(e) => {
+                  if (e.target.value === 'custom') {
+                    setIsCustomFormForm(true);
+                    setCustomFormInput('');
+                  } else {
+                    setIsCustomFormForm(false);
+                    setFormForm(e.target.value);
+                  }
+                }}
+                className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-normal focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 text-xs ${
+                  !formForm && !isCustomFormForm
+                    ? 'text-slate-400 dark:text-slate-500'
+                    : 'text-slate-700 dark:text-slate-100'
+                }`}
+              >
+                <option value="" className="text-slate-400 dark:text-slate-500">
+                  Choose Form
+                </option>
+                {allAvailableForms.map((f) => (
+                  <option key={f} value={f} className="text-slate-700 dark:text-slate-100">
+                    {f}
+                  </option>
                 ))}
-              </datalist>
+                <option value="custom" className="text-slate-700 dark:text-slate-100 font-medium">
+                  Custom (Add new form...)
+                </option>
+              </select>
+
+              {isCustomFormForm && (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Enter new form (e.g. Capsule)..."
+                    value={customFormInput}
+                    onChange={(e) => setCustomFormInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (customFormInput.trim()) {
+                          handleAddCustomForm(customFormInput.trim());
+                        }
+                      } else if (e.key === 'Escape') {
+                        setIsCustomFormForm(false);
+                        setCustomFormInput('');
+                      }
+                    }}
+                    className="flex-1 rounded-lg border border-teal-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-teal-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (customFormInput.trim()) {
+                        handleAddCustomForm(customFormInput.trim());
+                      }
+                    }}
+                    disabled={!customFormInput.trim()}
+                    className="rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-40 cursor-pointer shrink-0"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCustomFormForm(false);
+                      setCustomFormInput('');
+                    }}
+                    className="rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="sm:col-span-2 lg:col-span-2">
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Presentation
               </label>
               <input
@@ -508,11 +845,10 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                 list="presentations-list"
                 value={formPresentation}
                 onChange={(e) => setFormPresentation(e.target.value)}
-                placeholder="e.g. 24 Film-Coated Tablets"
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               />
               <datalist id="presentations-list">
-                {settings.customPresentations?.map((p) => (
+                {allAvailablePresentations.map((p) => (
                   <option key={p} value={p} />
                 ))}
               </datalist>
@@ -536,7 +872,7 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
             {formIsDivisible && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pl-6 border-l-2 border-teal-200 dark:border-teal-900 mt-2">
                 <div>
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Pieces per Box *
                   </label>
                   <input
@@ -550,26 +886,24 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                         setFormPiecePriceUSD((Number(formPriceUSD) / val).toFixed(2));
                       }
                     }}
-                    placeholder="e.g. 30"
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     required={formIsDivisible}
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Piece Name *
                   </label>
                   <input
                     type="text"
                     value={formPieceName}
                     onChange={(e) => setFormPieceName(e.target.value)}
-                    placeholder="e.g. Sachet, Ampoule, Pen"
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     required={formIsDivisible}
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     1 Piece Price ($)
                   </label>
                   <input
@@ -581,7 +915,6 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                       setFormPiecePriceUSD(e.target.value);
                       setIsPiecePriceManual(true);
                     }}
-                    placeholder="e.g. 1.50"
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
@@ -592,10 +925,7 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
           {/* Active Ingredients & Agent */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-2">
-              <div className="flex items-center justify-between mb-1">
-                <label className="block font-semibold text-slate-700 dark:text-slate-300">
-                  Active Ingredients / Molecules
-                </label>
+              <div className="flex items-center justify-end mb-1">
                 <button
                   type="button"
                   onClick={handleAutoFetchScientificData}
@@ -623,7 +953,6 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                         next[idx] = { ...next[idx], name: e.target.value };
                         setFormMolecules(next);
                       }}
-                      placeholder={`Ingredient ${idx + 1} (e.g. Paracetamol)`}
                       className="flex-1 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     />
                     <input
@@ -634,7 +963,6 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                         next[idx] = { ...next[idx], strength: e.target.value };
                         setFormMolecules(next);
                       }}
-                      placeholder="e.g. 500mg"
                       className="flex-1 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     />
                     <button
@@ -664,7 +992,7 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
             </div>
 
             <div className="relative">
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Agent / Lebanese Distributor
               </label>
               <div className="relative">
@@ -677,7 +1005,6 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                   }}
                   onFocus={() => setShowAgentDropdown(true)}
                   onBlur={() => setTimeout(() => setShowAgentDropdown(false), 200)}
-                  placeholder="e.g. Mersaco, Omnipharma, Fattal"
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
                 {showAgentDropdown && (
@@ -776,7 +1103,6 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                   step="0.5"
                   value={formMargin}
                   onChange={(e) => setFormMargin(e.target.value)}
-                  placeholder="20"
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -797,7 +1123,6 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                   type="text"
                   value={formBatchNumber}
                   onChange={(e) => setFormBatchNumber(e.target.value)}
-                  placeholder="e.g. BT-90214"
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 uppercase font-mono focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -810,7 +1135,6 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                   type="text"
                   value={formExpiryDate}
                   onChange={(e) => setFormExpiryDate(e.target.value)}
-                  placeholder="e.g. 2027-12-31"
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>

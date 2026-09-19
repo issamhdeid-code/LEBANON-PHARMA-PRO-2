@@ -35,6 +35,14 @@ import { idbStorage } from '../services/indexedDbStorage';
 import { backupToGoogleDrive, getGoogleDriveClientId } from '../services/googleDriveBackup';
 import { formatLBPValue } from '../utils/priceUtils';
 import { hashPassword, isHashedPassword, verifyPassword } from '../utils/password';
+import {
+  normalizePharmaceuticalForm,
+  isCanonicalPharmaceuticalForm,
+} from '../utils/pharmaceuticalFormUtils';
+import {
+  normalizePresentation,
+  isCanonicalPresentation,
+} from '../utils/presentationUtils';
 
 // Settings fields that describe the pharmacy's shared business data and must be
 // identical on every terminal. Everything else (theme, dark mode, font size, this
@@ -338,8 +346,21 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (stored && Array.isArray(stored) && stored.length > 0) {
         setProducts((prev) => {
           if (stored.length > prev.length) {
-            OfflineStorage.updateMemoryCache(stored);
-            return stored;
+            const normalizedStored = stored.map((p) => {
+              const normForm = normalizePharmaceuticalForm(p.form);
+              const normPres = normalizePresentation(p.presentation);
+              return {
+                ...p,
+                form: normForm,
+                presentation: normPres,
+                scientificInfo: p.scientificInfo
+                  ? { ...p.scientificInfo, form: normForm }
+                  : undefined,
+              };
+            });
+            OfflineStorage.updateMemoryCache(normalizedStored);
+            idbStorage.saveProducts(normalizedStored).catch(() => {});
+            return normalizedStored;
           }
           return prev;
         });
@@ -357,7 +378,31 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return loaded;
   });
   const [activeSessions, setActiveSessions] = useState<Record<string, string>>({}); // userId -> deviceInstanceId
-  const [products, setProducts] = useState<Product[]>(() => OfflineStorage.getProducts());
+  const [products, setProducts] = useState<Product[]>(() => {
+    const raw = OfflineStorage.getProducts();
+    let hasDuplicateFormsOrPres = false;
+    const normalized = raw.map((p) => {
+      const normForm = normalizePharmaceuticalForm(p.form);
+      const normPres = normalizePresentation(p.presentation);
+      if (normForm !== p.form || normPres !== p.presentation) {
+        hasDuplicateFormsOrPres = true;
+        return {
+          ...p,
+          form: normForm,
+          presentation: normPres,
+          scientificInfo: p.scientificInfo
+            ? { ...p.scientificInfo, form: normForm }
+            : undefined,
+        };
+      }
+      return p;
+    });
+    if (hasDuplicateFormsOrPres) {
+      OfflineStorage.saveProducts(normalized);
+      idbStorage.saveProducts(normalized).catch(() => {});
+    }
+    return normalized;
+  });
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => OfflineStorage.getSuppliers());
   const [customers, setCustomers] = useState<Customer[]>(() => OfflineStorage.getCustomers());
   const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>(() => OfflineStorage.getCustomerPayments());
@@ -1394,8 +1439,15 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [addNotification, addLog, products]);
 
   const addProduct = (productData: Omit<Product, 'id' | 'updatedAt' | 'version'>) => {
+    const normForm = normalizePharmaceuticalForm(productData.form);
+    const normPres = normalizePresentation(productData.presentation);
     const newProduct: Product = {
       ...productData,
+      form: normForm,
+      presentation: normPres,
+      scientificInfo: productData.scientificInfo
+        ? { ...productData.scientificInfo, form: normForm }
+        : undefined,
       id: `prod-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       updatedAt: Date.now(),
       version: 1,
@@ -1486,20 +1538,33 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
+    const cleanedUpdates = { ...updates };
+    if (cleanedUpdates.presentation !== undefined) {
+      cleanedUpdates.presentation = normalizePresentation(cleanedUpdates.presentation);
+    }
+    if (cleanedUpdates.form !== undefined) {
+      cleanedUpdates.form = normalizePharmaceuticalForm(cleanedUpdates.form);
+      if (cleanedUpdates.scientificInfo) {
+        cleanedUpdates.scientificInfo = {
+          ...cleanedUpdates.scientificInfo,
+          form: cleanedUpdates.form,
+        };
+      }
+    }
     setProducts(prev => {
       const updated = prev.map(p => {
         if (p.id === id) {
-          const priceLBPChanged = updates.priceLBP !== undefined && updates.priceLBP !== p.priceLBP;
-          const priceUSDChanged = updates.priceUSD !== undefined && updates.priceUSD !== p.priceUSD;
+          const priceLBPChanged = cleanedUpdates.priceLBP !== undefined && cleanedUpdates.priceLBP !== p.priceLBP;
+          const priceUSDChanged = cleanedUpdates.priceUSD !== undefined && cleanedUpdates.priceUSD !== p.priceUSD;
           
           const next: Product = {
             ...p,
-            ...updates,
-            previousPriceLBP: priceLBPChanged ? p.priceLBP : (updates.previousPriceLBP !== undefined ? updates.previousPriceLBP : p.previousPriceLBP),
-            previousPriceUSD: priceUSDChanged ? p.priceUSD : (updates.previousPriceUSD !== undefined ? updates.previousPriceUSD : p.previousPriceUSD),
-            skippedDecreasedPriceLBP: (priceLBPChanged || priceUSDChanged) ? undefined : (updates.skippedDecreasedPriceLBP !== undefined ? updates.skippedDecreasedPriceLBP : p.skippedDecreasedPriceLBP),
-            skippedDecreasedPriceUSD: (priceLBPChanged || priceUSDChanged) ? undefined : (updates.skippedDecreasedPriceUSD !== undefined ? updates.skippedDecreasedPriceUSD : p.skippedDecreasedPriceUSD),
-            priceChangedAt: priceLBPChanged || priceUSDChanged ? Date.now() : (updates.priceChangedAt !== undefined ? updates.priceChangedAt : p.priceChangedAt),
+            ...cleanedUpdates,
+            previousPriceLBP: priceLBPChanged ? p.priceLBP : (cleanedUpdates.previousPriceLBP !== undefined ? cleanedUpdates.previousPriceLBP : p.previousPriceLBP),
+            previousPriceUSD: priceUSDChanged ? p.priceUSD : (cleanedUpdates.previousPriceUSD !== undefined ? cleanedUpdates.previousPriceUSD : p.previousPriceUSD),
+            skippedDecreasedPriceLBP: (priceLBPChanged || priceUSDChanged) ? undefined : (cleanedUpdates.skippedDecreasedPriceLBP !== undefined ? cleanedUpdates.skippedDecreasedPriceLBP : p.skippedDecreasedPriceLBP),
+            skippedDecreasedPriceUSD: (priceLBPChanged || priceUSDChanged) ? undefined : (cleanedUpdates.skippedDecreasedPriceUSD !== undefined ? cleanedUpdates.skippedDecreasedPriceUSD : p.skippedDecreasedPriceUSD),
+            priceChangedAt: priceLBPChanged || priceUSDChanged ? Date.now() : (cleanedUpdates.priceChangedAt !== undefined ? cleanedUpdates.priceChangedAt : p.priceChangedAt),
             updatedAt: Date.now(),
             version: (p.version || 1) + 1,
           };
@@ -1558,7 +1623,20 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setProducts(prev => {
       const next = prev.map(p => {
         if (!idSet.has(p.id)) return p;
-        const updates = typeof updateFnOrPartial === 'function' ? updateFnOrPartial(p) : updateFnOrPartial;
+        const rawUpdates = typeof updateFnOrPartial === 'function' ? updateFnOrPartial(p) : updateFnOrPartial;
+        const updates = { ...rawUpdates };
+        if (updates.presentation !== undefined) {
+          updates.presentation = normalizePresentation(updates.presentation);
+        }
+        if (updates.form !== undefined) {
+          updates.form = normalizePharmaceuticalForm(updates.form);
+          if (updates.scientificInfo) {
+            updates.scientificInfo = {
+              ...updates.scientificInfo,
+              form: updates.form,
+            };
+          }
+        }
         const priceLBPChanged = updates.priceLBP !== undefined && updates.priceLBP !== p.priceLBP;
         const priceUSDChanged = updates.priceUSD !== undefined && updates.priceUSD !== p.priceUSD;
 
@@ -1855,8 +1933,10 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const ingredients = colIngredients && row[colIngredients] ? cellText(row[colIngredients]) : '';
       const dosage = colDosage && row[colDosage] ? cellText(row[colDosage]) : '';
       const moleculesFromCsv = parseMoleculeList(ingredients);
-      const presentation = colPresentation && row[colPresentation] ? cellText(row[colPresentation]) : '';
-      const form = colForm && row[colForm] ? cellText(row[colForm]) : '';
+      const rawPresentationStr = colPresentation && row[colPresentation] ? cellText(row[colPresentation]) : '';
+      const presentation = normalizePresentation(rawPresentationStr);
+      const rawFormStr = colForm && row[colForm] ? cellText(row[colForm]) : '';
+      const form = normalizePharmaceuticalForm(rawFormStr);
       
       const rawPriceLBPStr = colPriceLBP && row[colPriceLBP] ? row[colPriceLBP].replace(/[^\d.]/g, '') : '';
       const rawPriceUSDStr = colPriceUSD && row[colPriceUSD] ? row[colPriceUSD].replace(/[^\d.]/g, '') : '';
@@ -2013,7 +2093,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           dosage: colDosage ? dosage : existing.dosage,
           molecules: colIngredients ? (moleculesFromCsv.length > 0 ? moleculesFromCsv : existing.molecules) : existing.molecules,
           presentation: colPresentation ? presentation : existing.presentation,
-          form: colForm ? form : existing.form,
+          form: colForm ? form : (existing.form ? normalizePharmaceuticalForm(existing.form) : 'Tablet'),
           priceLBP: finalPriceLBP,
           priceUSD: finalPriceUSD,
           previousPriceLBP: finalPreviousPriceLBP,

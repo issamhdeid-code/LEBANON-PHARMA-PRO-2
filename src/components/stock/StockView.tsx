@@ -21,7 +21,8 @@ import {
   RefreshCw,
   ArrowUp,
   ArrowDown,
-  Dices
+  Dices,
+  ChevronDown
 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { usePharmacy } from '../../context/PharmacyContext';
@@ -37,6 +38,15 @@ import { DrugDetailsModal } from './DrugDetailsModal';
 import { BulkEditStockModal } from './BulkEditStockModal';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
+import {
+  getStandardPharmaceuticalForms,
+  normalizePharmaceuticalForm,
+  isCanonicalPharmaceuticalForm,
+} from '../../utils/pharmaceuticalFormUtils';
+import {
+  getStandardPresentations,
+  normalizePresentation,
+} from '../../utils/presentationUtils';
 
 interface StockViewProps {
   onViewScientific: (product: Product) => void;
@@ -481,10 +491,12 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     addSupplier,
     searchScientificDataOnline,
     settings,
+    updateSettings,
     addNotification,
   } = usePharmacy();
 
   const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const debouncedSearchQuery = useDebounce(searchQuery, 250);
 
   useBarcodeScanner({
@@ -569,7 +581,12 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   const [formCode, setFormCode] = useState('');
   const [formBarcode, setFormBarcode] = useState('');
   const [formName, setFormName] = useState('');
-  const [formCategory, setFormCategory] = useState<ProductCategory>('drug');
+  const [formCategory, setFormCategory] = useState<ProductCategory | string>('');
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
+  const [categorySearchQuery, setCategorySearchQuery] = useState('');
+  const [isAddingCustomCategory, setIsAddingCustomCategory] = useState(false);
+  const [customCategoryInput, setCustomCategoryInput] = useState('');
+  const categoryDropdownRef = useRef<HTMLDivElement>(null);
   const [formSubcategory, setFormSubcategory] = useState('');
   const [isCustomFormSubcategory, setIsCustomFormSubcategory] = useState(false);
   const [formMolecules, setFormMolecules] = useState<MoleculeStrength[]>([{ name: '', strength: '' }]);
@@ -582,7 +599,9 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   const [formPieceName, setFormPieceName] = useState('');
   const [formPiecePriceUSD, setFormPiecePriceUSD] = useState('');
   const [isPiecePriceManual, setIsPiecePriceManual] = useState(false);
-  const [formForm, setFormForm] = useState('Tablet');
+  const [formForm, setFormForm] = useState('');
+  const [isCustomFormForm, setIsCustomFormForm] = useState(false);
+  const [customFormInput, setCustomFormInput] = useState('');
   const [formPriceLBP, setFormPriceLBP] = useState('');
   const [formPriceUSD, setFormPriceUSD] = useState('');
   const [formMargin, setFormMargin] = useState('20');
@@ -616,8 +635,89 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
 
   // Smart suggestion for form subcategory
   const suggestedFormSubcategory = useMemo(() => {
-    return suggestSubcategory(formName, formCategory, formIngredients);
+    if (!formCategory) return '';
+    return suggestSubcategory(formName, formCategory as ProductCategory, formIngredients);
   }, [formName, formCategory, formIngredients]);
+
+  // 24 standard canonical forms + genuine custom forms from settings
+  const allAvailableForms = useMemo(() => {
+    return getStandardPharmaceuticalForms(settings.customForms);
+  }, [settings.customForms]);
+
+  // Canonical presentation standards + custom presentations from settings
+  const allAvailablePresentations = useMemo(() => {
+    return getStandardPresentations(settings.customPresentations);
+  }, [settings.customPresentations]);
+
+  const handleAddCustomForm = (newForm: string) => {
+    const trimmed = newForm.trim();
+    if (!trimmed) return;
+    const normalized = normalizePharmaceuticalForm(trimmed);
+    setFormForm(normalized);
+    setIsCustomFormForm(false);
+    setCustomFormInput('');
+    // If no new form other than the 24 standard forms, don't add anything to customForms
+    if (!isCanonicalPharmaceuticalForm(normalized)) {
+      const existing = settings.customForms || [];
+      if (!existing.some((f) => f.toLowerCase() === normalized.toLowerCase())) {
+        updateSettings({ customForms: [...existing, normalized] });
+      }
+    }
+  };
+
+  // Click outside category dropdown
+  useEffect(() => {
+    if (!isCategoryDropdownOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target as Node)) {
+        setIsCategoryDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isCategoryDropdownOpen]);
+
+  const standardCategories: { value: ProductCategory; label: string }[] = useMemo(() => [
+    { value: 'cosmetics', label: 'Cosmetics' },
+    { value: 'drug', label: 'Drug' },
+    { value: 'para', label: 'Para' },
+    { value: 'vitamins', label: 'Vitamins' },
+  ], []);
+
+  const allCategoryOptions = useMemo(() => {
+    const customList = (settings.customCategories || []).map((c) => ({ value: c as ProductCategory, label: c }));
+    return [...standardCategories, ...customList].sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
+    );
+  }, [settings.customCategories, standardCategories]);
+
+  const filteredCategories = useMemo(() => {
+    if (!categorySearchQuery.trim()) return allCategoryOptions;
+    const q = categorySearchQuery.toLowerCase().trim();
+    return allCategoryOptions.filter((c) => c.label.toLowerCase().includes(q));
+  }, [allCategoryOptions, categorySearchQuery]);
+
+  const handleSelectCategory = (newCat: string) => {
+    setFormCategory(newCat);
+    setIsCategoryDropdownOpen(false);
+    setCategorySearchQuery('');
+    if (!formSubcategory && !isCustomFormSubcategory) {
+      const suggested = suggestSubcategory(formName, newCat as ProductCategory, formIngredients);
+      if (suggested) setFormSubcategory(suggested);
+    }
+  };
+
+  const handleAddCustomCategory = (newCatName: string) => {
+    const trimmed = newCatName.trim();
+    if (!trimmed) return;
+    const currentCustom = settings.customCategories || [];
+    if (!currentCustom.includes(trimmed) && !['drug', 'vitamins', 'cosmetics', 'para'].includes(trimmed.toLowerCase())) {
+      updateSettings({ customCategories: [...currentCustom, trimmed] });
+    }
+    handleSelectCategory(trimmed);
+    setIsAddingCustomCategory(false);
+    setCustomCategoryInput('');
+  };
 
   // Filter products
   const filteredProducts = useMemo(() => {
@@ -814,7 +914,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
       formGenerics.trim() !== ''
     ) return true;
     if (formCategory !== 'drug') return true;
-    if (formForm !== 'Tablet') return true;
+    if (formForm.trim() !== '') return true;
     if (suppliers.length > 0 && formAgent !== suppliers[0]?.name) return true;
 
     return false;
@@ -859,7 +959,11 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormCode('');
     setFormBarcode('');
     setFormName('');
-    setFormCategory('drug');
+    setFormCategory('');
+    setIsCategoryDropdownOpen(false);
+    setCategorySearchQuery('');
+    setIsAddingCustomCategory(false);
+    setCustomCategoryInput('');
     setFormSubcategory('');
     setIsCustomFormSubcategory(false);
     setFormMolecules([{ name: '', strength: '' }]);
@@ -870,7 +974,9 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormPieceName('');
     setFormPiecePriceUSD('');
     setIsPiecePriceManual(false);
-    setFormForm('Tablet');
+    setFormForm('');
+    setIsCustomFormForm(false);
+    setCustomFormInput('');
     setFormPriceLBP('');
     setFormPriceUSD('');
     setFormMargin('20');
@@ -891,6 +997,10 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormBarcode(prod.barcode || '');
     setFormName(prod.name);
     setFormCategory(prod.category);
+    setIsCategoryDropdownOpen(false);
+    setCategorySearchQuery('');
+    setIsAddingCustomCategory(false);
+    setCustomCategoryInput('');
     setFormSubcategory(prod.subcategory || '');
     const allSubs = getSubcategoryOptions('all', products, settings.customGlobalSubcategories);
     setIsCustomFormSubcategory(Boolean(prod.subcategory && !allSubs.includes(prod.subcategory)));
@@ -902,7 +1012,9 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormPieceName(prod.pieceName || '');
     setFormPiecePriceUSD(prod.piecePriceUSD ? prod.piecePriceUSD.toString() : '');
     setIsPiecePriceManual(!!prod.piecePriceUSD);
-    setFormForm(prod.form);
+    setFormForm(prod.form ? normalizePharmaceuticalForm(prod.form) : '');
+    setIsCustomFormForm(false);
+    setCustomFormInput('');
     setFormPriceLBP(prod.priceLBP.toString());
     setFormPriceUSD(prod.priceUSD.toString());
     setFormMargin(prod.pharmacistMarginProfit.toString());
@@ -987,18 +1099,19 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     const batchNumber = formBatches.length > 0 ? formBatches[0].batchNumber : '';
     const batches = [...formBatches];
     const resolvedCode = formCode.trim().toUpperCase();
+    const resolvedCat = (formCategory || 'drug') as ProductCategory;
     const molecules = formMolecules
       .filter((m) => m.name.trim())
       .map((m) => ({ name: m.name.trim(), strength: m.strength.trim() }));
 
     let scientificInfo: ScientificDrugInfo | undefined = undefined;
-    if (formCategory === 'drug') {
+    if (resolvedCat === 'drug') {
        const baseProd: Product = {
          id: editingProductId || 'temp',
          code: resolvedCode,
          barcode: formBarcode.trim(),
          name: formName.trim(),
-         category: formCategory,
+         category: resolvedCat,
          subcategory: formSubcategory.trim() || undefined,
          ingredients: formIngredients,
          dosage: formDosage,
@@ -1030,13 +1143,13 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         code: resolvedCode,
         barcode: formBarcode.trim(),
         name: formName.trim(),
-        category: formCategory,
+        category: resolvedCat,
         subcategory: formSubcategory.trim() || undefined,
         ingredients: formIngredients,
         dosage: formDosage,
         molecules,
         presentation: formPresentation,
-        form: formForm,
+        form: formForm ? normalizePharmaceuticalForm(formForm) : 'Tablet',
         isDivisible: formIsDivisible,
         piecesPerBox: formIsDivisible ? Number(formPiecesPerBox) || 0 : undefined,
         pieceName: formIsDivisible ? formPieceName : undefined,
@@ -1058,13 +1171,13 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         code: resolvedCode,
         barcode: formBarcode.trim(),
         name: formName.trim(),
-        category: formCategory,
+        category: resolvedCat,
         subcategory: formSubcategory.trim() || undefined,
         ingredients: formIngredients,
         dosage: formDosage,
         molecules,
         presentation: formPresentation,
-        form: formForm,
+        form: formForm ? normalizePharmaceuticalForm(formForm) : 'Tablet',
         isDivisible: formIsDivisible,
         piecesPerBox: formIsDivisible ? Number(formPiecesPerBox) || 0 : undefined,
         pieceName: formIsDivisible ? formPieceName : undefined,
@@ -1225,14 +1338,37 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         <div className="p-2.5 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 dark:border-slate-800 text-xs shrink-0">
           {/* Search */}
           <div className="relative flex-1 min-w-[200px] max-w-md">
-            <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-gray-400" />
+            <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
             <input
+              ref={searchInputRef}
               type="text"
+              id="input-stock-search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && searchQuery) {
+                  e.preventDefault();
+                  setSearchQuery('');
+                }
+              }}
               placeholder="Search by Barcode, Code, Name, Agent..."
-              className="border border-gray-300 dark:border-slate-700 rounded pl-8 pr-3 py-1 w-full focus:outline-hidden focus:ring-1 focus:ring-teal-500 text-xs bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              className="border border-gray-300 dark:border-slate-700 rounded pl-8 pr-8 py-1 w-full focus:outline-hidden focus:ring-1 focus:ring-teal-500 text-xs bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                id="btn-clear-stock-search"
+                onClick={() => {
+                  setSearchQuery('');
+                  searchInputRef.current?.focus();
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer rounded transition-colors"
+                title="Clear input"
+                aria-label="Clear input"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Category Tabs & Subcategory Filter */}
@@ -1529,19 +1665,18 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
           >
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Drug Code
+                <label className="block font-bold not-italic text-slate-700 dark:text-slate-300 mb-1">
+                  Item Code
                 </label>
                 <input
                   type="text"
                   value={formCode}
                   onChange={(e) => setFormCode(e.target.value)}
-                  placeholder="Optional / Manual Code"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono font-bold uppercase focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono font-normal uppercase focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Barcode
                 </label>
                 <div className="relative flex items-center">
@@ -1550,8 +1685,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                     id="input-stock-barcode"
                     value={formBarcode}
                     onChange={(e) => setFormBarcode(e.target.value)}
-                    placeholder="Optional"
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-9 py-2 font-mono font-bold focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-9 py-2 font-mono font-normal focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                   <button
                     type="button"
@@ -1567,15 +1701,14 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Product Trade Name
+                <label className="block font-bold text-left text-slate-700 dark:text-slate-300 mb-1">
+                  Product Name
                 </label>
                 <input
                   type="text"
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   required
-                  placeholder="e.g. Panadol Extra"
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -1583,35 +1716,208 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
 
             {/* Requirement 21: Category Selection (drug, vitamins, cosmetics, para) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <div className="relative" ref={categoryDropdownRef}>
+                <label className="block font-bold leading-4 text-slate-700 dark:text-slate-300 mb-1">
                   Category
                 </label>
+
+                {/* Backwards-compatible select for form DOM query compatibility */}
                 <select
                   value={formCategory}
                   onChange={(e) => {
-                    const newCat = e.target.value as ProductCategory;
-                    setFormCategory(newCat);
-                    if (!formSubcategory && !isCustomFormSubcategory) {
-                      const suggested = suggestSubcategory(formName, newCat, formIngredients);
-                      if (suggested) setFormSubcategory(suggested);
+                    const val = e.target.value;
+                    if (val === 'custom') {
+                      setIsAddingCustomCategory(true);
+                      setIsCategoryDropdownOpen(false);
+                    } else {
+                      handleSelectCategory(val);
                     }
                   }}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-bold uppercase focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-hidden="true"
                 >
-                  <option value="drug">Drug (Medicines)</option>
-                  <option value="vitamins">Vitamins</option>
-                  <option value="cosmetics">Cosmetics</option>
-                  <option value="para">Para (Medical / Diagnostic)</option>
-                  {settings.customCategories?.map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                  <option value="" className="text-slate-400">Choose Category</option>
+                  {allCategoryOptions.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
                   ))}
+                  <option value="custom">Custom Category</option>
                 </select>
+
+                {/* Searchable Combobox Trigger */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCategoryDropdownOpen((prev) => !prev);
+                    setCategorySearchQuery('');
+                  }}
+                  className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs normal-case flex items-center justify-between focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 cursor-pointer ${
+                    !formCategory
+                      ? 'text-slate-400 dark:text-slate-500 font-normal'
+                      : 'text-slate-800 dark:text-slate-100 font-normal'
+                  }`}
+                >
+                  <span className="truncate normal-case">
+                    {allCategoryOptions.find((c) => c.value === formCategory)?.label || (formCategory ? formCategory : 'Choose Category')}
+                  </span>
+                  <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isCategoryDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {/* Searchable Dropdown Menu */}
+                {isCategoryDropdownOpen && (
+                  <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                    {/* Search by typing */}
+                    <div className="p-1.5 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/80">
+                      <div className="relative flex items-center">
+                        <Search className="w-3.5 h-3.5 absolute left-2 text-slate-400 pointer-events-none" />
+                        <input
+                          type="text"
+                          autoFocus
+                          placeholder="Search category..."
+                          value={categorySearchQuery}
+                          onChange={(e) => setCategorySearchQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (filteredCategories.length > 0) {
+                                handleSelectCategory(filteredCategories[0].value);
+                              } else if (categorySearchQuery.trim()) {
+                                handleAddCustomCategory(categorySearchQuery.trim());
+                              }
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setIsCategoryDropdownOpen(false);
+                            }
+                          }}
+                          className="w-full pl-7 pr-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Options list */}
+                    <div className="max-h-48 overflow-y-auto p-1 space-y-0.5">
+                      {!categorySearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormCategory('');
+                            setIsCategoryDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded text-xs italic transition-colors cursor-pointer ${
+                            !formCategory
+                              ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 font-medium'
+                              : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700/50'
+                          }`}
+                        >
+                          Choose Category
+                        </button>
+                      )}
+
+                      {filteredCategories.map((cat) => {
+                        const isSelected = formCategory === cat.value;
+                        return (
+                          <button
+                            key={cat.value}
+                            type="button"
+                            onClick={() => handleSelectCategory(cat.value)}
+                            className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                              isSelected
+                                ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold'
+                                : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            <span>{cat.label}</span>
+                            {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                          </button>
+                        );
+                      })}
+
+                      {filteredCategories.length === 0 && (
+                        <div className="px-2.5 py-2 text-xs text-slate-400 dark:text-slate-500 text-center">
+                          No categories found
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Custom Category Button */}
+                    <div className="border-t border-slate-100 dark:border-slate-700/60 p-1 bg-slate-50/50 dark:bg-slate-800/40">
+                      {categorySearchQuery.trim() && !allCategoryOptions.some((c) => c.label.toLowerCase() === categorySearchQuery.trim().toLowerCase()) ? (
+                        <button
+                          type="button"
+                          onClick={() => handleAddCustomCategory(categorySearchQuery.trim())}
+                          className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add "{categorySearchQuery.trim()}" as Category</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAddingCustomCategory(true);
+                            setIsCategoryDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Custom Category</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Inline custom category input */}
+                {isAddingCustomCategory && (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Enter new category name..."
+                      value={customCategoryInput}
+                      onChange={(e) => setCustomCategoryInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (customCategoryInput.trim()) {
+                            handleAddCustomCategory(customCategoryInput.trim());
+                          }
+                        } else if (e.key === 'Escape') {
+                          setIsAddingCustomCategory(false);
+                          setCustomCategoryInput('');
+                        }
+                      }}
+                      className="flex-1 rounded-lg border border-emerald-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-emerald-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (customCategoryInput.trim()) {
+                          handleAddCustomCategory(customCategoryInput.trim());
+                        }
+                      }}
+                      disabled={!customCategoryInput.trim()}
+                      className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-40 cursor-pointer shrink-0"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingCustomCategory(false);
+                        setCustomCategoryInput('');
+                      }}
+                      className="rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
                     Subcategory
                   </label>
                   {suggestedFormSubcategory && suggestedFormSubcategory !== formSubcategory && (
@@ -1639,12 +1945,16 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                       setFormSubcategory(e.target.value);
                     }
                   }}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-medium focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 text-sm"
+                  className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-normal focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 text-xs ${
+                    !formSubcategory && !isCustomFormSubcategory
+                      ? 'text-slate-400 dark:text-slate-500'
+                      : 'text-slate-700 dark:text-slate-100'
+                  }`}
                 >
-                  <option value="custom">Custom (Create new subcategory...)</option>
-                  <option value="">-- None (No subcategory) --</option>
+                  <option value="custom" className="text-slate-700 dark:text-slate-100">Custom (Create new subcategory...)</option>
+                  <option value="" className="text-slate-400 dark:text-slate-500">Choose Subcategory</option>
                   {allFormSubcategories.map((sub) => (
-                    <option key={sub} value={sub}>
+                    <option key={sub} value={sub} className="text-slate-700 dark:text-slate-100">
                       {sub}
                     </option>
                   ))}
@@ -1657,7 +1967,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                       autoFocus
                       value={formSubcategory}
                       onChange={(e) => setFormSubcategory(e.target.value)}
-                      placeholder="Type new custom subcategory..."
                       className="flex-1 rounded-lg border border-emerald-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-emerald-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
                     />
                     <button
@@ -1676,29 +1985,88 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Form
                 </label>
-                <input
-                  type="text"
-                  list="stockview-forms-list"
-                  value={formForm}
-                  onChange={(e) => setFormForm(e.target.value)}
-                  placeholder="e.g. Tablet, Syrup, Cream"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
-                <datalist id="stockview-forms-list">
-                  <option value="Tablet" />
-                  <option value="Syrup" />
-                  <option value="Cream" />
-                  {settings.customForms?.map((f) => (
-                    <option key={f} value={f} />
+                <select
+                  value={isCustomFormForm ? 'custom' : formForm}
+                  onChange={(e) => {
+                    if (e.target.value === 'custom') {
+                      setIsCustomFormForm(true);
+                      setCustomFormInput('');
+                    } else {
+                      setIsCustomFormForm(false);
+                      setFormForm(e.target.value);
+                    }
+                  }}
+                  className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-normal focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 text-xs ${
+                    !formForm && !isCustomFormForm
+                      ? 'text-slate-400 dark:text-slate-500'
+                      : 'text-slate-700 dark:text-slate-100'
+                  }`}
+                >
+                  <option value="" className="text-slate-400 dark:text-slate-500">
+                    Choose Form
+                  </option>
+                  {allAvailableForms.map((f) => (
+                    <option key={f} value={f} className="text-slate-700 dark:text-slate-100">
+                      {f}
+                    </option>
                   ))}
-                </datalist>
+                  <option value="custom" className="text-slate-700 dark:text-slate-100 font-medium">
+                    Custom (Add new form...)
+                  </option>
+                </select>
+
+                {isCustomFormForm && (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Enter new form (e.g. Capsule)..."
+                      value={customFormInput}
+                      onChange={(e) => setCustomFormInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (customFormInput.trim()) {
+                            handleAddCustomForm(customFormInput.trim());
+                          }
+                        } else if (e.key === 'Escape') {
+                          setIsCustomFormForm(false);
+                          setCustomFormInput('');
+                        }
+                      }}
+                      className="flex-1 rounded-lg border border-emerald-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-emerald-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (customFormInput.trim()) {
+                          handleAddCustomForm(customFormInput.trim());
+                        }
+                      }}
+                      disabled={!customFormInput.trim()}
+                      className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-40 cursor-pointer shrink-0"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomFormForm(false);
+                        setCustomFormInput('');
+                      }}
+                      className="rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="sm:col-span-2 lg:col-span-2">
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Presentation
                 </label>
                 <input
@@ -1706,11 +2074,10 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                   list="stockview-presentations-list"
                   value={formPresentation}
                   onChange={(e) => setFormPresentation(e.target.value)}
-                  placeholder="e.g. 24 Film-Coated Tablets"
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
                 <datalist id="stockview-presentations-list">
-                  {settings.customPresentations?.map((p) => (
+                  {allAvailablePresentations.map((p) => (
                     <option key={p} value={p} />
                   ))}
                 </datalist>
@@ -1734,7 +2101,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               {formIsDivisible && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-6 border-l-2 border-teal-200 dark:border-teal-900 mt-2">
                   <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                       Pieces per Box
                     </label>
                     <input
@@ -1748,26 +2115,24 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                           setFormPiecePriceUSD((Number(formPriceUSD) / val).toFixed(2));
                         }
                       }}
-                      placeholder="e.g. 30"
                       className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                       required={formIsDivisible}
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                       Piece Name
                     </label>
                     <input
                       type="text"
                       value={formPieceName}
                       onChange={(e) => setFormPieceName(e.target.value)}
-                      placeholder="e.g. Sachet, Ampoule, Pen"
                       className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                       required={formIsDivisible}
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                       1 Piece Price ($)
                     </label>
                     <input
@@ -1779,7 +2144,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                         setFormPiecePriceUSD(e.target.value);
                         setIsPiecePriceManual(true);
                       }}
-                      placeholder="e.g. 1.50"
                       className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     />
                   </div>
@@ -1789,11 +2153,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="sm:col-span-2">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300">
-                    Active Ingredients / Molecules
-                  </label>
-                </div>
                 <div className="flex items-center gap-2 px-1 mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">
                   <span className="flex-1 min-w-0">Ingredient / Molecule</span>
                   <span className="flex-1 min-w-0">Strength / Dosage</span>
@@ -1810,7 +2169,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                           next[idx] = { ...next[idx], name: e.target.value };
                           setFormMolecules(next);
                         }}
-                        placeholder={`Ingredient ${idx + 1} (e.g. Paracetamol)`}
                         className="flex-1 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                       />
                       <input
@@ -1821,7 +2179,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                           next[idx] = { ...next[idx], strength: e.target.value };
                           setFormMolecules(next);
                         }}
-                        placeholder="e.g. 500mg"
                         className="flex-1 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                       />
                       <button
@@ -1851,7 +2208,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               </div>
 
               <div className="relative">
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Agent / Lebanese Distributor
                 </label>
                 <div className="relative">
@@ -1864,7 +2221,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                     }}
                     onFocus={() => setShowAgentDropdown(true)}
                     onBlur={() => setTimeout(() => setShowAgentDropdown(false), 200)}
-                    placeholder="e.g. Mersaco, Omnipharma, Fattal"
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                   {showAgentDropdown && (
@@ -1915,7 +2271,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                   <input
                     type="text"
                     value={formPriceLBP}
-                    placeholder="0"
                     onChange={(e) => {
                       setFormPriceLBP(e.target.value);
                       const num = parseFloat(e.target.value.replace(/[^\d.]/g, ''));
@@ -1942,7 +2297,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                     type="number"
                     step="0.01"
                     value={formPriceUSD}
-                    placeholder="0.00"
                     onChange={(e) => {
                       setFormPriceUSD(e.target.value);
                       const num = parseFloat(e.target.value);
@@ -1969,7 +2323,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                     step="0.5"
                     value={formMargin}
                     onChange={(e) => setFormMargin(e.target.value)}
-                    placeholder="20"
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
@@ -1986,25 +2339,38 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                   (Use Qty Adjustments tab to modify)
                 </span>
               </div>
-              {(!formBatches || formBatches.length === 0 || (formBatches.length === 1 && !formBatches[0].batchNumber)) ? (
-                <div className="text-sm text-gray-500 dark:text-slate-400 italic bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
-                  No batches configured yet.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {formBatches.filter(b => b.batchNumber).map((batch, index) => (
-                    <div key={index} className="flex flex-col gap-1 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">Batch: <span className="text-slate-800 dark:text-slate-200">{batch.batchNumber}</span></span>
-                        <span className="text-xs font-bold text-teal-600 dark:text-teal-400">Qty: {formatStockDisplay(batch.quantity || 0, formIsDivisible, Number(formPiecesPerBox), formPieceName)}</span>
-                      </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400">
-                        Expires: {batch.expiryDate ? parseExpiryDate(batch.expiryDate).displayMMYYYY : 'N/A'}
-                      </div>
+              {(() => {
+                const activeBatches = (formBatches || []).filter((b) => b.batchNumber && (b.quantity || 0) > 0);
+                if (!formBatches || formBatches.length === 0 || (formBatches.length === 1 && !formBatches[0].batchNumber)) {
+                  return (
+                    <div className="text-sm text-gray-500 dark:text-slate-400 italic bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
+                      No batches configured yet.
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                }
+                if (activeBatches.length === 0) {
+                  return (
+                    <div className="text-sm text-gray-500 dark:text-slate-400 italic bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
+                      No batches with stock remaining.
+                    </div>
+                  );
+                }
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {activeBatches.map((batch, index) => (
+                      <div key={index} className="flex flex-col gap-1 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">Batch: <span className="text-slate-800 dark:text-slate-200">{batch.batchNumber}</span></span>
+                          <span className="text-xs font-bold text-teal-600 dark:text-teal-400">Qty: {formatStockDisplay(batch.quantity || 0, formIsDivisible, Number(formPiecesPerBox), formPieceName)}</span>
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                          Expires: {batch.expiryDate ? parseExpiryDate(batch.expiryDate).displayMMYYYY : 'N/A'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Submit Buttons */}

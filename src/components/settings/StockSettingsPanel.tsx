@@ -3,6 +3,16 @@ import { usePharmacy } from '../../context/PharmacyContext';
 import { Settings, Plus, X, ChevronDown } from 'lucide-react';
 import { ProductCategory } from '../../types/pharmacy';
 import { getSubcategoryOptions } from '../../constants/subcategories';
+import {
+  CANONICAL_PRESENTATIONS,
+  normalizePresentation,
+  isCanonicalPresentation,
+} from '../../utils/presentationUtils';
+import {
+  CANONICAL_PHARMACEUTICAL_FORMS,
+  normalizePharmaceuticalForm,
+  isCanonicalPharmaceuticalForm,
+} from '../../utils/pharmaceuticalFormUtils';
 
 const CustomListManager = ({ 
   title, 
@@ -118,20 +128,24 @@ export const StockSettingsPanel: React.FC = () => {
   }, [products, customGlobalSubcategories]);
 
   const availableForms = useMemo(() => {
-    const forms = new Set<string>(['Tablet', 'Syrup', 'Cream']);
+    const forms = new Set<string>(CANONICAL_PHARMACEUTICAL_FORMS as readonly string[]);
     products.forEach(p => {
-      if (p.form && p.form.trim()) forms.add(p.form.trim());
-      if (p.scientificInfo?.form) forms.add(p.scientificInfo.form.trim());
+      if (p.form && p.form.trim()) forms.add(normalizePharmaceuticalForm(p.form.trim()));
+      if (p.scientificInfo?.form) forms.add(normalizePharmaceuticalForm(p.scientificInfo.form.trim()));
     });
     return Array.from(forms).filter(f => !customForms.includes(f)).sort((a, b) => a.localeCompare(b));
   }, [products, customForms]);
 
   const availablePresentations = useMemo(() => {
-    const presentations = new Set<string>();
+    const presentations = new Set<string>(CANONICAL_PRESENTATIONS);
     products.forEach(p => {
-      if (p.presentation && p.presentation.trim()) presentations.add(p.presentation.trim());
+      if (p.presentation && p.presentation.trim()) {
+        presentations.add(normalizePresentation(p.presentation.trim()));
+      }
     });
-    return Array.from(presentations).filter(p => !customPresentations.includes(p)).sort((a, b) => a.localeCompare(b));
+    return Array.from(presentations)
+      .filter(p => !customPresentations.includes(p))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   }, [products, customPresentations]);
 
   return (
@@ -238,8 +252,14 @@ export const StockSettingsPanel: React.FC = () => {
             items={customForms}
             builtInItems={availableForms}
             onAdd={(val) => {
-              if (!customForms.includes(val)) {
-                updateSettings({ customForms: [...customForms, val] });
+              const trimmed = val.trim();
+              if (!trimmed) return;
+              const normalized = normalizePharmaceuticalForm(trimmed);
+              if (
+                !isCanonicalPharmaceuticalForm(normalized) &&
+                !customForms.some((f) => f.toLowerCase() === normalized.toLowerCase())
+              ) {
+                updateSettings({ customForms: [...customForms, normalized] });
               }
             }}
             onRemove={(val) => {
@@ -253,8 +273,14 @@ export const StockSettingsPanel: React.FC = () => {
             items={customPresentations}
             builtInItems={availablePresentations}
             onAdd={(val) => {
-              if (!customPresentations.includes(val)) {
-                updateSettings({ customPresentations: [...customPresentations, val] });
+              const trimmed = val.trim();
+              if (!trimmed) return;
+              const normalized = normalizePresentation(trimmed);
+              if (
+                !isCanonicalPresentation(normalized) &&
+                !customPresentations.some((p) => p.toLowerCase() === normalized.toLowerCase())
+              ) {
+                updateSettings({ customPresentations: [...customPresentations, normalized] });
               }
             }}
             onRemove={(val) => {

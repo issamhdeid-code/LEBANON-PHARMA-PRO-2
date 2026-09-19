@@ -29,6 +29,8 @@ import {
   fetchMOPHNow,
 } from '../../services/mophApiService';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { normalizePharmaceuticalForm } from '../../utils/pharmaceuticalFormUtils';
+import { normalizePresentation } from '../../utils/presentationUtils';
 
 interface MOPHPriceUpdaterModalProps {
   onClose: () => void;
@@ -216,7 +218,7 @@ export const MOPHPriceUpdaterModal: React.FC<MOPHPriceUpdaterModalProps> = ({ on
             currentMargin: products.find(p => p.id === prod.id)?.pharmacistMarginProfit ?? 0,
             name: r.brandName || '',
             strength: r.strength || '',
-            form: r.form || '',
+            form: normalizePharmaceuticalForm(r.form),
             selected: (mophPriceLBP > 0 && mophPriceLBP !== prod.priceLBP),
           });
         } else {
@@ -225,8 +227,8 @@ export const MOPHPriceUpdaterModal: React.FC<MOPHPriceUpdaterModalProps> = ({ on
             code: String(r.code),
             name: r.brandName || '',
             strength: r.strength || '',
-            presentation: r.presentation || '',
-            form: r.form || '',
+            presentation: normalizePresentation(r.presentation || ''),
+            form: normalizePharmaceuticalForm(r.form),
             priceLBP,
             priceUSD: priceLBP > 0 ? Number((priceLBP / exchangeRate).toFixed(2)) : 0,
             agent: r.agent || '',
@@ -433,7 +435,7 @@ export const MOPHPriceUpdaterModal: React.FC<MOPHPriceUpdaterModalProps> = ({ on
         ingredients,
         item.strength,
         item.presentation,
-        item.form,
+        normalizePharmaceuticalForm(item.form),
         item.priceLBP,
         item.agent,
         margin,
