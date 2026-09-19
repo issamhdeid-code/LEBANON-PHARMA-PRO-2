@@ -21,6 +21,7 @@ import {
   LogLevel
 } from '../types/pharmacy';
 import { syncEngine } from '../services/syncEngine';
+import { parseMoleculeList } from '../services/mophParsers';
 import { OfflineStorage, INITIAL_PRODUCTS, INITIAL_SUPPLIERS } from '../services/storage';
 import { notificationService } from '../services/notificationService';
 import {
@@ -1256,6 +1257,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           dosage: target.dosage,
           form: target.form,
           presentation: target.presentation,
+          molecules: target.molecules,
         });
         if (res?.scientificInfo) {
           const inStockNames = findInStockGenericAlternatives(target, currentList).map(
@@ -1318,6 +1320,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             dosage: drug.dosage,
             form: drug.form,
             presentation: drug.presentation,
+            molecules: drug.molecules,
           });
           if (res?.scientificInfo) {
             const idx = nextList.findIndex((p) => p.id === drug.id);
@@ -1428,6 +1431,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           dosage: newProduct.dosage,
           form: newProduct.form,
           presentation: newProduct.presentation,
+          molecules: newProduct.molecules,
         })
           .then((res) => {
             if (res?.scientificInfo) {
@@ -1850,6 +1854,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       const ingredients = colIngredients && row[colIngredients] ? cellText(row[colIngredients]) : '';
       const dosage = colDosage && row[colDosage] ? cellText(row[colDosage]) : '';
+      const moleculesFromCsv = parseMoleculeList(ingredients);
       const presentation = colPresentation && row[colPresentation] ? cellText(row[colPresentation]) : '';
       const form = colForm && row[colForm] ? cellText(row[colForm]) : '';
       
@@ -2006,6 +2011,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           name: name || existing.name,
           ingredients: colIngredients ? ingredients : existing.ingredients,
           dosage: colDosage ? dosage : existing.dosage,
+          molecules: colIngredients ? (moleculesFromCsv.length > 0 ? moleculesFromCsv : existing.molecules) : existing.molecules,
           presentation: colPresentation ? presentation : existing.presentation,
           form: colForm ? form : existing.form,
           priceLBP: finalPriceLBP,
@@ -2046,6 +2052,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           barcode: barcodeFromCsv,
           ingredients,
           dosage,
+          molecules: moleculesFromCsv.length > 0 ? moleculesFromCsv : undefined,
           presentation,
           form,
           priceLBP,
@@ -2065,8 +2072,16 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           updatedAt: Date.now(),
           version: 1,
           scientificInfo: (() => {
-            const baseMonograph = getStraightforwardMonograph(ingredients, name);
-            const cleanMolecules = extractCleanMolecules(ingredients || name);
+            const composedMolecules = moleculesFromCsv.length > 0
+              ? moleculesFromCsv.filter((m) => m && m.name && m.name.trim()).map((m) => (
+                  m.strength && m.strength.trim() ? `${m.name.trim()} ${m.strength.trim()}` : m.name.trim()
+                )).join(' + ')
+              : '';
+            const monographInput = composedMolecules || ingredients || name;
+            const baseMonograph = getStraightforwardMonograph(monographInput, name);
+            const cleanMolecules = moleculesFromCsv.length > 0
+              ? moleculesFromCsv.map((m) => m.name.trim()).filter(Boolean)
+              : extractCleanMolecules(ingredients || name);
             return {
               indications: baseMonograph.indications,
               contraindications: baseMonograph.contraindications,
@@ -2076,7 +2091,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               pediatricDosage: baseMonograph.pediatricDosage,
               form: form || 'Tablet',
               presentation: presentation || 'Box',
-              activeIngredients: cleanMolecules.join(' + ') || ingredients || name,
+              activeIngredients: cleanMolecules.join(' + ') || monographInput,
               pregnancyCategory: baseMonograph.pregnancyCategory || 'B',
               storageConditions: baseMonograph.storageConditions || 'Store below 25°C.',
               onlineEnriched: false,
@@ -2133,6 +2148,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               dosage: drug.dosage,
               form: drug.form,
               presentation: drug.presentation,
+              molecules: drug.molecules,
             });
             if (res?.scientificInfo) {
               const idx = nextList.findIndex(p => p.id === drug.id);

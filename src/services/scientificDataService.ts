@@ -1,4 +1,4 @@
-import { Product, ScientificDrugInfo } from '../types/pharmacy';
+import { Product, ScientificDrugInfo, MoleculeStrength } from '../types/pharmacy';
 
 /**
  * Normalizes an active ingredient or molecule string by stripping salts, esters,
@@ -1044,8 +1044,8 @@ export function combineMonographs(
     contraindications: combinedCILines.join('\n'),
     sideEffects: combinedSELines.join('\n'),
     pregnancyCategory: strictestCategory,
-    dosage: `Adults: as prescribed by physician for ${molecules.join(' + ')} combination formulation.`,
-    pediatricDosage: `Pediatrics: consult physician; adhere strictly to pediatric safety limits for all active ingredients.`,
+    dosage: `Adults: Dose depends on the combined indication, patient age, weight, and renal/hepatic function; refer to official product labeling for the numeric regimen.`,
+    pediatricDosage: `Pediatrics: Weight-based dosing applies and must be individualized per ingredient pediatric safety limits; refer to official pediatric labeling.`,
     storageConditions: `Store below 25°C in a cool, dry place protected from moisture and direct sunlight.`,
   };
 }
@@ -1163,10 +1163,10 @@ export function getStraightforwardMonograph(
     indications: `• Primary Use: Therapeutic management of clinical conditions indicated for ${primaryName} in accordance with established medical guidelines.\n• Key Indications: Clinically diagnosed indications approved for ${primaryName}.\n• Pharmacological Class: Clinical therapeutic agent.`,
     contraindications: `• Absolute: Known hypersensitivity to ${primaryName} or related chemical class.\n• Clinical Contraindications: Severe hepatic or renal impairment unless adjusted by clinical specialist.\n• Safety Alert: Monitor patient response and discontinue immediately upon developing signs of angioedema or cutaneous allergy.`,
     sideEffects: `• Common Reactions: Transient mild gastrointestinal discomfort, nausea, headache, mild fatigue.\n• Critical Warnings: Severe cutaneous reactions, acute idiosyncratic organ toxicity.\n• Monitoring & Advice: Routine clinical monitoring of hepatic and renal parameters in prolonged therapeutic regimens.`,
-    pregnancyCategory: 'B',
-    dosage: `Adults: as prescribed by physician according to standard clinical dosing protocols.`,
-    pediatricDosage: `Pediatrics: consult physician for weight-based dosing.`,
-    storageConditions: `Store below 25°C in a cool, dry place protected from direct sunlight.`,
+pregnancyCategory: 'B',
+      dosage: `Adults: Dose depends on the specific indication, patient age, weight, and renal/hepatic function; refer to official product labeling.`,
+      pediatricDosage: `Pediatrics: Weight-based and indication-specific dosing applies; refer to official pediatric product labeling.`,
+      storageConditions: `Store below 25°C in a cool, dry place protected from direct sunlight.`,
   };
 }
 
@@ -1331,6 +1331,189 @@ export function cleanMonographText(rawText: string, maxLength = 450): string {
 }
 
 /**
+ * Clips a phrase to a comfortable reading length, cutting at the last sane
+ * punctuation/space boundary and appending an ellipsis (avoids half-words).
+ */
+export function clipBrief(text: string, maxChars: number): string {
+  if (!text) return '';
+  const t = text.trim().replace(/\s+/g, ' ');
+  if (t.length <= maxChars) return t.replace(/[,;.\s]+$/, '');
+  const slice = t.slice(0, maxChars);
+  const lastBoundary = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('; '), slice.lastIndexOf(', '), slice.lastIndexOf(' '));
+  const cut = lastBoundary > maxChars * 0.5 ? slice.slice(0, lastBoundary) : slice;
+  return cut.replace(/[,;.\s]+$/, '') + '…';
+}
+
+/** Appends a period only when the clipped phrase does not already end in one. */
+export function briefPeriod(text: string): string {
+  const t = text.trim();
+  if (!t || /[.!?…]$/.test(t)) return t;
+  return `${t}.`;
+}
+
+/**
+ * Extracts concrete adult and pediatric dosing sentences from a MedlinePlus /
+ * AHFS consumer summary. AHFS monographs phrase dosing as
+ * "Adults—..." and "Children—..." prefixed statements that carry real amounts,
+ * frequencies, and units (unlike the patient-pamphlet boilerplate).
+ */
+export function extractMedlineDosing(rawMedline: string): { dosage: string; pediatricDosage: string } {
+  if (!rawMedline || !rawMedline.trim()) {
+    return { dosage: '', pediatricDosage: '' };
+  }
+  // Light HTML-only normalization that PRESERVES the "Adults—" em dash used by
+  // AHFS summaries (cleanClinicalJargon would collapse the dash into a period).
+  const normalized = rawMedline
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '. ')
+    .replace(/<\/li>/gi, '. ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ');
+  const sentences = normalized.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+
+  const adultLines: string[] = [];
+  const childLines: string[] = [];
+  for (const s of sentences) {
+    const head = s.slice(0, 40);
+    if (/^adults?(—|–|:|-)/i.test(head) || /^adult patients(—|–|:|-)/i.test(head) || /^(for|in)\s+adults(—|–|:|,)/i.test(head)) {
+      const cleaned = s.replace(/^adults?(—|–|:|-)\s*/i, '').replace(/^adult patients(—|–|:|-)\s*/i, '').replace(/^(for|in)\s+adults(—|–|:|,)\s*/i, '').trim();
+      if (/\b\d/.test(cleaned) && /\b(mg|g|mcg|ug|ml|l|iu|unit|tablet|tab|capsule|cap|dose|puff|drop)\b/i.test(cleaned)) {
+        adultLines.push(cleaned);
+        if (adultLines.length >= 2) break;
+      }
+    }
+  }
+  for (const s of sentences) {
+    const head = s.slice(0, 40);
+    if (/^(children|infants|pediatric patients)(—|–|:|-)/i.test(head) || /^(for|in)\s+(children|infants)(—|–|:|,)/i.test(head)) {
+      const cleaned = s.replace(/^(children|infants|pediatric patients)(—|–|:|-)\s*/i, '').replace(/^(for|in)\s+(children|infants)(—|–|:|,)\s*/i, '').trim();
+      if (/\b\d/.test(cleaned) && /\b(mg|g|mcg|ug|ml|l|iu|unit|tablet|tab|capsule|cap|dose|puff|drop|kg)\b/i.test(cleaned)) {
+        childLines.push(cleaned);
+        if (childLines.length >= 2) break;
+      }
+    }
+  }
+
+  return {
+    dosage: adultLines.map((l) => (l || '')).join(' '),
+    pediatricDosage: childLines.map((l) => (l || '')).join(' '),
+  };
+}
+
+/**
+ * Pulls the informative dosing statements out of a raw FDA label section by
+ * keeping only sentences that reference a numeric dose and a dose unit, then
+ * caps the result to a readable length.
+ */
+function extractLabelDoseSentences(rawSection: string, maxSentences = 3, maxLength = 560): string {
+  if (!rawSection || !rawSection.trim()) return '';
+  const cleaned = cleanClinicalJargon(rawSection);
+  const sentences = cleaned.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  const hits: string[] = [];
+  for (const s of sentences) {
+    if (/\b\d/.test(s) && /\b(mg|g|mcg|ug|ml|l|iu|unit|tablet|tab|capsule|cap|dose|once|daily|every|per day|m[2²]?\/day|kg\/day)\b/i.test(s)) {
+      hits.push(s);
+      if (hits.length >= maxSentences) break;
+    }
+  }
+  if (hits.length === 0) return '';
+  const joined = hits.join(' ');
+  if (joined.length <= maxLength) return joined;
+  return cleanMonographText(joined, maxLength);
+}
+
+/**
+ * Queries the U.S. Food & Drug Administration openFDA structured drug label API
+ * for the exact molecule (resolving INN/foreign names to their US synonym) and
+ * returns condensed real-world indications, contraindications, adverse
+ * reactions, adult dosing, and pediatric dosing extracted from the official
+ * FDA-approved prescribing information.
+ */
+async function fetchOpenFDALabel(
+  molecule: string,
+  drugName?: string,
+  atcClassName?: string
+): Promise<{
+  indications?: string;
+  contraindications?: string;
+  sideEffects?: string;
+  dosage?: string;
+  pediatricDosage?: string;
+  pregnancyCategory?: 'A' | 'B' | 'C' | 'D' | 'X';
+} | null> {
+  try {
+    const cleanMol = molecule.trim();
+    const searchTerms = [cleanMol];
+    const synMol = DRUG_SYNONYMS[cleanMol.toLowerCase()];
+    if (synMol && !searchTerms.some((t) => t.toLowerCase() === synMol.toLowerCase())) {
+      searchTerms.push(synMol);
+    }
+    if (drugName && drugName.trim()) {
+      searchTerms.push(drugName.trim());
+    }
+
+    let label: any = null;
+    for (const term of searchTerms) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 18_000);
+        const res = await fetch(
+          `https://api.fda.gov/drug/label.json?search=openfda.generic_name:${encodeURIComponent(`"${term}"`)}&limit=2`,
+          { headers: { Accept: 'application/json' }, signal: controller.signal }
+        );
+        clearTimeout(timeout);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const results: any[] = Array.isArray(data?.results) ? data.results : [];
+        if (results.length === 0) continue;
+        label = results[0];
+        break;
+      } catch {
+        // Continue to next candidate term
+      }
+    }
+    if (!label) return null;
+
+    const first = (v: any): string => (Array.isArray(v) && v.length > 0 ? String(v[0] ?? '') : '');
+    const indicationsRaw = first(label.indications_and_usage);
+    const contraindicationsRaw = first(label.contraindications);
+    const sideEffectsRaw = first(label.adverse_reactions);
+    const dosageRaw = first(label.dosage_and_administration);
+    const pregnancyRaw = first(label.pregnancy);
+
+    let pregnancyCategory: 'A' | 'B' | 'C' | 'D' | 'X' | undefined;
+    if (pregnancyRaw) {
+      const catMatch = pregnancyRaw.match(/\bCategory\s*:\s*([A-DX])\b/i);
+      if (catMatch && catMatch[1]) {
+        pregnancyCategory = catMatch[1].toUpperCase() as 'A' | 'B' | 'C' | 'D' | 'X';
+      }
+    }
+
+    const indications = cleanMonographText(indicationsRaw, 320);
+    const contraindications = cleanMonographText(contraindicationsRaw, 260);
+    const sideEffects = cleanMonographText(sideEffectsRaw, 300);
+    const dosage = extractLabelDoseSentences(dosageRaw, 3, 620);
+    const adultChildInDosage = extractMedlineDosing(dosageRaw);
+
+    const hasContent = !!(indications || contraindications || sideEffects || dosage || adultChildInDosage.dosage || adultChildInDosage.pediatricDosage);
+    if (!hasContent) return null;
+
+    return {
+      indications: indications || undefined,
+      contraindications: contraindications || undefined,
+      sideEffects: sideEffects || undefined,
+      dosage: dosage || adultChildInDosage.dosage || undefined,
+      pediatricDosage: adultChildInDosage.pediatricDosage || undefined,
+      pregnancyCategory,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Synthesizes clear, concise, highly readable clinical indications.
  */
 export function summarizeClinicalIndications(
@@ -1372,17 +1555,19 @@ export function summarizeClinicalIndications(
 
   if (!/[.!?]$/.test(primaryScope)) primaryScope += '.';
 
+  const concisePrimary = clipBrief(primaryScope, 190);
+
   const sections: string[] = [];
-  sections.push(`• Primary Use: ${primaryScope}`);
+  sections.push(`• Primary Use: ${concisePrimary}`);
 
   if (cleanTerms.length > 0) {
-    const topConditions = cleanTerms.slice(0, 6).join('; ');
-    sections.push(`• Key Indications: ${topConditions}.`);
+    const topConditions = cleanTerms.slice(0, 4).join('; ');
+    sections.push(`• Key Indications: ${briefPeriod(clipBrief(topConditions, 220))}`);
   }
 
   if (atcClass) {
     const formattedAtc = atcClass.replace(/,\s*/g, ' / ');
-    sections.push(`• Pharmacological Class: ${formattedAtc}.`);
+    sections.push(`• Pharmacological Class: ${briefPeriod(clipBrief(formattedAtc, 120))}`);
   }
 
   return sections.join('\n');
@@ -1411,10 +1596,10 @@ export function summarizeClinicalContraindications(
 
   // 2. Clinical Pathologies / Conditions
   if (cleanCIs.length > 0) {
-    sections.push(`• Clinical Contraindications: ${cleanCIs.slice(0, 6).join('; ')}.`);
+    sections.push(`• Clinical Contraindications: ${briefPeriod(clipBrief(cleanCIs.slice(0, 4).join('; '), 200))}`);
   } else if (standardCIs) {
     const cleanedStd = cleanClinicalJargon(standardCIs);
-    sections.push(`• High-Risk Conditions: ${cleanedStd}`);
+    sections.push(`• High-Risk Conditions: ${clipBrief(cleanedStd, 200)}`);
   } else {
     sections.push(`• High-Risk Conditions: Severe hepatic impairment, acute decompensated renal failure.`);
   }
@@ -1443,11 +1628,15 @@ export function summarizeClinicalSideEffects(
   // If raw side effects are provided from an existing profile and have content
   if (rawSideEffects && !rawSideEffects.startsWith('Common: Mild gastrointestinal') && rawSideEffects.length > 40) {
     const cleaned = cleanClinicalJargon(rawSideEffects);
-    const sentences = cleaned.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 10);
+    const sentences = cleaned
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.trim().length > 10)
+      .filter((s) => !/because clinical trials|adverse reaction rates observed|the following adverse reactions|listed below in|see boxed warning/i.test(s));
     if (sentences.length >= 2) {
       return [
-        `• Common Reactions: ${sentences[0].trim()}`,
-        `• Critical Warnings: ${sentences.slice(1, 3).join(' ').trim()}`,
+        `• Common Reactions: ${clipBrief(sentences[0].trim(), 240)}`,
+        `• Critical Warnings: ${clipBrief(sentences.slice(1, 3).join(' ').trim(), 300)}`,
         `• Monitoring & Advice: Periodic assessment of hepatic and renal function during long-term regimens.`
       ].join('\n');
     }
@@ -1586,10 +1775,18 @@ export function resolveStraightforwardScientificInfo(product: Product): Scientif
     };
   }
 
-  const fallback = getStraightforwardMonograph(product.ingredients || '', product.name);
-  const current = product.scientificInfo;
+  // Prefer the product's structured molecule rows so the fallback monograph is
+  // built relative to every active ingredient found in the stock card.
+  const composedIngredients =
+    product.molecules && product.molecules.length > 0
+      ? product.molecules
+        .filter((m) => m && m.name && m.name.trim())
+        .map((m) => (m.strength && m.strength.trim() ? `${m.name.trim()} ${m.strength.trim()}` : m.name.trim()))
+        .join(' + ')
+      : product.ingredients;
 
-  // When product has been enriched online, PRESERVE the verified clinical text!
+  const fallback = getStraightforwardMonograph(composedIngredients, product.name);
+  const current = product.scientificInfo;
   if (current?.onlineEnriched && current?.indications) {
     return {
       indications: current.indications,
@@ -1600,7 +1797,7 @@ export function resolveStraightforwardScientificInfo(product: Product): Scientif
       pediatricDosage: current.pediatricDosage || fallback.pediatricDosage,
       form: current.form || product.form || 'Tablet',
       presentation: current.presentation || product.presentation || 'Box',
-      activeIngredients: current.activeIngredients || product.ingredients || product.name,
+      activeIngredients: current.activeIngredients || composedIngredients || product.name,
       pregnancyCategory: current.pregnancyCategory || fallback.pregnancyCategory || 'B',
       storageConditions: current.storageConditions || fallback.storageConditions,
       onlineEnriched: true,
@@ -1633,7 +1830,7 @@ export function resolveStraightforwardScientificInfo(product: Product): Scientif
     pediatricDosage: cleanPediatricDosage,
     form: current?.form || product.form || 'Tablet',
     presentation: current?.presentation || product.presentation || 'Box',
-    activeIngredients: current?.activeIngredients || product.ingredients || product.name,
+    activeIngredients: current?.activeIngredients || composedIngredients || product.name,
     pregnancyCategory: cleanPregnancy,
     storageConditions: cleanStorage,
     onlineEnriched: current?.onlineEnriched ?? false,
@@ -1734,7 +1931,10 @@ async function fetchFromNIHClinicalReference(
   indications?: string;
   contraindications?: string;
   sideEffects?: string;
-  source: 'NIH NLM (MedlinePlus & RxNav)' | 'NIH MedlinePlus (AHFS)' | 'NIH RxNav (MED-RT)';
+  dosage?: string;
+  pediatricDosage?: string;
+  pregnancyCategory?: 'A' | 'B' | 'C' | 'D' | 'X';
+  source: 'NIH NLM (MedlinePlus & RxNav)' | 'NIH MedlinePlus (AHFS)' | 'NIH RxNav (MED-RT)' | 'NIH NLM + FDA Label (MedlinePlus, RxNav & openFDA)' | 'FDA Label (openFDA)';
 } | null> {
   try {
     const cleanMol = molecule.trim();
@@ -1783,6 +1983,7 @@ async function fetchFromNIHClinicalReference(
 
     // Step 2: Query MedlinePlus Connect for AHFS Clinical Compendium monograph
     let medlineSummary = '';
+    let medlineRawSummary = '';
     let medlineFound = false;
 
     try {
@@ -1796,6 +1997,7 @@ async function fetchFromNIHClinicalReference(
         const entry = mpData?.feed?.entry?.[0];
         const rawSummary = entry?.summary?._value || '';
         if (rawSummary && rawSummary.length > 20) {
+          medlineRawSummary = rawSummary;
           medlineSummary = cleanMonographText(rawSummary, 450);
           medlineFound = true;
         }
@@ -1884,13 +2086,22 @@ async function fetchFromNIHClinicalReference(
       }
     }
 
-    if (!medlineFound && !rxClassFound) {
+    // Step 5: Query the FDA openFDA structured label for the molecule as an
+    // additional authoritative source (real dosing figures, exact indications,
+    // contraindications, adverse reactions) with the US synonym if available.
+    const fdaData = await fetchOpenFDALabel(cleanMol, drugName, atcClassName);
+
+    const fdaMedlineDosing = medlineFound ? extractMedlineDosing(medlineRawSummary) : { dosage: '', pediatricDosage: '' };
+    const medlineDosage = fdaMedlineDosing.dosage || '';
+    const medlinePediatricDosage = fdaMedlineDosing.pediatricDosage || '';
+
+    if (!medlineFound && !rxClassFound && !fdaData) {
       return null;
     }
 
     // 1. Intelligent Summarization for Clinical Indications & Uses
     const clinicalIndications = summarizeClinicalIndications(
-      medlineSummary,
+      medlineSummary || fdaData?.indications || '',
       medrtTreats,
       atcClassName,
       cleanMol
@@ -1900,7 +2111,8 @@ async function fetchFromNIHClinicalReference(
     const clinicalContraindications = summarizeClinicalContraindications(
       medrtContraindications,
       medrtChemClasses,
-      cleanMol
+      cleanMol,
+      fdaData?.contraindications
     );
 
     // 3. Intelligent Summarization for Adverse Reactions & Side Effects
@@ -1908,22 +2120,37 @@ async function fetchFromNIHClinicalReference(
       cleanMol,
       drugName,
       atcClassName,
-      medrtMoa
+      medrtMoa,
+      fdaData?.sideEffects
     );
 
-    let sourceName: 'NIH NLM (MedlinePlus & RxNav)' | 'NIH MedlinePlus (AHFS)' | 'NIH RxNav (MED-RT)' =
-      'NIH NLM (MedlinePlus & RxNav)';
-    if (medlineFound && !rxClassFound) {
+    let sourceName:
+      | 'NIH NLM (MedlinePlus & RxNav)'
+      | 'NIH MedlinePlus (AHFS)'
+      | 'NIH RxNav (MED-RT)'
+      | 'NIH NLM + FDA Label (MedlinePlus, RxNav & openFDA)'
+      | 'FDA Label (openFDA)' = 'NIH NLM (MedlinePlus & RxNav)';
+    if (fdaData) {
+      sourceName = medlineFound || rxClassFound
+        ? 'NIH NLM + FDA Label (MedlinePlus, RxNav & openFDA)'
+        : 'FDA Label (openFDA)';
+    } else if (medlineFound && !rxClassFound) {
       sourceName = 'NIH MedlinePlus (AHFS)';
     } else if (!medlineFound && rxClassFound) {
       sourceName = 'NIH RxNav (MED-RT)';
     }
+
+    const onlineDosage = fdaData?.dosage || medlineDosage || '';
+    const onlinePediatricDosage = fdaData?.pediatricDosage || medlinePediatricDosage || '';
 
     return {
       rxcui: rxcui || undefined,
       indications: clinicalIndications,
       contraindications: clinicalContraindications,
       sideEffects: clinicalSideEffects,
+      dosage: onlineDosage || undefined,
+      pediatricDosage: onlinePediatricDosage || undefined,
+      pregnancyCategory: fdaData?.pregnancyCategory,
       source: sourceName,
     };
   } catch (err) {
@@ -1947,6 +2174,7 @@ export async function searchOnlineScientificData(
     dosage?: string;
     form?: string;
     presentation?: string;
+    molecules?: MoleculeStrength[];
   }
 ): Promise<{
   scientificInfo: ScientificDrugInfo;
@@ -1957,8 +2185,21 @@ export async function searchOnlineScientificData(
     return null;
   }
 
-  const cleanMolecules = extractCleanMolecules(ingredients);
+  // Prefer the product's structured molecule list from its stock card when
+  // available (authoritative active ingredients + their own strengths); fall
+  // back to free-text extraction for products without structured molecules.
+  const structuredMolecules = (metadata?.molecules || []).filter((m) => m && m.name && m.name.trim());
+  const cleanMolecules = structuredMolecules.length > 0
+    ? Array.from(new Set(structuredMolecules.map((m) => m.name.trim())))
+    : extractCleanMolecules(ingredients);
   const primaryMolecule = cleanMolecules[0] || ingredients.trim();
+
+  // Composed display string handed to the AI + pharmacopoeia: when structured
+  // molecules exist, each ingredient carries its own strength so the monograph
+  // is built relatively to the active ingredients found in the product.
+  const composedIngredients = structuredMolecules.length > 0
+    ? structuredMolecules.map((m) => (m.strength && m.strength.trim() ? `${m.name.trim()} ${m.strength.trim()}` : m.name.trim())).join(' + ')
+    : ingredients;
 
   // 1. PRIORITY ONE: Online AI Clinical Intelligence (Gemini Server API)
   try {
@@ -1973,7 +2214,7 @@ export async function searchOnlineScientificData(
       signal: aiController.signal,
       body: JSON.stringify({
         drugName: drugName || '',
-        ingredients: ingredients || primaryMolecule,
+        ingredients: composedIngredients,
         dosage: metadata?.dosage || '',
         form: metadata?.form || '',
         presentation: metadata?.presentation || '',
@@ -1985,7 +2226,7 @@ export async function searchOnlineScientificData(
       const aiData = await aiRes.json();
       if (aiData?.success && aiData?.scientificInfo?.indications) {
         const inStockAlternatives = findInStockGenericAlternatives(
-          { ingredients: aiData.scientificInfo.activeIngredients || ingredients, name: drugName },
+          { ingredients: aiData.scientificInfo.activeIngredients || composedIngredients, name: drugName },
           existingProducts
         );
         const inStockNames = inStockAlternatives.map(
@@ -2019,6 +2260,9 @@ export async function searchOnlineScientificData(
       indications?: string;
       contraindications?: string;
       sideEffects?: string;
+      dosage?: string;
+      pediatricDosage?: string;
+      pregnancyCategory?: 'A' | 'B' | 'C' | 'D' | 'X';
       source: string;
     } | null;
   }> = [];
@@ -2039,131 +2283,243 @@ export async function searchOnlineScientificData(
   }>;
 
   // 3. Retrieve our combination-aware Pharmacopoeia monograph as clinical baseline
-  const monograph = getStraightforwardMonograph(ingredients, drugName);
+  const monograph = getStraightforwardMonograph(composedIngredients, drugName);
 
   // 4. Find in-stock generic alternatives
   const inStockAlternatives = findInStockGenericAlternatives(
-    { ingredients, name: drugName },
+    { ingredients: composedIngredients, name: drugName },
     existingProducts
   );
   const inStockNames = inStockAlternatives.map((a) => `${a.name} (${a.code}) - ${a.stockQuantity} in stock`);
 
   // 5. If NIH returned data for one or more constituent ingredients, synthesize them
   if (successfulNih.length > 0) {
-    let combinedIndications = '';
-    let combinedContraindications = '';
-    let combinedSideEffects = '';
-    let combinedSource = successfulNih[0].data.source;
-
-    if (successfulNih.length === 1 && moleculesToQuery.length === 1) {
-      combinedIndications = successfulNih[0].data.indications || monograph.indications;
-      combinedContraindications = successfulNih[0].data.contraindications || monograph.contraindications;
-      combinedSideEffects = successfulNih[0].data.sideEffects || monograph.sideEffects;
-      combinedSource = successfulNih[0].data.source;
-    } else {
-      // Multi-ingredient formulation synthesis from NIH clinical databases
-      combinedSource = 'NIH NLM Multi-Ingredient Synthesis (MedlinePlus & RxNav)';
-
-      // Combined Indications
-      const indLines: string[] = [
-        `• Primary Use: Combined therapeutic management with ${moleculesToQuery.join(' + ')} providing synergistic clinical efficacy.`,
-      ];
-      const allKeyInds: string[] = [];
-      successfulNih.forEach((r) => {
-        const keyMatch = r.data.indications?.match(/• Key Indications:\s*([^.\n]+)/i);
-        if (keyMatch && keyMatch[1]) {
-          allKeyInds.push(`${r.molecule} (${keyMatch[1].trim()})`);
-        }
-      });
-      if (allKeyInds.length > 0) {
-        indLines.push(`• Key Indications: ${allKeyInds.join('; ')}.`);
-      }
-      indLines.push(`• Pharmacological Class: Multi-Ingredient Therapeutic Combination.`);
-      combinedIndications = indLines.join('\n');
-
-      // Combined Contraindications
-      const ciLines: string[] = [
-        `• Absolute: Documented hypersensitivity to ${moleculesToQuery.join(', ')} or related chemical and pharmacological classes.`,
-      ];
-      const allCIs: string[] = [];
-      successfulNih.forEach((r) => {
-        const ciMatch = r.data.contraindications?.match(/• Clinical Contraindications:\s*([^.\n]+)/i);
-        if (ciMatch && ciMatch[1]) {
-          allCIs.push(`${r.molecule}: ${ciMatch[1].trim()}`);
-        }
-      });
-      if (allCIs.length > 0) {
-        ciLines.push(`• Clinical Contraindications: ${allCIs.join('; ')}.`);
-      } else {
-        ciLines.push(`• Clinical Contraindications: Severe hepatic or renal impairment unless adjusted.`);
-      }
-      ciLines.push(`• Safety Alert: Clinical vigilance required for additive pharmacodynamic effects and combination-specific contraindications.`);
-      combinedContraindications = ciLines.join('\n');
-
-      // Combined Side Effects
-      const seLines: string[] = [];
-      const allCommon: string[] = [];
-      successfulNih.forEach((r) => {
-        const seMatch = r.data.sideEffects?.match(/• Common Reactions:\s*([^.\n]+)/i);
-        if (seMatch && seMatch[1]) {
-          allCommon.push(`${r.molecule} (${seMatch[1].trim()})`);
-        }
-      });
-      if (allCommon.length > 0) {
-        seLines.push(`• Common Reactions: ${allCommon.join('; ')}.`);
-      } else {
-        seLines.push(`• Common Reactions: Mild GI disturbances, headache, dizziness, mild fatigue.`);
-      }
-      seLines.push(`• Critical Warnings: Monitor for idiosyncratic organ toxicities, hepatorenal clearance, and acute hypersensitivity across all constituent molecules.`);
-      seLines.push(`• Monitoring & Advice: Periodic clinical evaluation of hepatic and renal function in long-term combined therapy.`);
-      combinedSideEffects = seLines.join('\n');
-    }
+    const synthesis = synthesizeMultiIngredientScientificInfo(successfulNih, moleculesToQuery, monograph);
 
     const scientificInfo: ScientificDrugInfo = {
-      indications: combinedIndications,
-      contraindications: combinedContraindications,
-      sideEffects: combinedSideEffects,
+      indications: synthesis.indications,
+      contraindications: synthesis.contraindications,
+      sideEffects: synthesis.sideEffects,
       generics: inStockNames,
-      dosage: monograph.dosage,
-      pediatricDosage: monograph.pediatricDosage,
+      dosage: synthesis.dosage || monograph.dosage,
+      pediatricDosage: synthesis.pediatricDosage || monograph.pediatricDosage,
       form: metadata?.form || 'Tablet',
       presentation: metadata?.presentation || 'Box',
       activeIngredients: moleculesToQuery.join(' + '),
-      pregnancyCategory: monograph.pregnancyCategory || 'B',
-      storageConditions: monograph.storageConditions,
+      pregnancyCategory: synthesis.pregnancyCategory || monograph.pregnancyCategory || 'B',
+      storageConditions: synthesis.storageConditions || monograph.storageConditions,
       onlineEnriched: true,
-      onlineSource: combinedSource,
+      onlineSource: synthesis.source,
       lastOnlineSearch: Date.now(),
     };
 
     return {
       scientificInfo,
-      source: combinedSource,
+      source: synthesis.source,
       inStockAlternatives,
     };
   }
 
-  // 6. PRIORITY THREE: Combination-Synthesized Pharmacopoeia Monograph
+  // 6. PRIORITY THREE: Combination-Synthesized Pharmacopoeia Monograph,
+  // enriched by a direct FDA-label query when the pharmacopoeia has no entry.
+  const fdaFallback = await fetchOpenFDALabel(primaryMolecule, drugName);
+  const fallbackDosage = fdaFallback?.dosage || monograph.dosage;
+  const fallbackPediatricDosage = fdaFallback?.pediatricDosage || monograph.pediatricDosage;
+  const fallbackIndications = fdaFallback?.indications
+    ? `• Primary Use: ${cleanMonographText(fdaFallback.indications, 300)}`
+    : monograph.indications;
+
   const scientificInfo: ScientificDrugInfo = {
-    indications: monograph.indications,
-    contraindications: monograph.contraindications,
-    sideEffects: monograph.sideEffects,
+    indications: fallbackIndications,
+    contraindications: fdaFallback?.contraindications
+      ? `• Clinical Contraindications: ${cleanMonographText(fdaFallback.contraindications, 260)}`
+      : monograph.contraindications,
+    sideEffects: fdaFallback?.sideEffects
+      ? `• Common Reactions: ${cleanMonographText(fdaFallback.sideEffects, 300)}`
+      : monograph.sideEffects,
     generics: inStockNames,
-    dosage: monograph.dosage,
-    pediatricDosage: monograph.pediatricDosage,
+    dosage: fallbackDosage,
+    pediatricDosage: fallbackPediatricDosage,
     form: metadata?.form || 'Tablet',
     presentation: metadata?.presentation || 'Box',
     activeIngredients: moleculesToQuery.join(' + '),
-    pregnancyCategory: monograph.pregnancyCategory || 'B',
+    pregnancyCategory: fdaFallback?.pregnancyCategory || monograph.pregnancyCategory || 'B',
     storageConditions: monograph.storageConditions,
     onlineEnriched: true,
-    onlineSource: 'Clinical Pharmacopoeia (Combination Synthesis)',
+    onlineSource: fdaFallback ? 'FDA Label (openFDA) + Clinical Pharmacopoeia' : 'Clinical Pharmacopoeia (Combination Synthesis)',
     lastOnlineSearch: Date.now(),
   };
 
   return {
     scientificInfo,
-    source: 'Clinical Pharmacopoeia (Combination Synthesis)',
+    source: fdaFallback ? 'FDA Label (openFDA) + Clinical Pharmacopoeia' : 'Clinical Pharmacopoeia (Combination Synthesis)',
     inStockAlternatives,
+  };
+}
+
+/**
+ * Synthesizes a single combined clinical monograph from per-molecule NIH/FDA
+ * lookups. Instead of generic boilerplate, each molecule contributes its own
+ * specific "Primary Use", "Key Indications", "Pharmacological Class", and any
+ * real adult/pediatric dosing recovered from MedlinePlus or FDA labels.
+ */
+export function synthesizeMultiIngredientScientificInfo(
+  successfulNih: Array<{
+    molecule: string;
+    data: {
+      indications?: string;
+      contraindications?: string;
+      sideEffects?: string;
+      dosage?: string;
+      pediatricDosage?: string;
+      pregnancyCategory?: 'A' | 'B' | 'C' | 'D' | 'X';
+      source: string;
+    };
+  }>,
+  moleculesToQuery: string[],
+  monograph: PharmacopoeiaEntry
+): {
+  indications: string;
+  contraindications: string;
+  sideEffects: string;
+  dosage: string;
+  pediatricDosage: string;
+  pregnancyCategory?: 'A' | 'B' | 'C' | 'D' | 'X';
+  storageConditions: string;
+  source: string;
+} {
+  const hasFda = successfulNih.some((r) => (r.data.source || '').includes('FDA'));
+  const anySingle = successfulNih.length === 1 && moleculesToQuery.length === 1;
+  const combinedSource = hasFda
+    ? 'NIH NLM + FDA Multi-Ingredient Synthesis (MedlinePlus, RxNav & openFDA)'
+    : 'NIH NLM Multi-Ingredient Synthesis (MedlinePlus & RxNav)';
+
+  // ---- Combined Indications: build a specific Primary Use from each molecule
+  const indLines: string[] = [];
+  if (anySingle) {
+    indLines.push(successfulNih[0].data.indications || monograph.indications);
+  } else {
+    const primaryUses: string[] = [];
+    const allKeyInds: string[] = [];
+    const allClasses: string[] = [];
+    successfulNih.forEach((r) => {
+      const ind = r.data.indications || '';
+      const puMatch = ind.match(/• Primary Use:\s*([^\n]+)/i);
+      if (puMatch && puMatch[1] && puMatch[1].trim().length > 8) {
+        primaryUses.push(`${r.molecule}: ${puMatch[1].trim().replace(/[.\s]+$/, '')}`);
+      }
+      const keyMatch = ind.match(/• Key Indications:\s*([^.\n]+)/i);
+      if (keyMatch && keyMatch[1]) {
+        allKeyInds.push(`${r.molecule} (${keyMatch[1].trim()})`);
+      }
+      const classMatch = ind.match(/• Pharmacological Class:\s*([^\n]+)/i);
+      if (classMatch && classMatch[1] && classMatch[1].trim().length > 3) {
+        allClasses.push(classMatch[1].trim().replace(/\.\s*$/, ''));
+      }
+    });
+
+    if (primaryUses.length > 0) {
+      indLines.push(`• Primary Use: ${clipBrief(primaryUses.join('; '), 260)}`);
+    } else {
+      indLines.push(`• Primary Use: Combined therapeutic management with ${moleculesToQuery.join(' + ')}, targeting the specific clinical indications of each active ingredient.`);
+    }
+    if (allKeyInds.length > 0) {
+      indLines.push(`• Key Indications: ${clipBrief(allKeyInds.join('; '), 240)}`);
+    }
+    if (allClasses.length > 0) {
+      const uniqueClasses = Array.from(new Set(allClasses));
+      indLines.push(`• Pharmacological Class: ${clipBrief(uniqueClasses.join('; '), 180)}`);
+    } else {
+      indLines.push(`• Pharmacological Class: Multi-Ingredient Therapeutic Combination.`);
+    }
+  }
+  const indications = indLines.join('\n');
+
+  // ---- Combined Contraindications
+  const ciLines: string[] = [];
+  if (anySingle) {
+    ciLines.push(successfulNih[0].data.contraindications || monograph.contraindications);
+  } else {
+    ciLines.push(`• Absolute: Documented hypersensitivity to ${moleculesToQuery.join(', ')} or related chemical and pharmacological classes.`);
+    const allCIs: string[] = [];
+    successfulNih.forEach((r) => {
+      const ciMatch = r.data.contraindications?.match(/• Clinical Contraindications:\s*([^.\n]+)/i);
+      if (ciMatch && ciMatch[1]) {
+        allCIs.push(`${r.molecule}: ${clipBrief(ciMatch[1].trim(), 90)}`);
+      }
+    });
+    if (allCIs.length > 0) {
+      ciLines.push(`• Clinical Contraindications: ${clipBrief(allCIs.join('; '), 260)}`);
+    } else {
+      ciLines.push(`• Clinical Contraindications: Severe hepatic or renal impairment unless adjusted.`);
+    }
+    ciLines.push(`• Safety Alert: Clinical vigilance required for additive pharmacodynamic effects and combination-specific contraindications.`);
+  }
+  const contraindications = ciLines.join('\n');
+
+  // ---- Combined Side Effects
+  const seLines: string[] = [];
+  if (anySingle) {
+    seLines.push(successfulNih[0].data.sideEffects || monograph.sideEffects);
+  } else {
+    const allCommon: string[] = [];
+    const allWarnings: string[] = [];
+    successfulNih.forEach((r) => {
+      const seMatch = r.data.sideEffects?.match(/• Common Reactions:\s*([^.\n]+)/i);
+      if (seMatch && seMatch[1]) {
+        allCommon.push(`${r.molecule} (${clipBrief(seMatch[1].trim(), 110)})`);
+      }
+      const warnMatch = r.data.sideEffects?.match(/• Critical Warnings:\s*([^\n]+)/i);
+      if (warnMatch && warnMatch[1] && warnMatch[1].trim().length > 8) {
+        allWarnings.push(`${r.molecule}: ${clipBrief(warnMatch[1].trim(), 130)}`);
+      }
+    });
+    if (allCommon.length > 0) {
+      seLines.push(`• Common Reactions: ${clipBrief(allCommon.join('; '), 300)}`);
+    } else {
+      seLines.push(`• Common Reactions: Mild GI disturbances, headache, dizziness, mild fatigue.`);
+    }
+    if (allWarnings.length > 0) {
+      seLines.push(`• Critical Warnings: ${clipBrief(allWarnings.join('; '), 320)}`);
+    } else {
+      seLines.push(`• Critical Warnings: Monitor for idiosyncratic organ toxicities, hepatorenal clearance, and acute hypersensitivity across all constituent molecules.`);
+    }
+    seLines.push(`• Monitoring & Advice: Periodic clinical evaluation of hepatic and renal function in long-term combined therapy.`);
+  }
+  const sideEffects = seLines.join('\n');
+
+  // ---- Real adult/pediatric dosing from per-molecule online lookups
+  const adultParts: string[] = [];
+  const pediatricParts: string[] = [];
+  successfulNih.forEach((r) => {
+    const d = r.data.dosage?.trim();
+    if (d && d.length > 6) adultParts.push(`${r.molecule}: ${d}`);
+    const p = r.data.pediatricDosage?.trim();
+    if (p && p.length > 6) pediatricParts.push(`${r.molecule}: ${p}`);
+  });
+
+  // ---- Restrictive pregnancy category across all molecules
+  const rank: Record<string, number> = { A: 1, B: 2, C: 3, D: 4, X: 5 };
+  let strictestCategory: 'A' | 'B' | 'C' | 'D' | 'X' | undefined;
+  let maxRank = 0;
+  successfulNih.forEach((r) => {
+    const cat = r.data.pregnancyCategory;
+    if (!cat) return;
+    const currentRank = rank[cat] || 0;
+    if (currentRank > maxRank) {
+      maxRank = currentRank;
+      strictestCategory = cat;
+    }
+  });
+
+  return {
+    indications,
+    contraindications,
+    sideEffects,
+    dosage: adultParts.join(' | ') || monograph.dosage,
+    pediatricDosage: pediatricParts.join(' | ') || monograph.pediatricDosage || '',
+    pregnancyCategory: strictestCategory,
+    storageConditions: monograph.storageConditions,
+    source: combinedSource,
   };
 }

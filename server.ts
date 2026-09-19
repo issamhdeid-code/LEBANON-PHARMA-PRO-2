@@ -256,9 +256,9 @@ Mandatory Clinical Instructions:
 2. Evaluate the synergy, therapeutic rationale, and combined pharmacodynamics of this multi-ingredient combination (why they are formulated together, additive analgesia, beta-lactamase protection, complementary blood pressure reduction, metabolic synergy).
 3. Produce concise, highly professional clinical monograph sections formatted with clean bullet points:
    - "indications":
-     • Primary Use: [Clear statement of the combined therapeutic purpose and target pathologies]
-     • Key Indications: [List specific clinical indications and diseases treated, separated by semicolons]
-     • Pharmacological Class: [Combined pharmacological classes of all ingredients]
+     • Primary Use: [A SPECIFIC, evidence-based statement naming the exact target pathologies and clinical conditions for THIS exact formulation. NEVER use generic filler such as "management of the presenting condition", "various medical conditions", or statements that would read identically for any drug.]
+     • Key Indications: [List the concrete, specific clinical indications and diseases treated, separated by semicolons]
+     • Pharmacological Class: [Name the precise pharmacological classes of EVERY ingredient, e.g. "Analgesic/antipyretic + xanthine stimulant" — never a single vague catch-all like "therapeutic agent".]
    - "contraindications" (MUST combine contraindications and high-risk conditions across ALL active ingredients):
      • Absolute: [Documented hypersensitivity to any of the constituent ingredients or cross-reactive chemical classes]
      • Clinical Contraindications: [List specific organ impairments, pathologies, and clinical conditions that contraindicate ANY of the ingredients]
@@ -267,11 +267,12 @@ Mandatory Clinical Instructions:
      • Common Reactions: [Frequent side effects attributable to the combination and each constituent molecule]
      • Critical Warnings: [Severe adverse reactions, organ toxicities, e.g. acute hepatotoxicity, rhabdomyolysis, tendon rupture, QT prolongation, angioedema]
      • Monitoring & Advice: [Crucial laboratory monitoring parameters, max daily limits, clinical safety guidance]
-   - "dosage": Standard adult clinical dosing regimen for this combination.
-   - "pediatricDosage": Specific pediatric dosing recommendations or pediatric contraindications for this combination.
+   - "dosage": [Concrete standard adult regimen with REAL figures for this exact formulation: the specific amount (e.g. "500 mg"), the exact frequency ("every 8 hours"), the route, and the maximum daily limit ("max 3 g/day"). MUST NOT say "as prescribed by physician" or "according to clinical guidelines" as the sole answer — give actual numeric dosing whenever it exists for the drug.]
+   - "pediatricDosage": [Concrete pediatric guidance: real weight-based mg/kg dosing with frequency (e.g. "10-15 mg/kg every 4-6 hours, max 60 mg/kg/day") OR an explicit age threshold contraindication. MUST NOT answer only "consult physician" — give the numeric pediatric regimen when established; state age-based contraindication explicitly when it exists.]
    - "pregnancyCategory": FDA pregnancy category ('A' | 'B' | 'C' | 'D' | 'X') corresponding to the most restrictive constituent ingredient, with a brief clinical note.
    - "storageConditions": Optimal storage instructions (e.g. "Store below 25°C in a cool, dry place protected from moisture and direct light.").
    - "identifiedIngredients": Array of the distinct active ingredient names identified (e.g. ["Paracetamol", "Caffeine"]).
+4. For the dosage and pediatricDosage fields you MUST use a specific numeric dosing value appropriate for the combination and its indications. If the drug has established dosing, provide it. Prefer concrete figures over generic advice everywhere; only use cautious phrasing when the drug has genuinely no published fixed dose.
 
 Return ONLY valid JSON matching this schema:
 {
@@ -346,8 +347,8 @@ Return ONLY valid JSON matching this schema:
         indications: parsedData.indications,
         contraindications: parsedData.contraindications,
         sideEffects: parsedData.sideEffects,
-        dosage: parsedData.dosage || 'Adults: as prescribed by physician according to clinical guidelines.',
-        pediatricDosage: parsedData.pediatricDosage || 'Pediatrics: consult physician for pediatric dosing.',
+        dosage: parsedData.dosage || 'Individualize adult dose by indication, renal/hepatic function, and clinical response (refer to official product labeling for the numeric regimen).',
+        pediatricDosage: parsedData.pediatricDosage || 'Pediatric dose is weight-based and indication-specific (refer to official product labeling).',
         pregnancyCategory: parsedData.pregnancyCategory || 'B',
         storageConditions: parsedData.storageConditions || 'Store below 25°C in a dry place.',
         activeIngredients: identified.length > 0 ? identified.join(' + ') : queryIngredients,

@@ -1,6 +1,8 @@
 // Pure parsing helpers for MOPH data sources (official price-list XLS + LNDD
 // drug database search HTML). No Node-specific deps so it can be unit-tested.
 
+import type { MoleculeStrength } from '../types/pharmacy';
+
 export interface MOPHPriceListRow {
   code: number | string;
   registrationNumber: string;
@@ -105,4 +107,47 @@ export function pickBestIngredient(
     }
   }
   return matchedIngredients;
+}
+
+/**
+ * Splits an LNDD ingredients cell into structured molecule rows. LNDD writes
+ * multiple actives as "Name - strength, Name2 - strength2" (e.g.
+ * "Trimethoprim - 160mg, Sulfamethoxazole - 800mg"); a strength may itself
+ * contain thousand-separator commas ("Nystatin - 500,000IU"), so a comma only
+ * starts a new item when the following segment begins a new "Name - strength"
+ * pair. Strings without any dash pattern (legacy single-text fields such as
+ * "Paracetamol + Codeine") return [] so the fallback free-text handling stays.
+ */
+export function parseMoleculeList(ingredients: string): MoleculeStrength[] {
+  const raw = (ingredients || '').trim();
+  if (!raw || !raw.includes('-')) return [];
+
+  const items: MoleculeStrength[] = [];
+  let current = '';
+  for (const seg of raw.split(',')) {
+    const trimmed = seg.trim();
+    if (!current) {
+      current = trimmed;
+      continue;
+    }
+    // A segment beginning with a digit is a dosage continuation of the previous
+    // item (thousand separator); anything else starts a new ingredient.
+    if (/^[\d.]/.test(trimmed)) {
+      current += ',' + trimmed;
+    } else {
+      items.push(parseMoleculeItem(current));
+      current = trimmed;
+    }
+  }
+  if (current.trim()) items.push(parseMoleculeItem(current.trim()));
+  return items;
+}
+
+function parseMoleculeItem(text: string): MoleculeStrength {
+  const dashIdx = text.indexOf('-');
+  if (dashIdx === -1) return { name: text.trim(), strength: '' };
+  const name = text.slice(0, dashIdx).trim();
+  const strength = text.slice(dashIdx + 1).trim();
+  if (!name) return { name: text.trim(), strength: '' };
+  return { name, strength };
 }

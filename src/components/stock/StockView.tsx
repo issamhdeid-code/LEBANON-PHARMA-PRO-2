@@ -27,9 +27,9 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
 import { useDebounce } from '../../hooks/useDebounce';
-import { Product, ProductCategory, ScientificDrugInfo, PurchaseInvoice } from '../../types/pharmacy';
+import { Product, ProductCategory, ScientificDrugInfo, PurchaseInvoice, MoleculeStrength } from '../../types/pharmacy';
 import { getSubcategoryOptions, suggestSubcategory } from '../../constants/subcategories';
-import { formatStockDisplay, generateRandomBarcode, resolveProductBatches } from '../../utils/stockUtils';
+import { formatStockDisplay, generateRandomBarcode, resolveProductBatches, splitProductMolecule } from '../../utils/stockUtils';
 import { resolveStraightforwardScientificInfo } from '../../services/scientificDataService';
 import { getPriceChangeInfoUSD, getPriceChangeInfoLBP, formatLBPValue } from '../../utils/priceUtils';
 import { PriceUpdaterModal } from './PriceUpdaterModal';
@@ -572,8 +572,9 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   const [formCategory, setFormCategory] = useState<ProductCategory>('drug');
   const [formSubcategory, setFormSubcategory] = useState('');
   const [isCustomFormSubcategory, setIsCustomFormSubcategory] = useState(false);
-  const [formIngredients, setFormIngredients] = useState('');
-  const [formDosage, setFormDosage] = useState('');
+  const [formMolecules, setFormMolecules] = useState<MoleculeStrength[]>([{ name: '', strength: '' }]);
+  const formIngredients = formMolecules.map((m) => m.name.trim()).filter(Boolean).join(' + ');
+  const formDosage = formMolecules.map((m) => m.strength.trim()).filter(Boolean).join(', ');
   const [formPediatricDosage, setFormPediatricDosage] = useState('');
   const [formPresentation, setFormPresentation] = useState('');
   const [formIsDivisible, setFormIsDivisible] = useState(false);
@@ -861,8 +862,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormCategory('drug');
     setFormSubcategory('');
     setIsCustomFormSubcategory(false);
-    setFormIngredients('');
-    setFormDosage('');
+    setFormMolecules([{ name: '', strength: '' }]);
     setFormPediatricDosage('');
     setFormPresentation('');
     setFormIsDivisible(false);
@@ -894,8 +894,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormSubcategory(prod.subcategory || '');
     const allSubs = getSubcategoryOptions('all', products, settings.customGlobalSubcategories);
     setIsCustomFormSubcategory(Boolean(prod.subcategory && !allSubs.includes(prod.subcategory)));
-    setFormIngredients(prod.ingredients);
-    setFormDosage(prod.dosage);
+    setFormMolecules(splitProductMolecule(prod));
     setFormPediatricDosage(prod.scientificInfo?.pediatricDosage || '');
     setFormPresentation(prod.presentation);
     setFormIsDivisible(prod.isDivisible || false);
@@ -957,7 +956,10 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
           setFormGenerics(res.scientificInfo.generics.join(', '));
         }
         if (!formDosage && res.scientificInfo.dosage) {
-          setFormDosage(res.scientificInfo.dosage);
+          setFormMolecules((prev) => {
+            if (prev.length === 0) return [{ name: '', strength: res.scientificInfo.dosage || '' }];
+            return prev.map((m, i) => (i === 0 && !m.strength.trim() ? { ...m, strength: res.scientificInfo.dosage || '' } : m));
+          });
         }
         if (!formPediatricDosage && res.scientificInfo.pediatricDosage) {
           setFormPediatricDosage(res.scientificInfo.pediatricDosage);
@@ -985,6 +987,9 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     const batchNumber = formBatches.length > 0 ? formBatches[0].batchNumber : '';
     const batches = [...formBatches];
     const resolvedCode = formCode.trim().toUpperCase();
+    const molecules = formMolecules
+      .filter((m) => m.name.trim())
+      .map((m) => ({ name: m.name.trim(), strength: m.strength.trim() }));
 
     let scientificInfo: ScientificDrugInfo | undefined = undefined;
     if (formCategory === 'drug') {
@@ -997,6 +1002,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
          subcategory: formSubcategory.trim() || undefined,
          ingredients: formIngredients,
          dosage: formDosage,
+         molecules,
          presentation: formPresentation,
          form: formForm,
          isDivisible: formIsDivisible,
@@ -1028,6 +1034,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         subcategory: formSubcategory.trim() || undefined,
         ingredients: formIngredients,
         dosage: formDosage,
+        molecules,
         presentation: formPresentation,
         form: formForm,
         isDivisible: formIsDivisible,
@@ -1055,6 +1062,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         subcategory: formSubcategory.trim() || undefined,
         ingredients: formIngredients,
         dosage: formDosage,
+        molecules,
         presentation: formPresentation,
         form: formForm,
         isDivisible: formIsDivisible,
@@ -1669,19 +1677,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
 
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Dosage / Strength
-                </label>
-                <input
-                  type="text"
-                  value={formDosage}
-                  onChange={(e) => setFormDosage(e.target.value)}
-                  placeholder="e.g. 500mg, 1000 IU"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Form
                 </label>
                 <input
@@ -1792,21 +1787,67 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
                 <div className="flex items-center justify-between mb-1">
                   <label className="block font-semibold text-slate-700 dark:text-slate-300">
-                    Active Ingredients / Molecule
+                    Active Ingredients / Molecules
                   </label>
-
                 </div>
-                <input
-                  type="text"
-                  value={formIngredients}
-                  onChange={(e) => setFormIngredients(e.target.value)}
-                  placeholder="e.g. Paracetamol + Caffeine, Amoxicillin"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
+                <div className="flex items-center gap-2 px-1 mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                  <span className="flex-1 min-w-0">Ingredient / Molecule</span>
+                  <span className="flex-1 min-w-0">Strength / Dosage</span>
+                  <span className="w-6 shrink-0" />
+                </div>
+                <div className="space-y-1.5">
+                  {formMolecules.map((m, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={m.name}
+                        onChange={(e) => {
+                          const next = [...formMolecules];
+                          next[idx] = { ...next[idx], name: e.target.value };
+                          setFormMolecules(next);
+                        }}
+                        placeholder={`Ingredient ${idx + 1} (e.g. Paracetamol)`}
+                        className="flex-1 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      />
+                      <input
+                        type="text"
+                        value={m.strength}
+                        onChange={(e) => {
+                          const next = [...formMolecules];
+                          next[idx] = { ...next[idx], strength: e.target.value };
+                          setFormMolecules(next);
+                        }}
+                        placeholder="e.g. 500mg"
+                        className="flex-1 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      />
+                      <button
+                        type="button"
+                        title="Remove ingredient"
+                        aria-label="Remove ingredient"
+                        onClick={() => {
+                          if (formMolecules.length === 1) return;
+                          setFormMolecules(formMolecules.filter((_, i) => i !== idx));
+                        }}
+                        disabled={formMolecules.length === 1}
+                        className="w-6 h-6 shrink-0 flex items-center justify-center rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFormMolecules((prev) => [...prev, { name: '', strength: '' }])}
+                  className="mt-2 flex items-center gap-1 text-[11px] font-bold text-teal-600 hover:text-teal-700 dark:text-teal-400 cursor-pointer"
+                >
+                  <Plus className="h-3 w-3" />
+                  Add another ingredient
+                </button>
               </div>
 
               <div className="relative">

@@ -92,9 +92,17 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
     return resolveStraightforwardScientificInfo(selectedProduct);
   }, [selectedProduct, hasActiveIngredient]);
 
-  // Clean molecule list for display (only if active ingredient is defined)
+  // Clean molecule list for display (only if active ingredient is defined).
+  // Prefers the product's structured molecule rows from the stock card so each
+  // active ingredient (with its strength) is listed explicitly for multi-active
+  // ingredient drugs.
   const activeMolecules = useMemo(() => {
     if (!selectedProduct || !hasActiveIngredient) return [];
+    if (selectedProduct.molecules && selectedProduct.molecules.length > 0) {
+      return selectedProduct.molecules.map((m) =>
+        m.strength && m.strength.trim() ? `${m.name.trim()} ${m.strength.trim()}` : m.name.trim()
+      );
+    }
     return extractCleanMolecules(selectedProduct.ingredients || '');
   }, [selectedProduct, hasActiveIngredient]);
 
@@ -227,15 +235,15 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
             return (
               <div key={idx} className="text-xs leading-relaxed flex items-start space-x-1.5">
                 <span className="text-teal-600 dark:text-teal-400 font-bold shrink-0 mt-0.5">•</span>
-                <div>
+<div>
                   <span className="font-bold text-slate-900 dark:text-slate-100">{label}: </span>
-                  <span className="text-slate-700 dark:text-slate-300 font-normal">{detail}</span>
+                  <span className="text-slate-700 dark:text-slate-300 font-normal break-words">{detail}</span>
                 </div>
               </div>
             );
           }
           return (
-            <div key={idx} className="text-xs leading-relaxed flex items-start space-x-1.5 text-slate-700 dark:text-slate-300">
+            <div key={idx} className="text-xs leading-relaxed flex items-start space-x-1.5">
               <span className="text-teal-600 dark:text-teal-400 font-bold shrink-0 mt-0.5">•</span>
               <span>{bulletCleaned}</span>
             </div>
@@ -263,7 +271,7 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                 <span className="text-rose-600 dark:text-rose-400 font-bold shrink-0 mt-0.5">•</span>
                 <div>
                   <span className="font-bold text-rose-900 dark:text-rose-100">{label}: </span>
-                  <span className="text-rose-800 dark:text-rose-300 font-normal">{detail}</span>
+                  <span className="text-rose-800 dark:text-rose-300 font-normal break-words">{detail}</span>
                 </div>
               </div>
             );
@@ -305,7 +313,7 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                 <span className="text-amber-600 dark:text-amber-400 font-bold shrink-0 mt-0.5">•</span>
                 <div>
                   <span className="font-bold text-slate-900 dark:text-slate-100">{label}: </span>
-                  <span className="text-slate-700 dark:text-slate-300 font-normal">{detail}</span>
+                  <span className="text-slate-700 dark:text-slate-300 font-normal break-words">{detail}</span>
                 </div>
               </div>
             );
@@ -401,11 +409,13 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                           <span>No active ingredient</span>
                         </span>
                       )}
-                      {prod.ingredients?.trim() && extractCleanMolecules(prod.ingredients).length > 1 && (
-                        <span className="shrink-0 px-1 py-0.2 text-[9px] rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-semibold border border-purple-200 dark:border-purple-800">
-                          Multi
-                        </span>
-                      )}
+                      {prod.ingredients?.trim() && (
+  (prod.molecules && prod.molecules.length > 1) || extractCleanMolecules(prod.ingredients).length > 1
+) && (
+  <span className="shrink-0 px-1 py-0.2 text-[9px] rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-semibold border border-purple-200 dark:border-purple-800">
+    Multi
+  </span>
+)}
                     </div>
                     <div className="mt-1 flex items-center justify-between text-[10px] text-gray-400">
                       <span className="flex items-center space-x-1">
@@ -684,14 +694,14 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                 </div>
                 {currentScientificInfo?.dosage && (
                   <div className="mt-3 flex flex-col gap-1.5">
-                    <div className="rounded-lg bg-teal-50/80 px-2.5 py-1.5 text-[11px] text-teal-950 dark:bg-teal-950/40 dark:text-teal-200 border border-teal-200/60 dark:border-teal-900/50 flex flex-wrap items-center justify-between gap-1">
+                    <div className="rounded-lg bg-teal-50/80 px-2.5 py-2 text-[11px] text-teal-950 dark:bg-teal-950/40 dark:text-teal-200 border border-teal-200/60 dark:border-teal-900/50 flex flex-col gap-1">
                       <span className="font-bold">Standard Regimen:</span>
-                      <span className="font-medium text-right">{currentScientificInfo.dosage}</span>
+                      <span className="font-medium whitespace-pre-line break-words">{currentScientificInfo.dosage}</span>
                     </div>
                     {currentScientificInfo?.pediatricDosage && (
-                      <div className="rounded-lg bg-amber-50/80 px-2.5 py-1.5 text-[11px] text-amber-950 dark:bg-amber-950/40 dark:text-amber-200 border border-amber-200/60 dark:border-amber-900/50 flex flex-wrap items-center justify-between gap-1">
+                      <div className="rounded-lg bg-amber-50/80 px-2.5 py-2 text-[11px] text-amber-950 dark:bg-amber-950/40 dark:text-amber-200 border border-amber-200/60 dark:border-amber-900/50 flex flex-col gap-1">
                         <span className="font-bold">Pediatric Regimen:</span>
-                        <span className="font-medium text-right">{currentScientificInfo.pediatricDosage}</span>
+                        <span className="font-medium whitespace-pre-line break-words">{currentScientificInfo.pediatricDosage}</span>
                       </div>
                     )}
                   </div>

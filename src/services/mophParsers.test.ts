@@ -4,6 +4,7 @@ import {
   parseXlsPriceNumber,
   parseLnddSearchTable,
   pickBestIngredient,
+  parseMoleculeList,
   type LnddRow,
 } from './mophParsers';
 
@@ -121,5 +122,40 @@ describe('pickBestIngredient', () => {
 
   it('returns empty when no name matches', () => {
     expect(pickBestIngredient(rows, 'EGGIXIX', '', '')).toEqual('');
+  });
+});
+
+describe('parseMoleculeList', () => {
+  it('splits multiple ingredients into name + strength rows', () => {
+    expect(parseMoleculeList('Trimethoprim - 160mg, Sulfamethoxazole - 800mg')).toEqual([
+      { name: 'Trimethoprim', strength: '160mg' },
+      { name: 'Sulfamethoxazole', strength: '800mg' },
+    ]);
+  });
+
+  it('keeps thousand-separator commas inside a strength', () => {
+    expect(parseMoleculeList('Nystatin - 500,000IU')).toEqual([
+      { name: 'Nystatin', strength: '500,000IU' },
+    ]);
+  });
+
+  it('parses a single dashes item', () => {
+    expect(parseMoleculeList('Paracetamol - 500mg')).toEqual([
+      { name: 'Paracetamol', strength: '500mg' },
+    ]);
+  });
+
+  it('leaves a dashless ingredient name as a row with empty strength', () => {
+    expect(parseMoleculeList('Trimethoprim - 160mg, Sulfamethoxazole')).toEqual([
+      { name: 'Trimethoprim', strength: '160mg' },
+      { name: 'Sulfamethoxazole', strength: '' },
+    ]);
+  });
+
+  it('returns [] for legacy plus-joined or plain strings (no dash)', () => {
+    expect(parseMoleculeList('Paracetamol + Codeine')).toEqual([]);
+    expect(parseMoleculeList('Paracetamol')).toEqual([]);
+    expect(parseMoleculeList('')).toEqual([]);
+    expect(parseMoleculeList('   ')).toEqual([]);
   });
 });

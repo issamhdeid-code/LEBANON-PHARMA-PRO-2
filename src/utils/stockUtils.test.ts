@@ -1,6 +1,50 @@
 import { describe, it, expect } from 'vitest';
-import { resolveProductBatches } from './stockUtils';
+import { resolveProductBatches, splitProductMolecule } from './stockUtils';
 import { Product, PurchaseInvoice } from '../types/pharmacy';
+
+describe('splitProductMolecule', () => {
+  it('prefers the structured molecules array when present', () => {
+    const rows = splitProductMolecule({
+      ingredients: 'Stale + Value',
+      dosage: 'stale',
+      molecules: [
+        { name: 'Paracetamol', strength: '500mg' },
+        { name: 'Caffeine', strength: '65mg' },
+      ],
+    });
+    expect(rows).toEqual([
+      { name: 'Paracetamol', strength: '500mg' },
+      { name: 'Caffeine', strength: '65mg' },
+    ]);
+  });
+
+  it('splits legacy ingredients on + / , / ; and maps dosages pairwise', () => {
+    const rows = splitProductMolecule({
+      ingredients: 'Paracetamol + Caffeine',
+      dosage: '500mg, 65mg',
+    });
+    expect(rows).toEqual([
+      { name: 'Paracetamol', strength: '500mg' },
+      { name: 'Caffeine', strength: '65mg' },
+    ]);
+  });
+
+  it('assigns a lone dosage to the first molecule when counts mismatch', () => {
+    const rows = splitProductMolecule({
+      ingredients: 'Amoxicillin + Clavulanic Acid',
+      dosage: '875mg',
+    });
+    expect(rows).toEqual([
+      { name: 'Amoxicillin', strength: '875mg' },
+      { name: 'Clavulanic Acid', strength: '' },
+    ]);
+  });
+
+  it('keeps an empty builder row when nothing is stored', () => {
+    const rows = splitProductMolecule({ ingredients: '', dosage: '' });
+    expect(rows).toEqual([{ name: '', strength: '' }]);
+  });
+});
 
 describe('resolveProductBatches', () => {
   const baseProduct: Product = {

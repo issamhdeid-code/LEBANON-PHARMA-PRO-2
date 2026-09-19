@@ -34,6 +34,11 @@ export interface ProductBatch {
   quantity?: number;
 }
 
+export interface MoleculeStrength {
+  name: string;
+  strength: string;
+}
+
 export interface Product {
   id: string;
   code: string;
@@ -43,6 +48,7 @@ export interface Product {
   subcategory?: string; // Subclassification (e.g. "Baby Products" for para, "Vitamin D Supplements" for vitamins)
   ingredients: string;
   dosage: string;
+  molecules?: MoleculeStrength[]; // Structured list of active ingredients/molecules with their own strength
   presentation: string;
   form: string;
   isDivisible?: boolean; // Whether the product can be sold in pieces

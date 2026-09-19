@@ -1,4 +1,37 @@
-import { Product, PurchaseInvoice, ProductBatch } from '../types/pharmacy';
+import { Product, PurchaseInvoice, ProductBatch, MoleculeStrength } from '../types/pharmacy';
+
+/**
+ * Converts a product's stored composition into row form for the Add/Edit ingredient
+ * builder. Prefers the structured molecules array; otherwise splits the legacy
+ * free-text ingredients/dosage fields ("Paracetamol + Caffeine" / "500mg, 65mg")
+ * into rows, mapping dosages to molecules pairwise when counts match.
+ */
+export const splitProductMolecule = (product: {
+  ingredients?: string;
+  dosage?: string;
+  molecules?: MoleculeStrength[];
+}): MoleculeStrength[] => {
+  if (product.molecules && product.molecules.length > 0) {
+    return product.molecules.map((m) => ({ name: m.name || '', strength: m.strength || '' }));
+  }
+  const names = (product.ingredients || '')
+    .split(/\+|[,;]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const strengths = (product.dosage || '')
+    .split(',')
+    .map((s) => s.trim());
+  if (names.length === 0) {
+    return [{ name: '', strength: (product.dosage || '').trim() }];
+  }
+  if (names.length === strengths.length) {
+    return names.map((name, i) => ({ name, strength: strengths[i] }));
+  }
+  return names.map((name, i) => ({
+    name,
+    strength: i === 0 ? (product.dosage || '').trim() : '',
+  }));
+};
 
 export const formatStockDisplay = (stockQuantity: number, isDivisible?: boolean, piecesPerBox?: number, pieceName?: string): string => {
   if (!isDivisible || !piecesPerBox || piecesPerBox <= 1) {

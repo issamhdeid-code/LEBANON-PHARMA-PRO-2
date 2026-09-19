@@ -62,14 +62,38 @@ specifically about them, and require explicit user approval: PharmacyContext.tsx
 syncEngine.ts, storage.ts, indexedDbStorage.ts, and server.ts (sync/handshake/
 security sections).
 
-## 6. Testing discipline
-- After EVERY code change: `npm run lint` (tsc --noEmit). MANDATORY.
-- After a full task: run `npm run lint` + `npm run test` (vitest) IN PARALLEL in
-  one message, then `npm run build` last.
-- Puppeteer E2E harness lives in tests/*.js (e.g. tests/monthly-usage.js: boots
-  its OWN server on port 3456 with a virtual clock; pass/fail exit code). NEVER
-  touch the dev server and NEVER modify server.ts for tests. Port 3000 is
-  dev-only.
+## 6. Testing & non-regression discipline
+- NON-REGRESSION GUARANTEE — applies to EVERY code change, no exceptions:
+  adding, removing, or modifying an option, feature, button, or function must
+  never break any other option/feature/button/function.
+- PROPORTIONAL VERIFICATION (speed-aware): never run the full test battery
+  after every single edit. Spend verification time proportional to the change:
+  1. Map every affected surface: the edited code's callers and callees, shared
+     state/context, sync broadcasts, and every UI/feature that consumes the
+     touched data or props.
+  2. After EVERY change, run `npm run lint` (tsc --noEmit) — fast and
+     MANDATORY — plus any quick targeted check that fits the change (unit test,
+     spot-check in the running app).
+  3. Full gates per completed task: `npm run lint` + `npm run test` (vitest) IN
+     PARALLEL in one message, then `npm run build` last — always when the change
+     touches UI flows or shared data (stock, sales/checkout, purchases,
+     customers, scientifics, reports, settings, sync). For small isolated
+     changes that pass fast checks, defer the heavy gates to the task's final
+     run.
+- FULL-WALKTHROUGH REQUIRES APPROVAL: never run the Puppeteer full-walkthrough
+  automatically — ALWAYS ask the user first, wait for explicit go-ahead, and
+  report the pass/fail result (and any break) after it finishes.
+- IF ANYTHING IS BROKEN: stop and escalate — run the quick tests needed to
+  confirm and scope the break, then REPORT to the user with a clear
+  recommendation of the required fix, and let the user decide what to do next.
+  If the full harness would help confirm the break, ask the user before running
+  it. Never silently work around a known break and never claim a pass that did
+  not happen.
+- Where automated coverage cannot reach a feature, manually verify that feature
+  AND its neighbors still work. "It compiles" is never proof.
+- Puppeteer E2E harness lives in tests/*.js (e.g. tests/full-walkthrough.js:
+  boots its OWN server on port 3456; pass/fail exit code). NEVER touch the dev
+  server and NEVER modify server.ts for tests. Port 3000 is dev-only.
 - Node version in use: v24.20.0. Dev server: `npm run dev` only; verify
   http://localhost:3000 before claiming "app running".
 
