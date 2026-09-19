@@ -21,7 +21,7 @@ import {
   LogLevel
 } from '../types/pharmacy';
 import { syncEngine } from '../services/syncEngine';
-import { OfflineStorage, INITIAL_PRODUCTS } from '../services/storage';
+import { OfflineStorage, INITIAL_PRODUCTS, INITIAL_SUPPLIERS } from '../services/storage';
 import { notificationService } from '../services/notificationService';
 import {
   searchOnlineScientificData,
@@ -222,7 +222,7 @@ interface PharmacyContextType {
     scientificInfo: any;
     source: string;
     inStockAlternatives: Product[];
-  }>;
+  } | null>;
   enrichProductWithOnlineScientifics: (productId: string, forceUpdate?: boolean) => Promise<Product | null>;
   enrichAllProductsOnline: () => Promise<{ total: number; enriched: number }>;
   isSearchingScientifics: boolean;
@@ -971,6 +971,52 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, [settings.fontSize, settings.appZoom]);
 
+  // Reconcile supplier balances that may have been affected by previous currency mismatch bug
+  useEffect(() => {
+    setSuppliers(prevSuppliers => {
+      let hasChange = false;
+      const updated = prevSuppliers.map(sup => {
+        const supPurchases = purchases.filter(p => p.supplierId === sup.id);
+        if (supPurchases.length === 0) return sup;
+
+        const unpaidPurchases = supPurchases.filter(p => !p.paid);
+        const isInitialWithOpening = INITIAL_SUPPLIERS.find(s => s.id === sup.id && ((s.balanceUSD || 0) > 0 || (s.balanceLBP || 0) > 0));
+
+        if (unpaidPurchases.length === 0) {
+          if (!isInitialWithOpening) {
+            if ((sup.balanceUSD || 0) > 0 || (sup.balanceLBP || 0) > 0) {
+              hasChange = true;
+              return { ...sup, balanceUSD: 0, balanceLBP: 0 };
+            }
+          } else {
+            const paidLbpPurchases = supPurchases.filter(p => p.paid && p.currency === 'LBP');
+            const totalPaidLbpUSD = paidLbpPurchases.reduce((acc, p) => acc + (p.totalCostUSD || 0), 0);
+            if (totalPaidLbpUSD > 0 && Math.abs((sup.balanceUSD || 0) - ((isInitialWithOpening.balanceUSD || 0) + totalPaidLbpUSD)) < 0.05) {
+              hasChange = true;
+              return { ...sup, balanceUSD: isInitialWithOpening.balanceUSD || 0 };
+            }
+          }
+        } else {
+          const unpaidUsd = unpaidPurchases.filter(p => p.currency === 'USD' || !p.currency);
+          if (unpaidUsd.length === 0) {
+            const expectedUsd = isInitialWithOpening ? (isInitialWithOpening.balanceUSD || 0) : 0;
+            if ((sup.balanceUSD || 0) > expectedUsd) {
+              hasChange = true;
+              return { ...sup, balanceUSD: expectedUsd };
+            }
+          }
+        }
+        return sup;
+      });
+
+      if (hasChange) {
+        OfflineStorage.saveSuppliers(updated);
+        return updated;
+      }
+      return prevSuppliers;
+    });
+  }, []);
+
   // Auth methods
   const login = (username: string, password: string): { success: boolean; error?: string } => {
     const trimmedUser = username.trim().toLowerCase();
@@ -1192,8 +1238,17 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return target;
       }
 
-      const activeMolecule = target.ingredients || target.name;
-      if (!activeMolecule) return target;
+      if (!target.ingredients || !target.ingredients.trim()) {
+        addNotification(
+          'Active Ingredient Missing',
+          `Cannot fetch scientific data for ${target.name}. Active ingredient is blank in stock.`,
+          'inventory',
+          'warning'
+        );
+        return target;
+      }
+
+      const activeMolecule = target.ingredients.trim();
 
       setIsSearchingScientifics(true);
       try {
@@ -1255,7 +1310,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     try {
       for (const drug of drugsToEnrich) {
-        const molecule = drug.ingredients || drug.name;
+        const molecule = drug.ingredients?.trim();
         if (!molecule) continue;
 
         try {
@@ -2731,9 +2786,12 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     };
 
     // Calculate allocations and update invoices
+    let totalDeductedUSD = 0;
+    let totalDeductedLBP = 0;
+    let totalAllocatedInPaymentCurrency = 0;
+
     if (fullPayment.invoices.length > 0 && !fullPayment.isPaymentOnAccount) {
       setPurchases(prev => {
-        let remainingAmount = fullPayment.amount;
         const next = [...prev];
         
         // Sort selected invoices by date ascending (oldest first)
@@ -2742,87 +2800,212 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
         
         const allocations: { invoiceId: string, amountUSD: number, amountLBP: number }[] = [];
 
-        for (const inv of selectedInvoices) {
-          if (remainingAmount <= 0) break;
-          
-          const index = next.findIndex(i => i.id === inv.id);
-          if (index === -1) continue;
-          
-          const updatedInv = { ...next[index] };
-          
-          // Calculate amount left in payment currency
-          let amountLeftInPaymentCurrency = 0;
-          if (fullPayment.currency === 'USD') {
-             const costInUSD = updatedInv.currency === 'USD' ? updatedInv.totalCostUSD : (updatedInv.totalCostLBP / (updatedInv.exchangeRate || 1));
-             const paidInUSD = (updatedInv.paidAmountUSD || 0) + ((updatedInv.paidAmountLBP || 0) / (updatedInv.exchangeRate || 1));
-             amountLeftInPaymentCurrency = costInUSD - paidInUSD;
-          } else {
-             const costInLBP = updatedInv.currency === 'LBP' ? updatedInv.totalCostLBP : (updatedInv.totalCostUSD * (updatedInv.exchangeRate || 1));
-             const paidInLBP = (updatedInv.paidAmountLBP || 0) + ((updatedInv.paidAmountUSD || 0) * (updatedInv.exchangeRate || 1));
-             amountLeftInPaymentCurrency = costInLBP - paidInLBP;
+        if (fullPayment.currency === 'MIXED') {
+          let payUSD = fullPayment.amountUSD || 0;
+          let payLBP = fullPayment.amountLBP || 0;
+
+          for (const inv of selectedInvoices) {
+            if (payUSD <= 0 && payLBP <= 0) break;
+            const index = next.findIndex(i => i.id === inv.id);
+            if (index === -1) continue;
+
+            const updatedInv = { ...next[index] };
+            const invRate = updatedInv.exchangeRate || exchangeRate || 1;
+            const costUSD = updatedInv.currency === 'USD' ? updatedInv.totalCostUSD : (updatedInv.totalCostLBP / invRate);
+            const paidUSD = (updatedInv.paidAmountUSD || 0) + ((updatedInv.paidAmountLBP || 0) / invRate);
+            const leftUSD = Math.max(0, costUSD - paidUSD);
+
+            if (leftUSD <= 0.005) continue;
+
+            let appliedUSD = 0;
+            let appliedLBP = 0;
+
+            if (updatedInv.currency === 'USD') {
+              if (payUSD > 0) {
+                const useUSD = Math.min(payUSD, leftUSD);
+                appliedUSD += useUSD;
+                payUSD -= useUSD;
+              }
+              const stillLeftUSD = leftUSD - appliedUSD;
+              if (stillLeftUSD > 0.005 && payLBP > 0) {
+                const neededLBP = stillLeftUSD * invRate;
+                const useLBP = Math.min(payLBP, neededLBP);
+                appliedLBP += useLBP;
+                payLBP -= useLBP;
+              }
+            } else {
+              const leftLBP = leftUSD * invRate;
+              if (payLBP > 0) {
+                const useLBP = Math.min(payLBP, leftLBP);
+                appliedLBP += useLBP;
+                payLBP -= useLBP;
+              }
+              const stillLeftLBP = leftLBP - appliedLBP;
+              if (stillLeftLBP > 1 && payUSD > 0) {
+                const neededUSD = stillLeftLBP / invRate;
+                const useUSD = Math.min(payUSD, neededUSD);
+                appliedUSD += useUSD;
+                payUSD -= useUSD;
+              }
+            }
+
+            if (appliedUSD > 0 || appliedLBP > 0) {
+              updatedInv.paidAmountUSD = (updatedInv.paidAmountUSD || 0) + appliedUSD;
+              updatedInv.paidAmountLBP = (updatedInv.paidAmountLBP || 0) + appliedLBP;
+              totalDeductedUSD += appliedUSD;
+              totalDeductedLBP += appliedLBP;
+
+              allocations.push({
+                invoiceId: updatedInv.id,
+                amountUSD: appliedUSD,
+                amountLBP: appliedLBP
+              });
+
+              const newPaidUSD = (updatedInv.paidAmountUSD || 0) + ((updatedInv.paidAmountLBP || 0) / invRate);
+              if (costUSD - newPaidUSD <= 0.01) {
+                updatedInv.paid = true;
+              }
+              next[index] = updatedInv;
+            }
           }
-          
-          if (amountLeftInPaymentCurrency <= 0.01) continue; // Already paid
-          
-          const amountToApplyInPaymentCurrency = Math.min(remainingAmount, amountLeftInPaymentCurrency);
-          remainingAmount -= amountToApplyInPaymentCurrency;
-          
-          // Convert applied amount to invoice currency
-          let appliedUSD = 0;
-          let appliedLBP = 0;
-          
-          if (fullPayment.currency === 'USD') {
-             appliedUSD = amountToApplyInPaymentCurrency;
-             appliedLBP = amountToApplyInPaymentCurrency * (updatedInv.exchangeRate || 1);
-          } else {
-             appliedLBP = amountToApplyInPaymentCurrency;
-             appliedUSD = amountToApplyInPaymentCurrency / (updatedInv.exchangeRate || 1);
+
+          // Any remaining unallocated payment
+          totalDeductedUSD += payUSD;
+          totalDeductedLBP += payLBP;
+
+        } else {
+          let remainingAmount = fullPayment.amount;
+          for (const inv of selectedInvoices) {
+            if (remainingAmount <= 0) break;
+            
+            const index = next.findIndex(i => i.id === inv.id);
+            if (index === -1) continue;
+            
+            const updatedInv = { ...next[index] };
+            const invRate = updatedInv.exchangeRate || exchangeRate || 1;
+            
+            // Calculate amount left in payment currency
+            let amountLeftInPaymentCurrency = 0;
+            if (fullPayment.currency === 'USD') {
+               const costInUSD = updatedInv.currency === 'USD' ? updatedInv.totalCostUSD : (updatedInv.totalCostLBP / invRate);
+               const paidInUSD = (updatedInv.paidAmountUSD || 0) + ((updatedInv.paidAmountLBP || 0) / invRate);
+               amountLeftInPaymentCurrency = costInUSD - paidInUSD;
+            } else {
+               const costInLBP = updatedInv.currency === 'LBP' ? updatedInv.totalCostLBP : (updatedInv.totalCostUSD * invRate);
+               const paidInLBP = (updatedInv.paidAmountLBP || 0) + ((updatedInv.paidAmountUSD || 0) * invRate);
+               amountLeftInPaymentCurrency = costInLBP - paidInLBP;
+            }
+            
+            if (amountLeftInPaymentCurrency <= 0.01) continue; // Already paid
+            
+            const amountToApplyInPaymentCurrency = Math.min(remainingAmount, amountLeftInPaymentCurrency);
+            remainingAmount -= amountToApplyInPaymentCurrency;
+            totalAllocatedInPaymentCurrency += amountToApplyInPaymentCurrency;
+            
+            // Convert applied amount to invoice currency
+            let appliedUSD = 0;
+            let appliedLBP = 0;
+            
+            if (fullPayment.currency === 'USD') {
+               appliedUSD = amountToApplyInPaymentCurrency;
+               appliedLBP = amountToApplyInPaymentCurrency * invRate;
+            } else {
+               appliedLBP = amountToApplyInPaymentCurrency;
+               appliedUSD = amountToApplyInPaymentCurrency / invRate;
+            }
+            
+            if (updatedInv.currency === 'USD') {
+               updatedInv.paidAmountUSD = (updatedInv.paidAmountUSD || 0) + appliedUSD;
+               totalDeductedUSD += appliedUSD;
+            } else {
+               updatedInv.paidAmountLBP = (updatedInv.paidAmountLBP || 0) + appliedLBP;
+               totalDeductedLBP += appliedLBP;
+            }
+            
+            allocations.push({
+              invoiceId: updatedInv.id,
+              amountUSD: appliedUSD,
+              amountLBP: appliedLBP
+            });
+            
+            // Check if fully paid
+            const newAmountLeft = amountLeftInPaymentCurrency - amountToApplyInPaymentCurrency;
+            if (newAmountLeft <= 0.01) {
+               updatedInv.paid = true;
+            }
+            
+            next[index] = updatedInv;
           }
-          
-          if (updatedInv.currency === 'USD') {
-             updatedInv.paidAmountUSD = (updatedInv.paidAmountUSD || 0) + appliedUSD;
-          } else {
-             updatedInv.paidAmountLBP = (updatedInv.paidAmountLBP || 0) + appliedLBP;
+
+          const unallocatedAmount = Math.max(0, fullPayment.amount - totalAllocatedInPaymentCurrency);
+          if (unallocatedAmount > 0) {
+            if (fullPayment.currency === 'USD') {
+              totalDeductedUSD += unallocatedAmount;
+            } else {
+              totalDeductedLBP += unallocatedAmount;
+            }
           }
-          
-          allocations.push({
-            invoiceId: updatedInv.id,
-            amountUSD: appliedUSD,
-            amountLBP: appliedLBP
-          });
-          
-          // Check if fully paid
-          const newAmountLeft = amountLeftInPaymentCurrency - amountToApplyInPaymentCurrency;
-          if (newAmountLeft <= 0.01) {
-             updatedInv.paid = true;
-          }
-          
-          next[index] = updatedInv;
         }
         
         fullPayment.allocations = allocations;
         OfflineStorage.savePurchases(next);
         return next;
       });
+    } else {
+      // Payment on account or no invoices selected
+      if (fullPayment.currency === 'MIXED') {
+        totalDeductedUSD += fullPayment.amountUSD || 0;
+        totalDeductedLBP += fullPayment.amountLBP || 0;
+      } else if (fullPayment.currency === 'USD') {
+        totalDeductedUSD += fullPayment.amount;
+      } else {
+        totalDeductedLBP += fullPayment.amount;
+      }
     }
 
     const newPayments = [fullPayment, ...supplierPayments];
     setSupplierPayments(newPayments);
     OfflineStorage.saveSupplierPayments(newPayments);
 
-    // Update supplier balance
+    // Update supplier balance accordingly with respect to selected invoices
     setSuppliers(prev => {
       const next = prev.map(s => {
         if (s.id === fullPayment.supplierId) {
+          let balUSD = (s.balanceUSD || 0) - totalDeductedUSD;
+          let balLBP = (s.balanceLBP || 0) - totalDeductedLBP;
+
+          // Cross-currency offset if one goes below zero and the other is positive
+          if (balUSD < -0.01 && balLBP > 0) {
+            const excessUSD = Math.abs(balUSD);
+            balLBP = Math.max(0, balLBP - Math.round(excessUSD * exchangeRate));
+            balUSD = 0;
+          } else if (balLBP < -1 && balUSD > 0) {
+            const excessLBP = Math.abs(balLBP);
+            balUSD = Math.max(0, Number((balUSD - (excessLBP / exchangeRate)).toFixed(2)));
+            balLBP = 0;
+          }
+
+          // If all purchases for this supplier are now paid (and no other opening balance), ensure clean 0
+          const supPurchases = purchases.filter(p => p.supplierId === s.id);
+          const hasUnpaidOther = supPurchases.some(p => !p.paid && !fullPayment.invoices.includes(p.id));
+          if (!hasUnpaidOther && (s.id === 'sup-union' || !s.id.startsWith('sup-'))) {
+            balUSD = 0;
+            balLBP = 0;
+          }
+
           return {
             ...s,
-            balanceUSD: fullPayment.currency === 'USD' ? Math.max(0, s.balanceUSD - fullPayment.amount) : s.balanceUSD,
-            balanceLBP: fullPayment.currency === 'LBP' ? Math.max(0, s.balanceLBP - fullPayment.amount) : s.balanceLBP,
+            balanceUSD: Math.max(0, Number(balUSD.toFixed(2))),
+            balanceLBP: Math.max(0, Math.round(balLBP)),
           };
         }
         return s;
       });
       OfflineStorage.saveSuppliers(next);
+      try {
+        const updatedSup = next.find(s => s.id === fullPayment.supplierId);
+        if (updatedSup) syncEngine.broadcast('SUPPLIER_UPSERT', updatedSup);
+      } catch (e) {}
       return next;
     });
 
@@ -2838,19 +3021,65 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     setSupplierPayments(newPayments);
     OfflineStorage.saveSupplierPayments(newPayments);
 
-    // Revert supplier balance
+    // Revert supplier balance with respect to allocations
     setSuppliers(prev => {
       const next = prev.map(s => {
         if (s.id === payment.supplierId) {
+          let addUSD = 0;
+          let addLBP = 0;
+
+          if (payment.allocations && payment.allocations.length > 0 && !payment.isPaymentOnAccount) {
+            let totalAllocUSD = 0;
+            let totalAllocLBP = 0;
+            for (const alloc of payment.allocations) {
+              const inv = purchases.find(p => p.id === alloc.invoiceId);
+              const invCurrency = inv?.currency || 'USD';
+              if (invCurrency === 'LBP') {
+                addLBP += alloc.amountLBP;
+              } else {
+                addUSD += alloc.amountUSD;
+              }
+              totalAllocUSD += alloc.amountUSD || 0;
+              totalAllocLBP += alloc.amountLBP || 0;
+            }
+
+            if (payment.currency === 'MIXED') {
+              const unallocatedUSD = Math.max(0, (payment.amountUSD || 0) - totalAllocUSD);
+              const unallocatedLBP = Math.max(0, (payment.amountLBP || 0) - totalAllocLBP);
+              addUSD += unallocatedUSD;
+              addLBP += unallocatedLBP;
+            } else {
+              const totalAllocInPaymentCurr = payment.currency === 'USD' ? totalAllocUSD : totalAllocLBP;
+              const unallocated = Math.max(0, payment.amount - totalAllocInPaymentCurr);
+              if (unallocated > 0) {
+                if (payment.currency === 'USD') addUSD += unallocated;
+                else addLBP += unallocated;
+              }
+            }
+          } else {
+            if (payment.currency === 'MIXED') {
+              addUSD += payment.amountUSD || 0;
+              addLBP += payment.amountLBP || 0;
+            } else if (payment.currency === 'USD') {
+              addUSD += payment.amount;
+            } else {
+              addLBP += payment.amount;
+            }
+          }
+
           return {
             ...s,
-            balanceUSD: payment.currency === 'USD' ? (s.balanceUSD || 0) + payment.amount : (s.balanceUSD || 0),
-            balanceLBP: payment.currency === 'LBP' ? (s.balanceLBP || 0) + payment.amount : (s.balanceLBP || 0),
+            balanceUSD: Number(((s.balanceUSD || 0) + addUSD).toFixed(2)),
+            balanceLBP: Math.round((s.balanceLBP || 0) + addLBP),
           };
         }
         return s;
       });
       OfflineStorage.saveSuppliers(next);
+      try {
+        const updatedSup = next.find(s => s.id === payment.supplierId);
+        if (updatedSup) syncEngine.broadcast('SUPPLIER_UPSERT', updatedSup);
+      } catch (e) {}
       return next;
     });
 
@@ -2863,9 +3092,10 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
           if (index !== -1) {
              const updatedInv = { ...next[index] };
              
-             if (updatedInv.currency === 'USD') {
+             if (alloc.amountUSD) {
                 updatedInv.paidAmountUSD = Math.max(0, (updatedInv.paidAmountUSD || 0) - alloc.amountUSD);
-             } else {
+             }
+             if (alloc.amountLBP) {
                 updatedInv.paidAmountLBP = Math.max(0, (updatedInv.paidAmountLBP || 0) - alloc.amountLBP);
              }
              
@@ -2996,12 +3226,13 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     // 3. Update supplier balance if unpaid
     if (!fullPurchase.paid) {
       setSuppliers(prev => {
+        const isLBP = fullPurchase.currency === 'LBP';
         const updated = prev.map(s => {
           if (s.id === fullPurchase.supplierId) {
             return {
               ...s,
-              balanceUSD: s.balanceUSD + fullPurchase.totalCostUSD,
-              balanceLBP: s.balanceLBP + fullPurchase.totalCostLBP,
+              balanceUSD: isLBP ? (s.balanceUSD || 0) : Number(((s.balanceUSD || 0) + fullPurchase.totalCostUSD).toFixed(2)),
+              balanceLBP: isLBP ? Math.round((s.balanceLBP || 0) + fullPurchase.totalCostLBP) : (s.balanceLBP || 0),
             };
           }
           return s;
@@ -3125,11 +3356,13 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     }
 
     // Adjust supplier balance if `paid` status or total cost changed
-    const oldSupplierDebtUSD = !oldPurchase.paid ? oldPurchase.totalCostUSD : 0;
-    const oldSupplierDebtLBP = !oldPurchase.paid ? oldPurchase.totalCostLBP : 0;
+    const oldIsLBP = oldPurchase.currency === 'LBP';
+    const oldSupplierDebtUSD = (!oldPurchase.paid && !oldIsLBP) ? oldPurchase.totalCostUSD : 0;
+    const oldSupplierDebtLBP = (!oldPurchase.paid && oldIsLBP) ? oldPurchase.totalCostLBP : 0;
     
-    const newSupplierDebtUSD = !newPurchase.paid ? newPurchase.totalCostUSD : 0;
-    const newSupplierDebtLBP = !newPurchase.paid ? newPurchase.totalCostLBP : 0;
+    const newIsLBP = newPurchase.currency === 'LBP';
+    const newSupplierDebtUSD = (!newPurchase.paid && !newIsLBP) ? newPurchase.totalCostUSD : 0;
+    const newSupplierDebtLBP = (!newPurchase.paid && newIsLBP) ? newPurchase.totalCostLBP : 0;
 
     const diffDebtUSD = newSupplierDebtUSD - oldSupplierDebtUSD;
     const diffDebtLBP = newSupplierDebtLBP - oldSupplierDebtLBP;
@@ -3140,8 +3373,8 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
           if (s.id === newPurchase.supplierId) {
             return {
               ...s,
-              balanceUSD: s.balanceUSD + diffDebtUSD,
-              balanceLBP: s.balanceLBP + diffDebtLBP,
+              balanceUSD: Math.max(0, Number(((s.balanceUSD || 0) + diffDebtUSD).toFixed(2))),
+              balanceLBP: Math.max(0, Math.round((s.balanceLBP || 0) + diffDebtLBP)),
             };
           }
           return s;
@@ -3195,12 +3428,13 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     // Adjust supplier balance if it was unpaid
     if (!purchaseToDel.paid) {
       setSuppliers(prev => {
+        const isLBP = purchaseToDel.currency === 'LBP';
         const updated = prev.map(s => {
           if (s.id === purchaseToDel.supplierId) {
             return {
               ...s,
-              balanceUSD: s.balanceUSD - purchaseToDel.totalCostUSD,
-              balanceLBP: s.balanceLBP - purchaseToDel.totalCostLBP,
+              balanceUSD: isLBP ? s.balanceUSD : Math.max(0, Number(((s.balanceUSD || 0) - purchaseToDel.totalCostUSD).toFixed(2))),
+              balanceLBP: isLBP ? Math.max(0, Math.round((s.balanceLBP || 0) - purchaseToDel.totalCostLBP)) : s.balanceLBP,
             };
           }
           return s;

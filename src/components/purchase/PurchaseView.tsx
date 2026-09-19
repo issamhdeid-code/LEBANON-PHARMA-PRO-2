@@ -1,6 +1,6 @@
 import { SupplierPaymentModal } from './SupplierPaymentModal';
 import { motion } from "motion/react";
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect, useImperativeHandle } from 'react';
 import {
   Truck,
   Plus,
@@ -28,6 +28,7 @@ import { Product, PurchaseItem, PurchaseInvoice } from '../../types/pharmacy';
 import { filterProductsByMultiWordQuery } from '../../utils/searchUtils';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { resolveProductBatches } from '../../utils/stockUtils';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { AddStockProductModal } from '../stock/AddStockProductModal';
 
@@ -258,9 +259,10 @@ const PurchaseAddedItemRow: React.FC<PurchaseAddedItemRowProps> = ({
 };
 
 export const parseNumber = (val: string | number): number => {
-  if (typeof val === 'number') return val;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
   if (!val) return 0;
-  return parseInt(val.toString().replace(/,/g, ''), 10) || 0;
+  const num = parseFloat(val.toString().replace(/,/g, ''));
+  return isNaN(num) ? 0 : num;
 };
 
 
@@ -273,38 +275,481 @@ export const formatInvoiceDate = (dateStr: string): string => {
   }
   return dateStr;
 };
-export const formatExpiryDate = (dateStr: string | undefined): string => {
-  if (!dateStr) return '-';
-  const parts = dateStr.split('-');
-  if (parts.length === 3) {
-    return `${parts[1]}/${parts[0]}`; // MM/YYYY
+
+export const formatExpiryToMMYYYY = (dateStr: string | undefined): string => {
+  if (!dateStr || !dateStr.trim() || dateStr === '-') return '';
+  const trimmed = dateStr.trim();
+
+  if (trimmed.includes('-')) {
+    const parts = trimmed.split('-');
+    if (parts.length >= 2) {
+      let y = parts[0].trim();
+      let m = parts[1].trim();
+      if (y.length <= 2 && m.length === 4) {
+        const tmp = y;
+        y = m;
+        m = tmp;
+      }
+      if (y.length === 2) y = `20${y}`;
+      if (m.length === 1) m = `0${m}`;
+      return `${m}/${y}`;
+    }
   }
-  return dateStr;
+
+  if (trimmed.includes('/')) {
+    const parts = trimmed.split('/');
+    if (parts.length >= 2) {
+      let p1 = parts[0].trim();
+      let p2 = parts[1].trim();
+      if (p1.length === 4) {
+        if (p2.length === 1) p2 = `0${p2}`;
+        return `${p2}/${p1}`;
+      }
+      if (p1.length === 1) p1 = `0${p1}`;
+      if (p2.length === 2) p2 = `20${p2}`;
+      return `${p1}/${p2}`;
+    }
+  }
+
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length === 4) {
+    const m = digits.slice(0, 2);
+    const y = `20${digits.slice(2, 4)}`;
+    return `${m}/${y}`;
+  }
+  if (digits.length === 6) {
+    const m = digits.slice(0, 2);
+    const y = digits.slice(2, 6);
+    return `${m}/${y}`;
+  }
+
+  return trimmed;
+};
+
+export const parseExpiryDate = (input: string): { mm: string; yyyy: string; fullDate: string } | null => {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  let m = 0;
+  let y = 0;
+
+  const normalized = trimmed.replace(/[-.]/g, '/');
+
+  if (normalized.includes('/')) {
+    const parts = normalized.split('/');
+    if (parts.length >= 2) {
+      const p0Str = parts[0].replace(/\D/g, '');
+      const p1Str = parts[1].replace(/\D/g, '');
+      const p0 = parseInt(p0Str, 10);
+      const p1 = parseInt(p1Str, 10);
+
+      if (p0Str.length === 4) {
+        y = p0;
+        m = p1;
+      } else {
+        m = p0;
+        if (p1Str.length === 2) {
+          y = 2000 + p1;
+        } else if (p1Str.length === 4) {
+          y = p1;
+        }
+      }
+    }
+  } else {
+    const digits = trimmed.replace(/\D/g, '');
+    if (digits.length === 4) {
+      m = parseInt(digits.slice(0, 2), 10);
+      y = 2000 + parseInt(digits.slice(2, 4), 10);
+    } else if (digits.length === 6) {
+      m = parseInt(digits.slice(0, 2), 10);
+      y = parseInt(digits.slice(2, 6), 10);
+    } else if (digits.length === 8) {
+      const first4 = parseInt(digits.slice(0, 4), 10);
+      if (first4 >= 2000 && first4 <= 2100) {
+        y = first4;
+        m = parseInt(digits.slice(4, 6), 10);
+      } else {
+        m = parseInt(digits.slice(2, 4), 10);
+        y = parseInt(digits.slice(4, 8), 10);
+      }
+    }
+  }
+
+  if (m >= 1 && m <= 12 && y >= 2000 && y <= 2100) {
+    const mm = m.toString().padStart(2, '0');
+    const yyyy = y.toString();
+    const d = new Date(y, m, 0).getDate();
+    const dd = d.toString().padStart(2, '0');
+    return {
+      mm,
+      yyyy,
+      fullDate: `${yyyy}-${mm}-${dd}`
+    };
+  }
+
+  return null;
+};
+
+export const formatExpiryInput = (
+  rawInput: string,
+  prevValue: string = '',
+  isDelete: boolean = false
+): string => {
+  if (!rawInput) return '';
+
+  // If user is deleting and backspaced the slash (e.g. prev was '05/' and raw is '05')
+  if (isDelete && prevValue.endsWith('/') && prevValue.slice(0, -1) === rawInput) {
+    return rawInput;
+  }
+
+  // If user pasted or entered an ISO date like YYYY-MM or YYYY-MM-DD
+  if (/^\d{4}-\d{2}/.test(rawInput.trim())) {
+    const formatted = formatExpiryToMMYYYY(rawInput);
+    if (formatted) return formatted;
+  }
+
+  // Normalize delimiters (- and . to /)
+  const normalized = rawInput.replace(/[-.]/g, '/');
+
+  // Handle delimiter typed after 1 or 2 digits
+  if (normalized.endsWith('/') && !prevValue.endsWith('/')) {
+    const beforeSlash = normalized.slice(0, -1).replace(/\D/g, '');
+    if (beforeSlash.length === 1) {
+      const d = parseInt(beforeSlash, 10);
+      if (d >= 1 && d <= 9) {
+        return `0${d}/`;
+      }
+    } else if (beforeSlash.length === 2) {
+      let m = parseInt(beforeSlash, 10);
+      let mStr = beforeSlash;
+      if (m === 0) mStr = '01';
+      else if (m > 12) mStr = '12';
+      return `${mStr}/`;
+    }
+  }
+
+  const onlyDigits = normalized.replace(/\D/g, '');
+  if (onlyDigits.length === 0) {
+    if (normalized.includes('/')) {
+      const parts = normalized.split('/');
+      const yyPart = parts.slice(1).join('').replace(/\D/g, '').slice(0, 4);
+      if (yyPart.length > 0) {
+        return `/${yyPart}`;
+      }
+    }
+    return '';
+  }
+
+  // Single digit input with no delimiter
+  if (onlyDigits.length === 1 && !normalized.includes('/')) {
+    if (!isDelete) {
+      const d = parseInt(onlyDigits, 10);
+      if (d >= 2 && d <= 9) {
+        return `0${d}/`;
+      }
+    }
+    return onlyDigits;
+  }
+
+  // Two digits input with no delimiter
+  if (onlyDigits.length === 2 && !normalized.includes('/')) {
+    if (isDelete) return onlyDigits;
+    let m = parseInt(onlyDigits, 10);
+    if (m === 0) return '01/';
+    if (m > 12) {
+      return `01/${onlyDigits[1]}`;
+    }
+    return `${onlyDigits}/`;
+  }
+
+  // If slash exists
+  if (normalized.includes('/')) {
+    const parts = normalized.split('/');
+    const mPart = parts[0].replace(/\D/g, '');
+    const yyStr = parts.slice(1).join('').replace(/\D/g, '').slice(0, 4);
+
+    let mmStr = '';
+    if (mPart.length === 0) {
+      mmStr = '';
+    } else if (mPart.length === 1) {
+      if (isDelete) {
+        mmStr = mPart;
+      } else {
+        const d = parseInt(mPart, 10);
+        if (d >= 2 && d <= 9) {
+          mmStr = `0${d}`;
+        } else {
+          mmStr = mPart;
+        }
+      }
+    } else if (mPart.length >= 2) {
+      let m = parseInt(mPart.slice(0, 2), 10);
+      if (m === 0) mmStr = '01';
+      else if (m > 12) mmStr = '12';
+      else mmStr = mPart.slice(0, 2);
+    }
+
+    if (!mmStr && !yyStr) return '';
+    if (!mmStr && yyStr) return `/${yyStr}`;
+    if (!yyStr && !normalized.endsWith('/')) {
+      return mmStr;
+    }
+    return `${mmStr}/${yyStr}`;
+  }
+
+  // Pure digits >= 3 (no delimiter typed)
+  let mmStr = '';
+  let yyStr = '';
+  let m = parseInt(onlyDigits.slice(0, 2), 10);
+  if (m === 0) {
+    mmStr = '01';
+    yyStr = onlyDigits.slice(2, 6);
+  } else if (m > 12) {
+    mmStr = '01';
+    yyStr = onlyDigits.slice(1, 5);
+  } else {
+    mmStr = onlyDigits.slice(0, 2);
+    yyStr = onlyDigits.slice(2, 6);
+  }
+
+  if (!mmStr) return '';
+  if (!yyStr && !normalized.endsWith('/')) {
+    return mmStr;
+  }
+  return `${mmStr}/${yyStr}`;
+};
+
+export const getExpiryCursorPosition = (
+  prevVal: string,
+  rawVal: string,
+  rawCursor: number,
+  formattedVal: string,
+  isDelete: boolean
+): number => {
+  if (!formattedVal) return 0;
+  if (rawCursor === 0) return 0;
+
+  // If user typed 2nd digit of month (cursor at 2) and formatted string has slash at index 2, step over slash
+  if (!isDelete && rawCursor === 2 && formattedVal.length >= 3 && formattedVal[2] === '/') {
+    return 3;
+  }
+
+  if (formattedVal === rawVal) {
+    return Math.min(rawCursor, formattedVal.length);
+  }
+
+  // Auto-padded single digit month (e.g. 8 -> 08/ or 8/2028 -> 08/2028)
+  if (!isDelete && rawCursor <= 2) {
+    const rawMonthDigits = rawVal.split('/')[0].replace(/\D/g, '');
+    const formattedMonthDigits = formattedVal.split('/')[0].replace(/\D/g, '');
+    if (rawMonthDigits.length === 1 && formattedMonthDigits.length === 2 && formattedMonthDigits.startsWith('0')) {
+      return formattedVal.includes('/') ? formattedVal.indexOf('/') + 1 : formattedVal.length;
+    }
+  }
+
+  // Count digits before the cursor in rawVal
+  const digitsBefore = rawVal.slice(0, rawCursor).replace(/\D/g, '').length;
+  if (digitsBefore === 0) {
+    return formattedVal.includes('/') && rawVal.startsWith('/') ? 0 : 0;
+  }
+
+  let count = 0;
+  for (let i = 0; i < formattedVal.length; i++) {
+    if (/\d/.test(formattedVal[i])) {
+      count++;
+      if (count === digitsBefore) {
+        if (i === 1 && formattedVal[2] === '/' && !isDelete) {
+          return 3;
+        }
+        return i + 1;
+      }
+    }
+  }
+
+  return Math.min(rawCursor, formattedVal.length);
+};
+
+export interface ExpiryTableInputProps {
+  id?: string;
+  value: string;
+  onChange: (formattedValue: string, parsedExpiryISO: string) => void;
+  onBlur?: () => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  className?: string;
+  placeholder?: string;
+  disabled?: boolean;
+}
+
+export const ExpiryTableInput = React.forwardRef<HTMLInputElement, ExpiryTableInputProps>(({
+  id,
+  value,
+  onChange,
+  onBlur,
+  onKeyDown,
+  className,
+  placeholder = 'MM/YYYY',
+  disabled = false,
+}, forwardedRef) => {
+  const innerRef = useRef<HTMLInputElement | null>(null);
+  const cursorRef = useRef<number | null>(null);
+  const isMouseFocusRef = useRef(false);
+
+  useImperativeHandle(forwardedRef, () => innerRef.current as HTMLInputElement);
+
+  useLayoutEffect(() => {
+    if (cursorRef.current !== null && innerRef.current) {
+      const pos = Math.max(0, Math.min(cursorRef.current, innerRef.current.value.length));
+      innerRef.current.setSelectionRange(pos, pos);
+      cursorRef.current = null;
+    }
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    const rawCursor = input.selectionStart ?? input.value.length;
+    const inputType = (e.nativeEvent as InputEvent)?.inputType;
+    const isDelete = inputType
+      ? inputType.startsWith('delete')
+      : input.value.length < value.length;
+
+    const formatted = formatExpiryInput(input.value, value, isDelete);
+    const targetCursor = getExpiryCursorPosition(value, input.value, rawCursor, formatted, isDelete);
+    cursorRef.current = targetCursor;
+
+    requestAnimationFrame(() => {
+      if (innerRef.current && document.activeElement === innerRef.current) {
+        const pos = Math.max(0, Math.min(targetCursor, innerRef.current.value.length));
+        innerRef.current.setSelectionRange(pos, pos);
+      }
+    });
+
+    const parsed = parseExpiryDate(formatted);
+    onChange(formatted, parsed ? parsed.fullDate : '');
+  };
+
+  const handleBlur = () => {
+    if (value.trim()) {
+      const parsed = parseExpiryDate(value);
+      if (parsed) {
+        onChange(`${parsed.mm}/${parsed.yyyy}`, parsed.fullDate);
+      }
+    }
+    onBlur?.();
+  };
+
+  const handleMouseDown = () => {
+    if (document.activeElement !== innerRef.current) {
+      isMouseFocusRef.current = true;
+    }
+  };
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (!isMouseFocusRef.current) {
+      e.target.select();
+    }
+    isMouseFocusRef.current = false;
+  };
+
+  return (
+    <input
+      ref={innerRef}
+      id={id}
+      type="text"
+      value={value}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      onMouseDown={handleMouseDown}
+      onFocus={handleFocus}
+      onKeyDown={onKeyDown}
+      placeholder={placeholder}
+      disabled={disabled}
+      className={className}
+    />
+  );
+});
+ExpiryTableInput.displayName = 'ExpiryTableInput';
+
+export const formatExpiryDate = (dateStr: string | undefined): string => {
+  if (!dateStr || !dateStr.trim() || dateStr === '-') return '-';
+  const formatted = formatExpiryToMMYYYY(dateStr);
+  return formatted || dateStr;
 };
 export const formatNumber = (val: string | number): string => {
   if (val === undefined || val === null || val === '') return '';
-  
-  const rawStr = val.toString().replace(/,/g, '');
-  const parsedFloat = parseFloat(rawStr);
-  
-  if (!isNaN(parsedFloat)) {
-    return Math.round(parsedFloat).toLocaleString('en-US');
+
+  if (typeof val === 'number') {
+    if (isNaN(val)) return '';
+    const isNegative = val < 0;
+    const absVal = Math.abs(val);
+    const rounded = parseFloat(absVal.toFixed(4));
+    const str = rounded.toString();
+    const parts = str.split('.');
+    const intPart = parseInt(parts[0], 10);
+    const formattedInt = isNaN(intPart) ? '0' : intPart.toLocaleString('en-US');
+    const res = parts.length > 1 ? `${formattedInt}.${parts[1]}` : formattedInt;
+    return isNegative ? `-${res}` : res;
   }
 
-  const numStr = val.toString().replace(/[^\d]/g, '');
-  if (!numStr) return '';
-  const num = parseInt(numStr, 10);
-  if (isNaN(num)) return '';
-  return num.toLocaleString('en-US');
+  const rawStr = val.toString().trim();
+  if (!rawStr) return '';
+
+  const isNegative = rawStr.startsWith('-');
+  // Clean characters: keep only digits and dots
+  let cleaned = '';
+  let hasDot = false;
+  for (let i = 0; i < rawStr.length; i++) {
+    const char = rawStr[i];
+    if (char >= '0' && char <= '9') {
+      cleaned += char;
+    } else if (char === '.' && !hasDot) {
+      cleaned += '.';
+      hasDot = true;
+    }
+  }
+
+  if (!cleaned && !hasDot) return '';
+
+  const parts = cleaned.split('.');
+  const intStr = parts[0];
+  const decStr = parts.length > 1 ? parts[1] : undefined;
+
+  let formattedInt = '';
+  if (intStr) {
+    const parsedInt = parseInt(intStr, 10);
+    if (!isNaN(parsedInt)) {
+      formattedInt = parsedInt.toLocaleString('en-US');
+    }
+  } else if (hasDot) {
+    formattedInt = '0';
+  }
+
+  let result = formattedInt;
+  if (decStr !== undefined) {
+    result = `${formattedInt}.${decStr}`;
+  }
+
+  return isNegative ? `-${result}` : result;
 };
 export const PurchaseView: React.FC = () => {
-  const { purchases, supplierPayments, suppliers, products, recordPurchase, updatePurchase, deletePurchase, updateSupplierPayment, deleteSupplierPayment, exchangeRate, formatLBP, formatUSD, settings, addNotification } = usePharmacy();
+  const { purchases, supplierPayments, suppliers, products, recordPurchase, updatePurchase, deletePurchase, updateProduct, recordSupplierPayment, updateSupplierPayment, deleteSupplierPayment, exchangeRate, formatLBP, formatUSD, settings, addNotification } = usePharmacy();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'invoices' | 'payments'>('invoices');
   const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [selectedPaymentSupplierId, setSelectedPaymentSupplierId] = useState<string>('ALL');
+  const [initialSupplierIdForModal, setInitialSupplierIdForModal] = useState<string | undefined>(undefined);
+
+  const sortedSuppliersForPayment = useMemo(() => {
+    return [...suppliers].sort((a, b) => {
+      const aHasBalance = (a.balanceUSD || 0) >= 0.01 || (a.balanceLBP || 0) >= 1;
+      const bHasBalance = (b.balanceUSD || 0) >= 0.01 || (b.balanceLBP || 0) >= 1;
+      if (aHasBalance && !bHasBalance) return -1;
+      if (!aHasBalance && bHasBalance) return 1;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  }, [suppliers]);
 
   // Filter invoices and payments based on search query
   const filteredPurchases = purchases.filter(p => {
@@ -329,6 +774,35 @@ export const PurchaseView: React.FC = () => {
     );
   });
 
+  const suppliersForBalances = useMemo(() => {
+    return sortedSuppliersForPayment.filter(s => {
+      const hasBalance = (s.balanceUSD || 0) >= 0.01 || (s.balanceLBP || 0) >= 1;
+      if (!historySearchQuery.trim()) return hasBalance;
+      const q = historySearchQuery.toLowerCase();
+      return hasBalance && (s.name.toLowerCase().includes(q) || (s.code && s.code.toLowerCase().includes(q)));
+    });
+  }, [sortedSuppliersForPayment, historySearchQuery]);
+
+  const supplierInvoicesForView = useMemo(() => {
+    if (selectedPaymentSupplierId === 'ALL') return [];
+    return purchases.filter(p => p.supplierId === selectedPaymentSupplierId);
+  }, [purchases, selectedPaymentSupplierId]);
+
+  const paymentsForView = useMemo(() => {
+    return filteredPayments.filter(p => selectedPaymentSupplierId === 'ALL' || p.supplierId === selectedPaymentSupplierId);
+  }, [filteredPayments, selectedPaymentSupplierId]);
+
+  const openSupplierPaymentModal = (supplierId?: string, payment?: any) => {
+    if (payment) {
+      setPaymentToEdit(payment);
+      setInitialSupplierIdForModal(payment.supplierId);
+    } else {
+      setPaymentToEdit(null);
+      setInitialSupplierIdForModal(supplierId && supplierId !== 'ALL' ? supplierId : undefined);
+    }
+    setIsPaymentModalOpen(true);
+  };
+
   const [editingPurchaseId, setEditingPurchaseId] = useState<string | null>(null);
   const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null);
   const [editRowData, setEditRowData] = useState<{
@@ -341,6 +815,7 @@ export const PurchaseView: React.FC = () => {
     batch: string;
     expiry: string;
     displayExpiry: string;
+    unitPrice: string;
     pubPrice: string;
     discount: string;
     cost: string;
@@ -433,13 +908,15 @@ export const PurchaseView: React.FC = () => {
   const paymentStatusRef = useRef<HTMLSelectElement>(null);
   const currencyRef = useRef<HTMLSelectElement>(null);
   const invoiceNumberRef = useRef<HTMLInputElement>(null);
+  const receiptNumberRef = useRef<HTMLInputElement>(null);
 
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [invoiceNumberInput, setInvoiceNumberInput] = useState('');
   const [isPaid, setIsPaid] = useState(true);
+  const [paymentReceiptNumber, setPaymentReceiptNumber] = useState('');
   const [invoiceDiscount, setInvoiceDiscount] = useState('0');
   const [invoiceDiscountAmount, setInvoiceDiscountAmount] = useState('0');
-    const [manualTotal, setManualTotal] = useState('');
+  const [manualTotal, setManualTotal] = useState('');
   
 
   useEffect(() => {
@@ -481,6 +958,8 @@ export const PurchaseView: React.FC = () => {
   const [isPublicPriceFocused, setIsPublicPriceFocused] = useState(false);
   const [isDiscountFocused, setIsDiscountFocused] = useState(false);
   const [itemDiscount, setItemDiscount] = useState('0');
+  const [itemUnitPrice, setItemUnitPrice] = useState('0');
+  const [isUnitPriceFocused, setIsUnitPriceFocused] = useState(false);
   const [itemPublicPrice, setItemPublicPrice] = useState('0');
   const [itemBatch, setItemBatch] = useState('');
   const [itemExpiry, setItemExpiry] = useState('');
@@ -676,42 +1155,14 @@ export const PurchaseView: React.FC = () => {
     const lastExpiry = lastDetails.expiryDate;
 
     if (lastExpiry) {
-      if (lastExpiry.includes('-')) {
-        const parts = lastExpiry.split('-');
-        let year = parts[0].trim();
-        let month = parts[1] ? parts[1].trim() : '01';
-        if (year.length <= 2 && month.length === 4) {
-          const tmp = year;
-          year = month;
-          month = tmp;
-        }
-        if (year.length === 2) year = `20${year}`;
-        month = month.padStart(2, '0');
-        setItemExpiry(`${year}-${month}-01`);
-        setDisplayExpiry(`${month}/${year}`);
-      } else if (lastExpiry.includes('/')) {
-        const parts = lastExpiry.split('/');
-        const month = parts[0].trim().padStart(2, '0');
-        let year = parts[1].trim();
-        if (year.length === 2) year = `20${year}`;
-        setItemExpiry(`${year}-${month}-01`);
-        setDisplayExpiry(`${month}/${year}`);
+      const parsed = parseExpiryDate(lastExpiry);
+      if (parsed) {
+        setItemExpiry(parsed.fullDate);
+        setDisplayExpiry(`${parsed.mm}/${parsed.yyyy}`);
       } else {
-        const digits = lastExpiry.replace(/\D/g, '');
-        if (digits.length === 4) {
-          const month = digits.slice(0, 2);
-          const year = `20${digits.slice(2, 4)}`;
-          setItemExpiry(`${year}-${month}-01`);
-          setDisplayExpiry(`${month}/${year}`);
-        } else if (digits.length === 6) {
-          const month = digits.slice(0, 2);
-          const year = digits.slice(2, 6);
-          setItemExpiry(`${year}-${month}-01`);
-          setDisplayExpiry(`${month}/${year}`);
-        } else {
-          setItemExpiry(lastExpiry);
-          setDisplayExpiry(lastExpiry);
-        }
+        const formatted = formatExpiryToMMYYYY(lastExpiry);
+        setItemExpiry(lastExpiry);
+        setDisplayExpiry(formatted || lastExpiry);
       }
     } else {
       // If not found, keep it blank
@@ -736,39 +1187,22 @@ export const PurchaseView: React.FC = () => {
     }
     setItemDiscount(initialDiscount.toString());
 
-    const lastPurchasedPublicPriceUSD = lastDetails.lastItem?.sellingPriceUSD || 0;
-    const lastPurchasedPublicPriceLBP = lastDetails.lastItem?.sellingPriceLBP || 0;
-    const stockPublicPriceUSD = prod.priceUSD || 0;
-    const stockPublicPriceLBP = prod.priceLBP || 0;
+    const parsedCostForUnit = purchaseCurrency === 'USD' ? defaultCost : Math.round(defaultCost * exchangeRate);
+    const lastUnitPrice = purchaseCurrency === 'USD'
+      ? (lastDetails.lastItem?.unitPriceUSD || (lastDetails.lastItem?.discount ? (lastDetails.lastItem.unitCostUSD / (1 - lastDetails.lastItem.discount / 100)) : (lastDetails.lastItem?.unitCostUSD || defaultCost)))
+      : (lastDetails.lastItem?.unitPriceLBP || (lastDetails.lastItem?.discount ? Math.round(lastDetails.lastItem.unitCostLBP / (1 - lastDetails.lastItem.discount / 100)) : (lastDetails.lastItem?.unitCostLBP || Math.round(defaultCost * exchangeRate))));
+    const initialUnitPrice = lastUnitPrice > 0 ? lastUnitPrice : (initialDiscount < 100 && initialDiscount > 0 ? (parsedCostForUnit / (1 - initialDiscount / 100)) : parsedCostForUnit);
+    const finalUnitPrice = purchaseCurrency === 'LBP' ? Math.round(initialUnitPrice) : Number(initialUnitPrice.toFixed(2));
+    setItemUnitPrice(finalUnitPrice.toString());
 
-    let derivedPublicPrice = 0;
-    if (purchaseCurrency === 'USD') {
-      derivedPublicPrice = lastPurchasedPublicPriceUSD > 0 ? lastPurchasedPublicPriceUSD : stockPublicPriceUSD;
+    // Public price formula: [unit price + (unit price * vat%)]
+    const vatRate = itemVATChoice === 'setting' ? (settings.vatRates?.[prod.category] || 0) : 0;
+    let derivedPublicPrice = finalUnitPrice + (finalUnitPrice * (vatRate / 100));
+    if (purchaseCurrency === 'LBP') {
+      derivedPublicPrice = Math.round(derivedPublicPrice);
     } else {
-      derivedPublicPrice = lastPurchasedPublicPriceLBP > 0 ? lastPurchasedPublicPriceLBP : stockPublicPriceLBP;
+      derivedPublicPrice = Number(derivedPublicPrice.toFixed(2));
     }
-    
-    if (derivedPublicPrice === 0) {
-      const parsedCost = purchaseCurrency === 'USD' ? defaultCost : Math.round(defaultCost * exchangeRate);
-      if (initialDiscount < 100) {
-        derivedPublicPrice = parsedCost / (1 - initialDiscount / 100);
-      } else {
-        derivedPublicPrice = parsedCost;
-      }
-
-      // Add VAT if chosen
-      if (itemVATChoice === 'setting') {
-        const vatRate = settings.vatRates?.[prod.category] || 0;
-        derivedPublicPrice += parsedCost * (vatRate / 100);
-      }
-
-      if (purchaseCurrency === 'LBP') {
-        derivedPublicPrice = Math.round(derivedPublicPrice);
-      } else {
-        derivedPublicPrice = Math.round(derivedPublicPrice);
-      }
-    }
-    
     setItemPublicPrice(derivedPublicPrice.toString());
 
     if (autoFocusQty) {
@@ -919,42 +1353,27 @@ export const PurchaseView: React.FC = () => {
     }
   };
 
+  // Public price formula: [unit price + (unit price * vat%)]
   useEffect(() => {
-    if (itemPublicPrice === '0' || itemPublicPrice === '') {
-      const parsedCost = parseNumber(itemCostUSD) || 0;
-      const parsedDiscount = parseFloat(itemDiscount) || 0;
-      if (parsedCost > 0 && parsedDiscount < 100) {
-        let calc = parsedCost / (1 - parsedDiscount / 100);
-        
-        const vatRate = itemVATChoice === 'setting' && selectedProduct ? (settings.vatRates?.[selectedProduct.category] || 0) : 0;
-        calc += parsedCost * (vatRate / 100);
-
-        if (purchaseCurrency === 'LBP') calc = Math.round(calc);
-        else calc = Math.round(calc);
-        setItemPublicPrice(calc.toString());
-      }
-    }
-    // We explicitly omit `itemPublicPrice` from dependencies.
-    // This effect should only recalculate the public price when the COST or DISCOUNT
-    // changes from their source, AND the public price is currently blank/zero.
-    // Including `itemPublicPrice` causes a bug where the user deleting the last digit 
-    // triggers this effect, which sees '' and instantly repopulates it with the calculation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemCostUSD, itemDiscount, purchaseCurrency, itemVATChoice, selectedProduct, settings]);
+    if (isPublicPriceFocused) return;
+    const up = parseNumber(itemUnitPrice) || 0;
+    const vatRate = itemVATChoice === 'setting' && selectedProduct ? (settings.vatRates?.[selectedProduct.category] || 0) : 0;
+    let calc = up + (up * (vatRate / 100));
+    if (purchaseCurrency === 'LBP') calc = Math.round(calc);
+    else calc = Number(calc.toFixed(2));
+    setItemPublicPrice(calc.toString());
+  }, [itemUnitPrice, itemVATChoice, selectedProduct, settings, purchaseCurrency, isPublicPriceFocused]);
 
   useEffect(() => {
-    if (isPublicPriceFocused || isDiscountFocused) {
-      const pubPrice = parseNumber(itemPublicPrice) || 0;
+    if (isUnitPriceFocused || isDiscountFocused) {
+      const unitPr = parseNumber(itemUnitPrice) || 0;
       const discount = parseFloat(itemDiscount) || 0;
-      
-      let newCost = pubPrice - (pubPrice * (discount / 100));
-      
+      let newCost = unitPr - (unitPr * (discount / 100));
       if (purchaseCurrency === 'LBP') newCost = Math.round(newCost);
       else newCost = Number(newCost.toFixed(2));
-      
       setItemCostUSD(newCost.toString());
     }
-  }, [itemPublicPrice, itemDiscount, isPublicPriceFocused, isDiscountFocused, purchaseCurrency]);
+  }, [itemUnitPrice, itemDiscount, isUnitPriceFocused, isDiscountFocused, purchaseCurrency]);
 
   useEffect(() => {
     if (!isTotalFocused) {
@@ -963,54 +1382,39 @@ export const PurchaseView: React.FC = () => {
       let calculated = qty * cost;
       if (purchaseCurrency !== 'USD') {
         calculated = Math.round(calculated);
+      } else {
+        calculated = Number(calculated.toFixed(2));
       }
       setItemTotalInput(calculated.toString());
     }
   }, [itemCostUSD, itemQty, isTotalFocused, purchaseCurrency]);
 
   const handleExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.target.value;
-    let digits = input.replace(/[^\d]/g, '');
-    if (digits.length > 6) digits = digits.slice(0, 6);
-
-    let formatted = digits;
-    if (digits.length > 2) {
-      formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
-    } else if (digits.length === 2 && input.endsWith('/')) {
-      formatted = `${digits}/`;
-    }
-
+    const inputType = (e.nativeEvent as InputEvent)?.inputType;
+    const isDelete = inputType
+      ? inputType.startsWith('delete')
+      : e.target.value.length < displayExpiry.length;
+    const formatted = formatExpiryInput(e.target.value, displayExpiry, isDelete);
     setDisplayExpiry(formatted);
+    const parsed = parseExpiryDate(formatted);
+    if (parsed) {
+      setItemExpiry(parsed.fullDate);
+    } else if (!formatted.trim()) {
+      setItemExpiry('');
+    }
   };
 
   const handleExpiryBlur = () => {
-    let input = displayExpiry.trim();
+    const input = displayExpiry.trim();
     if (!input) {
       setItemExpiry('');
       return;
     }
 
-    const digits = input.replace(/[^\d]/g, '');
-    let m = 0, y = 0;
-
-    if (digits.length === 4) {
-      m = parseInt(digits.slice(0, 2), 10);
-      y = 2000 + parseInt(digits.slice(2, 4), 10);
-    } else if (digits.length === 6) {
-      m = parseInt(digits.slice(0, 2), 10);
-      y = parseInt(digits.slice(2, 6), 10);
-    } else {
-      return;
-    }
-
-    if (m >= 1 && m <= 12) {
-      const d = new Date(y, m, 0).getDate();
-      const dd = d.toString().padStart(2, '0');
-      const mm = m.toString().padStart(2, '0');
-      const yyyy = y.toString();
-      
-      setDisplayExpiry(`${mm}/${yyyy}`);
-      setItemExpiry(`${yyyy}-${mm}-${dd}`);
+    const parsed = parseExpiryDate(input);
+    if (parsed) {
+      setDisplayExpiry(`${parsed.mm}/${parsed.yyyy}`);
+      setItemExpiry(parsed.fullDate);
     }
   };
 
@@ -1173,10 +1577,11 @@ export const PurchaseView: React.FC = () => {
     free: 70,
     batch: 80,
     expiry: 80,
-    pubPrice: 80,
+    unitPrice: 80,
     discount: 70,
     cost: 80,
     vat: 70,
+    pubPrice: 80,
     profit: 70,
     total: 90,
     action: 60,
@@ -1224,52 +1629,38 @@ export const PurchaseView: React.FC = () => {
     const free = isNaN(parsedFree) ? 0 : parsedFree;
     const parsedCost = parseNumber(itemCostUSD);
     const parsedDiscount = parseFloat(itemDiscount) || 0;
+    const parsedUnitPrice = parseNumber(itemUnitPrice) || 0;
     const parsedPublicPrice = parseNumber(itemPublicPrice) || 0;
     
     let costUSD = 0;
     let costLBP = 0;
+    let unitPriceUSD = 0;
+    let unitPriceLBP = 0;
     let publicPriceUSD = 0;
     let publicPriceLBP = 0;
     
     if (purchaseCurrency === 'USD') {
       costUSD = isNaN(parsedCost) ? (selectedProduct.costPriceUSD || 0) : parsedCost;
       costLBP = Math.round(costUSD * exchangeRate);
+      unitPriceUSD = parsedUnitPrice;
+      unitPriceLBP = Math.round(parsedUnitPrice * exchangeRate);
       publicPriceUSD = parsedPublicPrice;
       publicPriceLBP = Math.round(parsedPublicPrice * exchangeRate);
     } else {
       costLBP = isNaN(parsedCost) ? Math.round((selectedProduct.costPriceUSD || 0) * exchangeRate) : parsedCost;
       costUSD = costLBP / exchangeRate;
+      unitPriceLBP = parsedUnitPrice;
+      unitPriceUSD = parsedUnitPrice / exchangeRate;
       publicPriceLBP = parsedPublicPrice;
       publicPriceUSD = parsedPublicPrice / exchangeRate;
     }
 
     let finalExpiry = itemExpiry;
-    if (!finalExpiry && displayExpiry.trim()) {
-      const digits = displayExpiry.replace(/\D/g, '');
-      let d = 0, m = 0, y = 0;
-      if (digits.length === 4) {
-        m = parseInt(digits.slice(0, 2), 10);
-        y = 2000 + parseInt(digits.slice(2, 4), 10);
-      } else if (digits.length === 6) {
-        const p1 = parseInt(digits.slice(0, 2), 10);
-        const p2 = parseInt(digits.slice(2, 4), 10);
-        const p3 = parseInt(digits.slice(4, 6), 10);
-        if (p1 <= 12 && p2 === 20) {
-           m = p1; y = parseInt(digits.slice(2, 6), 10);
-        } else if (p2 <= 12) {
-           d = p1; m = p2; y = 2000 + p3;
-        } else {
-           m = p1; y = parseInt(digits.slice(2, 6), 10);
-        }
-      } else if (digits.length === 8) {
-        d = parseInt(digits.slice(0, 2), 10);
-        m = parseInt(digits.slice(2, 4), 10);
-        y = parseInt(digits.slice(4, 8), 10);
-      }
-      if (m >= 1 && m <= 12) {
-        if (d === 0 || d > 31) d = new Date(y, m, 0).getDate();
-        finalExpiry = `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
-      } else {
+    if (displayExpiry.trim()) {
+      const parsed = parseExpiryDate(displayExpiry);
+      if (parsed) {
+        finalExpiry = parsed.fullDate;
+      } else if (!finalExpiry) {
         finalExpiry = displayExpiry.trim();
       }
     }
@@ -1282,6 +1673,8 @@ export const PurchaseView: React.FC = () => {
         productName: selectedProduct.name,
         quantity: qty,
         freeQty: free,
+        unitPriceUSD,
+        unitPriceLBP,
         unitCostUSD: costUSD,
         unitCostLBP: costLBP,
         sellingPriceLBP: publicPriceLBP,
@@ -1305,6 +1698,7 @@ export const PurchaseView: React.FC = () => {
     setItemCostUSD('0');
     setItemTotalInput('0');
     setItemDiscount('0');
+    setItemUnitPrice('0');
     setItemPublicPrice('0');
     setItemBatch('');
     setItemExpiry('');
@@ -1327,6 +1721,9 @@ export const PurchaseView: React.FC = () => {
     const match = products.find(p => p.id === item.productId);
     const vatRate = match ? (settings.vatRates?.[match.category] || 0) : 0;
     const unitCost = purchaseCurrency === 'USD' ? item.unitCostUSD : item.unitCostLBP;
+    const unitPrice = purchaseCurrency === 'USD' 
+      ? (item.unitPriceUSD ?? item.sellingPriceUSD ?? item.unitCostUSD) 
+      : (item.unitPriceLBP ?? item.sellingPriceLBP ?? item.unitCostLBP);
     const pubPrice = purchaseCurrency === 'USD' ? (item.sellingPriceUSD || 0) : item.sellingPriceLBP;
     const total = unitCost * item.quantity;
     const totalQty = item.quantity + (item.freeQty || 0);
@@ -1344,11 +1741,12 @@ export const PurchaseView: React.FC = () => {
       qty: item.quantity.toString(),
       free: (item.freeQty || 0).toString(),
       cost: unitCost.toString(),
+      unitPrice: unitPrice.toString(),
       pubPrice: pubPrice.toString(),
       discount: (item.discount || 0).toString(),
       batch: item.batchNumber || '',
       expiry: item.expiryDate || '',
-      displayExpiry: item.expiryDate || '',
+      displayExpiry: formatExpiryToMMYYYY(item.expiryDate) || item.expiryDate || '',
       vat: vatRate.toString(),
       profit: profitPerc.toString(),
       total: total.toString()
@@ -1367,41 +1765,38 @@ export const PurchaseView: React.FC = () => {
     const freeQty = isNaN(parsedFree) ? 0 : parsedFree;
     const parsedCost = parseNumber(editRowData.cost);
     const parsedDiscount = parseFloat(editRowData.discount) || 0;
+    const parsedUnitPrice = parseNumber(editRowData.unitPrice) || 0;
     const parsedPublicPrice = parseNumber(editRowData.pubPrice) || 0;
     
     let costUSD = 0;
     let costLBP = 0;
+    let unitPriceUSD = 0;
+    let unitPriceLBP = 0;
     let publicPriceUSD = 0;
     let publicPriceLBP = 0;
     
     if (purchaseCurrency === 'USD') {
       costUSD = isNaN(parsedCost) ? (match.costPriceUSD || 0) : parsedCost;
       costLBP = Math.round(costUSD * exchangeRate);
+      unitPriceUSD = parsedUnitPrice;
+      unitPriceLBP = Math.round(parsedUnitPrice * exchangeRate);
       publicPriceUSD = parsedPublicPrice;
       publicPriceLBP = Math.round(parsedPublicPrice * exchangeRate);
     } else {
       costLBP = isNaN(parsedCost) ? Math.round((match.costPriceUSD || 0) * exchangeRate) : parsedCost;
       costUSD = costLBP / exchangeRate;
+      unitPriceLBP = parsedUnitPrice;
+      unitPriceUSD = parsedUnitPrice / exchangeRate;
       publicPriceLBP = parsedPublicPrice;
       publicPriceUSD = parsedPublicPrice / exchangeRate;
     }
 
     let finalExpiry = editRowData.expiry;
-    if (!finalExpiry && editRowData.displayExpiry.trim()) {
-      const digits = editRowData.displayExpiry.replace(/\D/g, '');
-      let m = 0, y = 0;
-      if (digits.length === 4) {
-        m = parseInt(digits.slice(0, 2), 10);
-        y = 2000 + parseInt(digits.slice(2, 4), 10);
-      } else if (digits.length === 6) {
-        m = parseInt(digits.slice(0, 2), 10);
-        y = parseInt(digits.slice(2, 6), 10);
-      }
-      
-      if (m >= 1 && m <= 12 && y > 0) {
-        const d = new Date(y, m, 0).getDate();
-        finalExpiry = `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
-      } else {
+    if (editRowData.displayExpiry.trim()) {
+      const parsed = parseExpiryDate(editRowData.displayExpiry);
+      if (parsed) {
+        finalExpiry = parsed.fullDate;
+      } else if (!finalExpiry) {
         finalExpiry = editRowData.displayExpiry.trim();
       }
     }
@@ -1415,6 +1810,8 @@ export const PurchaseView: React.FC = () => {
         quantity: qty,
         freeQty: freeQty,
         isPiece: editRowData.unit === 'piece',
+        unitPriceUSD,
+        unitPriceLBP,
         unitCostUSD: costUSD,
         unitCostLBP: costLBP,
         sellingPriceLBP: publicPriceLBP,
@@ -1484,6 +1881,7 @@ export const PurchaseView: React.FC = () => {
     if (items.length === 0) return;
 
     const supplier = suppliers.find((s) => s.id === selectedSupplierId);
+    let createdPurchase: PurchaseInvoice | undefined;
 
     if (editingPurchaseId) {
       updatePurchase(editingPurchaseId, {
@@ -1499,8 +1897,35 @@ export const PurchaseView: React.FC = () => {
         invoiceDiscountAmount: parsedInvoiceDiscountAmt,
         ...(invoiceNumberInput.trim() ? { invoiceNumber: invoiceNumberInput.trim() } : {}),
       });
+
+      if (isPaid && paymentReceiptNumber.trim()) {
+        const existingPayment = supplierPayments.find(p => p.invoices && p.invoices.includes(editingPurchaseId));
+        if (existingPayment) {
+          updateSupplierPayment(existingPayment.id, {
+            receiptNumber: paymentReceiptNumber.trim(),
+            date: invoiceDate,
+            amount: purchaseCurrency === 'USD' ? totalCostUSD : totalCostLBP,
+            currency: purchaseCurrency,
+            supplierId: selectedSupplierId,
+            supplierName: supplier?.name || 'General Supplier',
+          });
+        } else {
+          recordSupplierPayment({
+            receiptNumber: paymentReceiptNumber.trim(),
+            date: invoiceDate,
+            supplierId: selectedSupplierId,
+            supplierName: supplier?.name || 'General Supplier',
+            amount: purchaseCurrency === 'USD' ? totalCostUSD : totalCostLBP,
+            currency: purchaseCurrency,
+            invoices: [editingPurchaseId],
+            isPaymentOnAccount: false,
+          });
+        }
+      }
     } else {
-      recordPurchase({
+      const shouldAutoRecordPayment = isPaid && paymentReceiptNumber.trim().length > 0;
+
+      createdPurchase = recordPurchase({
         supplierId: selectedSupplierId,
         supplierName: supplier?.name || 'General Supplier',
         date: invoiceDate,
@@ -1509,14 +1934,57 @@ export const PurchaseView: React.FC = () => {
         totalCostLBP,
         exchangeRate,
         status: 'received',
-        paid: isPaid,
+        paid: shouldAutoRecordPayment ? false : isPaid,
         currency: purchaseCurrency,
         ...(invoiceNumberInput.trim() ? { invoiceNumber: invoiceNumberInput.trim() } : {}),
       });
+
+      if (shouldAutoRecordPayment && createdPurchase) {
+        recordSupplierPayment({
+          receiptNumber: paymentReceiptNumber.trim(),
+          date: invoiceDate,
+          supplierId: selectedSupplierId,
+          supplierName: supplier?.name || 'General Supplier',
+          amount: purchaseCurrency === 'USD' ? totalCostUSD : totalCostLBP,
+          currency: purchaseCurrency,
+          invoices: [createdPurchase.id],
+          isPaymentOnAccount: false,
+        });
+      }
+    }
+
+    // Synchronize all batch expiries across products from historical and new purchases
+    const allPurchasesNow = editingPurchaseId
+      ? purchases.map(p => (p.id === editingPurchaseId ? { ...p, items } : p))
+      : (createdPurchase ? [createdPurchase, ...purchases] : purchases);
+
+    const affectedProductIds = Array.from(new Set(items.map(it => it.productId).filter(Boolean)));
+    for (const pid of affectedProductIds) {
+      const prod = products.find(p => p.id === pid);
+      if (prod) {
+        const addedQty = !editingPurchaseId
+          ? items.filter(it => it.productId === pid).reduce((acc, it) => acc + (it.isPiece && prod.piecesPerBox ? it.quantity / prod.piecesPerBox : it.quantity), 0)
+          : 0;
+        const prodForResolution = addedQty > 0 ? { ...prod, stockQuantity: prod.stockQuantity + addedQty } : prod;
+        const resolved = resolveProductBatches(prodForResolution, allPurchasesNow);
+        if (resolved.length > 0) {
+          const activeFirst = resolved.find(b => (b.quantity || 0) > 0) || resolved[0];
+          updateProduct(prod.id, {
+            expiryDate: activeFirst.expiryDate || prod.expiryDate,
+            batchNumber: activeFirst.batchNumber || prod.batchNumber,
+            batches: resolved.map(b => ({
+              batchNumber: b.batchNumber,
+              expiryDate: b.expiryDate,
+              quantity: b.quantity
+            }))
+          });
+        }
+      }
     }
 
     setItems([]);
     setEditingPurchaseId(null);
+    setPaymentReceiptNumber('');
     setIsCreateOpen(false);
   };
 
@@ -1529,6 +1997,7 @@ export const PurchaseView: React.FC = () => {
     setItems([]);
     setInvoiceDate(new Date().toISOString().split('T')[0]);
     setIsPaid(true);
+    setPaymentReceiptNumber('');
     setPurchaseCurrency('LBP');
     setInvoiceDiscount('0');
     setInvoiceDiscountAmount('0');
@@ -1561,6 +2030,8 @@ export const PurchaseView: React.FC = () => {
     setInvoiceDate(inv.date);
     setInvoiceNumberInput(inv.invoiceNumber || '');
     setIsPaid(inv.paid);
+    const existingPayment = supplierPayments.find(p => p.invoices && p.invoices.includes(inv.id));
+    setPaymentReceiptNumber(existingPayment?.receiptNumber || '');
     setPurchaseCurrency(inv.currency || 'LBP');
     setItems(inv.items || []);
     setInvoiceDiscount((inv.invoiceDiscount || 0).toString());
@@ -1579,6 +2050,8 @@ export const PurchaseView: React.FC = () => {
     setInvoiceDate(inv.date);
     setInvoiceNumberInput(inv.invoiceNumber || '');
     setIsPaid(inv.paid);
+    const existingPayment = supplierPayments.find(p => p.invoices && p.invoices.includes(inv.id));
+    setPaymentReceiptNumber(existingPayment?.receiptNumber || '');
     setPurchaseCurrency(inv.currency || 'LBP');
     setItems(inv.items || []);
     setInvoiceDiscount((inv.invoiceDiscount || 0).toString());
@@ -1641,7 +2114,7 @@ export const PurchaseView: React.FC = () => {
             )}
             {activeTab === 'payments' && (
               <button
-                onClick={() => setIsPaymentModalOpen(true)}
+                onClick={() => openSupplierPaymentModal(selectedPaymentSupplierId !== 'ALL' ? selectedPaymentSupplierId : undefined)}
                 className="flex items-center space-x-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-teal-700 shadow-2xs transition-colors cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -1689,76 +2162,223 @@ export const PurchaseView: React.FC = () => {
       </div>
 
       {activeTab === 'payments' ? (
-        <div className="flex-1 overflow-hidden rounded border border-gray-200 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col">
-          <div className="flex-1 overflow-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="sticky top-0 z-10 border-b border-gray-200 bg-gray-50 text-[10px] font-bold uppercase tracking-wider text-gray-600 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300">
-                <tr>
-                  <th className="py-2 px-3">ID</th>
-                  <th className="py-2 px-3">Receipt #</th>
-                  <th className="py-2 px-3">Date</th>
-                  <th className="py-2 px-3">Supplier</th>
-                  <th className="py-2 px-3">Amount</th>
-                  <th className="py-2 px-3">Payment Type</th>
-                  <th className="py-2 px-3">Invoices Covered</th>
-                  <th className="py-2 px-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                {filteredPayments && filteredPayments.length > 0 ? (
-                  filteredPayments.map((payment) => (
-                    <tr key={payment.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                      <td className="py-2 px-3 font-mono font-bold text-teal-600 dark:text-teal-400">{payment.id.startsWith('RCT-') ? payment.id : payment.id.split('-')[0]}</td>
-                      <td className="py-2 px-3 font-mono font-bold text-slate-900 dark:text-slate-100">{payment.receiptNumber}</td>
-                      <td className="py-2 px-3 text-gray-600 dark:text-slate-300">{payment.date}</td>
-                      <td className="py-2 px-3 font-semibold text-slate-900 dark:text-slate-100">{payment.supplierName}</td>
-                      <td className="py-2 px-3 font-bold text-teal-600 dark:text-teal-400">
-                        {payment.currency === 'USD' ? `$${formatNumber(payment.amount)}` : `${formatLBPValue(payment.amount)} LBP`}
-                      </td>
-                      <td className="py-2 px-3">
-                        <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${payment.isPaymentOnAccount ? 'bg-indigo-50 text-indigo-800 border border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300' : 'bg-green-50 text-green-800 border border-green-200 dark:bg-green-950 dark:text-green-300'}`}>
-                          {payment.isPaymentOnAccount ? 'On Account' : 'Specific Invoices'}
-                        </span>
-                      </td>
-                      <td className="py-2 px-3 text-gray-500">
-                        {payment.invoices.length > 0 ? `${payment.invoices.length} invoices` : 'N/A'}
-                      </td>
-                      <td className="py-2 px-3 text-right">
-                        <div className="flex items-center justify-end space-x-2">
-                          <button
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
-                              setPaymentToEdit(payment);
-                              setIsPaymentModalOpen(true);
-                            }}
-                            className="p-1.5 text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:text-teal-400 dark:hover:bg-teal-900/30 rounded"
-                            title="Edit Payment"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
-                              setPaymentToDelete(payment.id);
-                            }}
-                            className="p-1.5 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/30 rounded"
-                            title="Delete Payment"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+        <div className="flex-1 flex flex-col gap-3 overflow-hidden min-h-0">
+          {/* Supplier Filter */}
+          <div className="flex items-center gap-2 rounded border border-gray-200 bg-white p-2 shadow-2xs dark:border-slate-800 dark:bg-slate-900 shrink-0">
+            <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Filter by Supplier:</label>
+            <select
+              value={selectedPaymentSupplierId}
+              onChange={(e) => setSelectedPaymentSupplierId(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-800 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 flex-1 max-w-sm font-medium"
+            >
+              <option value="ALL">-- All Suppliers --</option>
+              {sortedSuppliersForPayment.map(s => {
+                const hasUsd = (s.balanceUSD || 0) >= 0.01;
+                const hasLbp = (s.balanceLBP || 0) >= 1;
+                return (
+                  <option key={s.id} value={s.id}>
+                    {s.name} {hasUsd || hasLbp ? `(Bal: ${hasUsd ? '$' + formatNumber(s.balanceUSD) : ''}${hasUsd && hasLbp ? ' | ' : ''}${hasLbp ? formatNumber(s.balanceLBP) + ' LBP' : ''})` : ''}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          <div className="flex-1 flex flex-col md:flex-row gap-3 overflow-hidden min-h-0">
+            {/* Left Column: Balances or Invoices */}
+            <div className="flex-1 flex flex-col overflow-y-auto rounded border border-gray-200 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+              <div className="p-3 border-b border-gray-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center shrink-0">
+                 <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                   {selectedPaymentSupplierId === 'ALL' ? 'Supplier Balances' : 'Supplier Invoices (Purchases)'}
+                 </h3>
+                 {selectedPaymentSupplierId !== 'ALL' ? (
+                   <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">
+                     Total Invoices: {supplierInvoicesForView.length}
+                   </span>
+                 ) : (
+                   <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">
+                     {suppliersForBalances.length} active with debt
+                   </span>
+                 )}
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {selectedPaymentSupplierId === 'ALL' ? (
+                  <table className="w-full text-left text-xs text-slate-800 dark:text-slate-200">
+                    <thead className="bg-slate-50 text-[10px] font-bold uppercase text-slate-500 dark:bg-slate-800/50 dark:text-slate-400 sticky top-0">
+                      <tr>
+                        <th className="px-4 py-3">Supplier</th>
+                        <th className="px-4 py-3 text-right">Debt (USD)</th>
+                        <th className="px-4 py-3 text-right">Debt (LBP)</th>
+                        <th className="px-4 py-3 text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                      {suppliersForBalances.map((sup) => (
+                        <tr key={sup.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                          <td className="px-4 py-3 font-semibold">
+                            <div>{sup.name}</div>
+                            {sup.code && !sup.code.toUpperCase().startsWith('MOPH-') && (
+                              <span className="text-[10px] text-slate-400 font-mono">{sup.code}</span>
+                            )}
+                          </td>
+                          <td className={`px-4 py-3 text-right font-bold ${(sup.balanceUSD || 0) >= 0.01 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                            ${formatNumber((sup.balanceUSD || 0) >= 0.01 ? sup.balanceUSD : 0)}
+                          </td>
+                          <td className={`px-4 py-3 text-right font-bold ${(sup.balanceLBP || 0) >= 1 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                            {formatLBPValue((sup.balanceLBP || 0) >= 1 ? sup.balanceLBP : 0)} LBP
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              onClick={() => openSupplierPaymentModal(sup.id)}
+                              className="inline-flex items-center gap-1 rounded bg-teal-50 px-2 py-1 text-[10px] font-bold text-teal-700 border border-teal-200 hover:bg-teal-100 dark:bg-teal-900/30 dark:text-teal-400 dark:border-teal-800 transition-colors cursor-pointer"
+                            >
+                              <DollarSign className="h-3 w-3" />
+                              Pay
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {suppliersForBalances.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                            No outstanding balances.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 ) : (
-                  <tr>
-                    <td colSpan={6} className="py-10 text-center text-gray-400">
-                      No supplier payments recorded yet.
-                    </td>
-                  </tr>
+                  <table className="w-full text-left text-xs text-slate-800 dark:text-slate-200">
+                    <thead className="bg-slate-50 text-[10px] font-bold uppercase text-slate-500 dark:bg-slate-800/50 dark:text-slate-400 sticky top-0">
+                      <tr>
+                        <th className="px-4 py-3">Date</th>
+                        <th className="px-4 py-3">Invoice #</th>
+                        <th className="px-4 py-3 text-center">Currency</th>
+                        <th className="px-4 py-3 text-right">Total (USD)</th>
+                        <th className="px-4 py-3 text-right">Total (LBP)</th>
+                        <th className="px-4 py-3 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                      {supplierInvoicesForView.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                            No purchase transactions found for this supplier.
+                          </td>
+                        </tr>
+                      ) : (
+                        supplierInvoicesForView.map((p) => {
+                          const isLBP = p.currency === 'LBP';
+                          return (
+                            <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                              <td className="px-4 py-3 text-gray-500">{p.date}</td>
+                              <td className="px-4 py-3 font-semibold">{p.invoiceNumber}</td>
+                              <td className="px-4 py-3 text-center text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                {isLBP ? 'LBP' : 'USD ($)'}
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <span className={!isLBP ? 'text-emerald-600 dark:text-emerald-400 font-extrabold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 inline-block whitespace-nowrap' : 'text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap'}>
+                                  ${formatNumber(p.totalCostUSD)}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <span className={isLBP ? 'text-emerald-600 dark:text-emerald-400 font-extrabold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 inline-block whitespace-nowrap' : 'text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap'}>
+                                  {formatLBPValue(p.totalCostLBP)}&nbsp;LBP
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                                  p.paid 
+                                    ? 'bg-green-50 text-green-700 border border-green-200 dark:bg-green-950 dark:text-green-300' 
+                                    : (p.paidAmountUSD || 0) > 0 || (p.paidAmountLBP || 0) > 0 
+                                      ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950 dark:text-amber-300' 
+                                      : 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950 dark:text-rose-300'
+                                }`}>
+                                  {p.paid ? 'Settled' : (p.paidAmountUSD || 0) > 0 || (p.paidAmountLBP || 0) > 0 ? 'Partial' : 'Unpaid'}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
                 )}
-              </tbody>
-            </table>
+              </div>
+            </div>
+            
+            {/* Right Column: Recent Payments */}
+            <div className="flex-1 flex flex-col overflow-y-auto rounded border border-gray-200 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+              <div className="p-3 border-b border-gray-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center shrink-0">
+                 <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300">Recent Payments</h3>
+                 <button
+                   onClick={() => openSupplierPaymentModal(selectedPaymentSupplierId !== 'ALL' ? selectedPaymentSupplierId : undefined)}
+                   className="inline-flex items-center gap-1 rounded bg-teal-50 px-2 py-1 text-[10px] font-bold text-teal-700 border border-teal-200 hover:bg-teal-100 dark:bg-teal-900/30 dark:text-teal-400 dark:border-teal-800 transition-colors cursor-pointer"
+                 >
+                   <DollarSign className="h-3 w-3" />
+                   New Payment
+                 </button>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                <table className="w-full text-left text-xs text-slate-800 dark:text-slate-200">
+                  <thead className="bg-slate-50 text-[10px] font-bold uppercase text-slate-500 dark:bg-slate-800/50 dark:text-slate-400 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-4 py-3">Receipt #</th>
+                      {selectedPaymentSupplierId === 'ALL' && <th className="px-4 py-3">Supplier</th>}
+                      <th className="px-4 py-3 text-right">Amount</th>
+                      <th className="px-4 py-3 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                    {paymentsForView.length === 0 ? (
+                      <tr>
+                        <td colSpan={selectedPaymentSupplierId === 'ALL' ? 5 : 4} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                          No payments recorded yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      paymentsForView.map((payment) => (
+                        <tr key={payment.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                          <td className="px-4 py-3 text-gray-500">
+                            {payment.date}
+                          </td>
+                          <td className="px-4 py-3 font-mono font-bold text-slate-900 dark:text-slate-100">
+                            {payment.receiptNumber || (payment.id.startsWith('RCT-') ? payment.id : payment.id.split('-')[0])}
+                          </td>
+                          {selectedPaymentSupplierId === 'ALL' && (
+                            <td className="px-4 py-3 font-semibold text-slate-900 dark:text-slate-100">{payment.supplierName}</td>
+                          )}
+                          <td className="px-4 py-3 text-right font-bold text-teal-600 dark:text-teal-400 whitespace-nowrap">
+                            {payment.currency === 'MIXED'
+                              ? `$${formatNumber(payment.amountUSD || 0)} + ${formatLBPValue(payment.amountLBP || 0)} LBP`
+                              : payment.currency === 'USD' ? `$${formatNumber(payment.amount)}` : `${formatLBPValue(payment.amount)} LBP`}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={() => openSupplierPaymentModal(payment.supplierId, payment)}
+                                className="p-1 text-gray-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors cursor-pointer"
+                                title="Edit Payment"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setPaymentToDelete(payment.id)}
+                                className="p-1 text-gray-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
+                                title="Delete Payment"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       ) : (
@@ -1770,6 +2390,7 @@ export const PurchaseView: React.FC = () => {
               <tr>
                 <th className="py-2 px-3">ID</th>
                 <th className="py-2 px-3">Invoice #</th>
+                <th className="py-2 px-3 text-center">Currency</th>
                 <th className="py-2 px-3">Date</th>
                 <th className="py-2 px-3">Supplier</th>
                 <th className="py-2 px-3">Items Received</th>
@@ -1784,7 +2405,7 @@ export const PurchaseView: React.FC = () => {
             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
               {filteredPurchases.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-10 text-center text-gray-400">
+                  <td colSpan={12} className="py-10 text-center text-gray-400">
                     No purchase invoices registered yet.
                   </td>
                 </tr>
@@ -1801,6 +2422,9 @@ export const PurchaseView: React.FC = () => {
                     <td className="py-2 px-3 font-mono font-bold text-slate-900 dark:text-slate-100">
                       {inv.invoiceNumber}
                     </td>
+                    <td className="py-2 px-3 text-center text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      {inv.currency === 'LBP' ? 'LBP' : 'USD ($)'}
+                    </td>
                     <td className="py-2 px-3 text-gray-600 dark:text-slate-300">
                       {formatInvoiceDate(inv.date)}
                     </td>
@@ -1812,11 +2436,15 @@ export const PurchaseView: React.FC = () => {
                         {(inv.items || []).reduce((s, i) => s + i.quantity, 0)} units ({(inv.items || []).length} items)
                       </span>
                     </td>
-                    <td className="py-2 px-3 font-bold text-blue-600 dark:text-blue-400">
-                      ${inv.totalCostUSD.toFixed(2)}
+                    <td className="py-2 px-3 font-bold whitespace-nowrap">
+                      <span className={inv.currency !== 'LBP' ? 'text-emerald-600 dark:text-emerald-400 font-extrabold bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 inline-block whitespace-nowrap' : 'text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap'}>
+                        ${inv.totalCostUSD.toFixed(2)}
+                      </span>
                     </td>
-                    <td className="py-2 px-3 font-medium text-green-700 dark:text-green-400">
-                      {formatLBPValue(inv.totalCostLBP)} LBP
+                    <td className="py-2 px-3 whitespace-nowrap">
+                      <span className={inv.currency === 'LBP' ? 'text-emerald-600 dark:text-emerald-400 font-extrabold bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 inline-block whitespace-nowrap' : 'text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap'}>
+                        {formatLBPValue(inv.totalCostLBP)}&nbsp;LBP
+                      </span>
                     </td>
                     <td className="py-2 px-3 font-bold text-slate-700 dark:text-slate-300">
                       {(() => {
@@ -1921,7 +2549,7 @@ export const PurchaseView: React.FC = () => {
             }}
             className="px-3 pt-2 pb-3 space-y-2 text-xs flex-1 flex flex-col justify-start overflow-auto min-h-0"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1.2fr_1fr] gap-3">
+            <div className={`grid grid-cols-1 sm:grid-cols-2 ${isPaid ? 'lg:grid-cols-[1.8fr_1fr_0.8fr_1fr_1fr_1fr]' : 'lg:grid-cols-[2fr_1fr_1fr_1.2fr_1fr]'} gap-3`}>
               <div ref={supplierDropdownRef} className="relative">
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Supplier
@@ -2054,7 +2682,11 @@ export const PurchaseView: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      invoiceNumberRef.current?.focus();
+                      if (isPaid && receiptNumberRef.current) {
+                        receiptNumberRef.current.focus();
+                      } else {
+                        invoiceNumberRef.current?.focus();
+                      }
                     }
                   }}
                   disabled={isViewMode}
@@ -2064,6 +2696,29 @@ export const PurchaseView: React.FC = () => {
                   <option value="paid">Settled (Paid)</option>
                 </select>
               </div>
+              {isPaid && (
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Receipt Number
+                  </label>
+                  <input
+                    ref={receiptNumberRef}
+                    id="input-payment-receipt-number"
+                    type="text"
+                    value={paymentReceiptNumber}
+                    onChange={(e) => setPaymentReceiptNumber(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        invoiceNumberRef.current?.focus();
+                      }
+                    }}
+                    disabled={isViewMode}
+                    placeholder="e.g. REC-10293"
+                    className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 disabled:opacity-75 disabled:bg-slate-50 dark:disabled:bg-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                  />
+                </div>
+              )}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Invoice #
@@ -2143,10 +2798,11 @@ export const PurchaseView: React.FC = () => {
     <col style={{ width: colWidths.free }} />
     <col style={{ width: colWidths.batch }} />
     <col style={{ width: colWidths.expiry }} />
-    <col style={{ width: colWidths.pubPrice }} />
+    <col style={{ width: colWidths.unitPrice }} />
     <col style={{ width: colWidths.discount }} />
     <col style={{ width: colWidths.cost }} />
     <col style={{ width: colWidths.vat }} />
+    <col style={{ width: colWidths.pubPrice }} />
     <col style={{ width: colWidths.profit }} />
     <col style={{ width: colWidths.total }} />
     <col style={{ width: colWidths.action }} />
@@ -2162,10 +2818,11 @@ export const PurchaseView: React.FC = () => {
         { id: 'free', label: 'Free' },
         { id: 'batch', label: 'Batch' },
         { id: 'expiry', label: 'Expiry' },
-        { id: 'pubPrice', label: 'Pub Price' },
+        { id: 'unitPrice', label: 'Unit Price' },
         { id: 'discount', label: 'Disc %' },
         { id: 'cost', label: 'Cost' },
         { id: 'vat', label: 'VAT' },
+        { id: 'pubPrice', label: 'Public Price' },
         { id: 'profit', label: 'Profit' },
         { id: 'total', label: 'Total' },
       ].map(col => (
@@ -2316,63 +2973,81 @@ export const PurchaseView: React.FC = () => {
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                             {isEditing ? (
-                              <input
-                                type="text"
+                              <ExpiryTableInput
                                 value={editRowData.displayExpiry}
-                                onChange={(e) => {
-                                  const input = e.target.value;
-                                  let digits = input.replace(/[^\d]/g, '');
-                                  if (digits.length > 6) digits = digits.slice(0, 6);
-                                  let formatted = digits;
-                                  if (digits.length > 2) {
-                                    formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
-                                  } else if (digits.length === 2 && input.endsWith('/')) {
-                                    formatted = `${digits}/`;
-                                  }
-                                  setEditRowData({ ...editRowData, displayExpiry: formatted, expiry: '' });
+                                onChange={(formatted, iso) => {
+                                  setEditRowData({
+                                    ...editRowData,
+                                    displayExpiry: formatted,
+                                    expiry: iso
+                                  });
                                 }}
-                                onBlur={() => {
-                                  let input = editRowData.displayExpiry.trim();
-                                  if (!input) return;
-                                  const digits = input.replace(/[^\d]/g, '');
-                                  let m = 0, y = 0;
-                                  if (digits.length === 4) {
-                                    m = parseInt(digits.slice(0, 2), 10);
-                                    y = 2000 + parseInt(digits.slice(2, 4), 10);
-                                  } else if (digits.length === 6) {
-                                    m = parseInt(digits.slice(0, 2), 10);
-                                    y = parseInt(digits.slice(2, 6), 10);
-                                  }
-                                  if (m >= 1 && m <= 12 && y > 0) {
-                                    const mm = m.toString().padStart(2, '0');
-                                    const yyyy = y.toString();
-                                    setEditRowData({ ...editRowData, displayExpiry: `${mm}/${yyyy}` });
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    if (editRowData.displayExpiry.trim()) {
+                                      const parsed = parseExpiryDate(editRowData.displayExpiry);
+                                      if (parsed) {
+                                        setEditRowData({
+                                          ...editRowData,
+                                          displayExpiry: `${parsed.mm}/${parsed.yyyy}`,
+                                          expiry: parsed.fullDate
+                                        });
+                                      }
+                                    }
+                                    const tr = (e.target as HTMLElement).closest('tr');
+                                    const inputs = tr ? Array.from(tr.querySelectorAll('input')) : [];
+                                    const currentIdx = inputs.indexOf(e.target as HTMLInputElement);
+                                    if (currentIdx >= 0 && inputs[currentIdx + 1]) {
+                                      inputs[currentIdx + 1].focus();
+                                      inputs[currentIdx + 1].select();
+                                    }
                                   }
                                 }}
-                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100 text-center font-mono placeholder:text-slate-400 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none transition-colors"
                               />
                             ) : (
-                              <span className="px-2 text-slate-600 dark:text-slate-300">{formatExpiryDate(it.expiryDate)}</span>
+                              <span className="px-2 text-slate-600 dark:text-slate-300 font-mono">{formatExpiryDate(it.expiryDate)}</span>
                             )}
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                             {isEditing ? (
                               <input
                                 type="text"
-                                value={formatNumber(editRowData.pubPrice)}
+                                value={formatNumber(editRowData.unitPrice)}
                                 onChange={(e) => {
-                                  const newPubPrice = formatNumber(e.target.value);
-                                  const p = parseNumber(newPubPrice) || 0;
-                                  const c = parseNumber(editRowData.cost) || 0;
+                                  const newUnitPrice = formatNumber(e.target.value);
+                                  const up = parseNumber(newUnitPrice) || 0;
+                                  const d = parseFloat(editRowData.discount) || 0;
                                   const q = parseInt(editRowData.qty, 10) || 0;
                                   const f = parseInt(editRowData.free, 10) || 0;
-                                  const profitPerc = calculateProfitPerc(p, c, q, f);
-                                  setEditRowData({ ...editRowData, pubPrice: newPubPrice, profit: profitPerc });
+                                  const vat = parseFloat(editRowData.vat) || 0;
+
+                                  let newCost = up - (up * (d / 100));
+                                  if (purchaseCurrency === 'LBP') newCost = Math.round(newCost);
+                                  else newCost = Number(newCost.toFixed(2));
+
+                                  // Public price formula: [unit price + (unit price * vat%)]
+                                  let newPubPrice = up + (up * (vat / 100));
+                                  if (purchaseCurrency === 'LBP') newPubPrice = Math.round(newPubPrice);
+                                  else newPubPrice = Number(newPubPrice.toFixed(2));
+
+                                  const profitPerc = calculateProfitPerc(newPubPrice, newCost, q, f);
+                                  setEditRowData({
+                                    ...editRowData,
+                                    unitPrice: newUnitPrice,
+                                    cost: newCost.toString(),
+                                    pubPrice: newPubPrice.toString(),
+                                    total: (newCost * q).toFixed(2),
+                                    profit: profitPerc
+                                  });
                                 }}
                                 className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
                               />
                             ) : (
-                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">{formatNumber(pubPrice)}</span>
+                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">
+                                {formatNumber(purchaseCurrency === 'USD' ? (it.unitPriceUSD ?? (it.sellingPriceUSD || it.unitCostUSD)) : (it.unitPriceLBP ?? (it.sellingPriceLBP || it.unitCostLBP)))}
+                              </span>
                             )}
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
@@ -2415,7 +3090,27 @@ export const PurchaseView: React.FC = () => {
                                   type="number"
                                   step="any"
                                   value={editRowData.vat}
-                                  onChange={(e) => setEditRowData({ ...editRowData, vat: e.target.value })}
+                                  onChange={(e) => {
+                                  const newVat = e.target.value;
+                                  const v = parseFloat(newVat) || 0;
+                                  const up = parseNumber(editRowData.unitPrice) || 0;
+                                  const c = parseNumber(editRowData.cost) || 0;
+                                  const q = parseInt(editRowData.qty, 10) || 0;
+                                  const f = parseInt(editRowData.free, 10) || 0;
+
+                                  // Public price formula: [unit price + (unit price * vat%)]
+                                  let newPubPrice = up + (up * (v / 100));
+                                  if (purchaseCurrency === 'LBP') newPubPrice = Math.round(newPubPrice);
+                                  else newPubPrice = Number(newPubPrice.toFixed(2));
+
+                                  const profitPerc = calculateProfitPerc(newPubPrice, c, q, f);
+                                  setEditRowData({
+                                    ...editRowData,
+                                    vat: newVat,
+                                    pubPrice: newPubPrice.toString(),
+                                    profit: profitPerc
+                                  });
+                                }}
                                   className="w-full px-1 py-1 pr-4 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none text-right"
                                 />
                                 <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-500">%</span>
@@ -2426,24 +3121,32 @@ export const PurchaseView: React.FC = () => {
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                             {isEditing ? (
+                              <input
+                                type="text"
+                                value={formatNumber(editRowData.pubPrice)}
+                                onChange={(e) => {
+                                  const newPubPrice = formatNumber(e.target.value);
+                                  const p = parseNumber(newPubPrice) || 0;
+                                  const c = parseNumber(editRowData.cost) || 0;
+                                  const q = parseInt(editRowData.qty, 10) || 0;
+                                  const f = parseInt(editRowData.free, 10) || 0;
+                                  const profitPerc = calculateProfitPerc(p, c, q, f);
+                                  setEditRowData({ ...editRowData, pubPrice: newPubPrice, profit: profitPerc });
+                                }}
+                                className="w-full px-1 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none"
+                              />
+                            ) : (
+                              <span className="px-2 font-medium text-slate-800 dark:text-slate-200">{formatNumber(pubPrice)}</span>
+                            )}
+                          </td>
+                          <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                            {isEditing ? (
                               <div className="relative">
                                 <input
                                   type="number"
                                   step="any"
                                   value={editRowData.profit}
-                                  onChange={(e) => {
-                                    const newProfit = e.target.value;
-                                    const c = parseNumber(editRowData.cost) || 0;
-                                    const q = parseInt(editRowData.qty, 10) || 0;
-                                    const f = parseInt(editRowData.free, 10) || 0;
-                                    const profitFloat = parseFloat(newProfit) || 0;
-                                    const totalQty = q + f;
-                                    let pr = 0;
-                                    if (totalQty > 0 && profitFloat < 100) {
-                                      pr = ((c * q) / totalQty) / (1 - (profitFloat / 100));
-                                    }
-                                    setEditRowData({ ...editRowData, profit: newProfit, pubPrice: pr.toFixed(2) });
-                                  }}
+                                  onChange={(e) => setEditRowData({ ...editRowData, profit: e.target.value })}
                                   className="w-full px-1 py-1 pr-4 text-[11px] font-medium bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 focus:border-teal-500 rounded outline-none text-right text-emerald-600 dark:text-emerald-400"
                                 />
                                 <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-emerald-600/70 dark:text-emerald-400/70">%</span>
@@ -2681,29 +3384,33 @@ export const PurchaseView: React.FC = () => {
                         />
                       </td>
                       <td className="p-1 border-r border-slate-200 dark:border-slate-700">
-                        <input
+                        <ExpiryTableInput
                           ref={expiryInputRef}
-                          type="text"
                           value={displayExpiry}
-                          onChange={handleExpiryChange}
+                          onChange={(formatted, iso) => {
+                            setDisplayExpiry(formatted);
+                            setItemExpiry(iso);
+                          }}
+                          onBlur={handleExpiryBlur}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               e.preventDefault();
-                              document.getElementById('input-pub-price')?.focus();
+                              handleExpiryBlur();
+                              document.getElementById('input-unit-price')?.focus();
                             }
                           }}
-                          placeholder="MM/YY"
-                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                          placeholder="MM/YYYY"
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100 text-center font-mono placeholder:text-slate-400 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none transition-colors"
                         />
                       </td>
                       <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                         <input
-                          id="input-pub-price"
+                          id="input-unit-price"
                           type="text"
-                          value={formatNumber(itemPublicPrice)}
-                          onChange={(e) => setItemPublicPrice(formatNumber(e.target.value))}
-                          onFocus={(e) => { setIsPublicPriceFocused(true); e.target.select(); }}
-                          onBlur={() => setIsPublicPriceFocused(false)}
+                          value={formatNumber(itemUnitPrice)}
+                          onChange={(e) => setItemUnitPrice(formatNumber(e.target.value))}
+                          onFocus={(e) => { setIsUnitPriceFocused(true); e.target.select(); }}
+                          onBlur={() => setIsUnitPriceFocused(false)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               e.preventDefault();
@@ -2754,7 +3461,7 @@ export const PurchaseView: React.FC = () => {
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               e.preventDefault();
-                              document.getElementById('input-total')?.focus();
+                              document.getElementById('input-pub-price')?.focus();
                             }
                           }}
                           className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
@@ -2762,6 +3469,23 @@ export const PurchaseView: React.FC = () => {
                           <option value="setting">{selectedProduct && settings.vatRates?.[selectedProduct.category] ? `${settings.vatRates[selectedProduct.category]}%` : '0%'}</option>
                           <option value="none">0%</option>
                         </select>
+                      </td>
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
+                        <input
+                          id="input-pub-price"
+                          type="text"
+                          value={formatNumber(itemPublicPrice)}
+                          onChange={(e) => setItemPublicPrice(formatNumber(e.target.value))}
+                          onFocus={(e) => { setIsPublicPriceFocused(true); e.target.select(); }}
+                          onBlur={() => setIsPublicPriceFocused(false)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              document.getElementById('input-total')?.focus();
+                            }
+                          }}
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100"
+                        />
                       </td>
                       <td className="p-1 border-r border-slate-200 dark:border-slate-700 align-middle">
                         <div className="px-1.5 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
@@ -3090,8 +3814,10 @@ export const PurchaseView: React.FC = () => {
           onClose={() => {
             setIsPaymentModalOpen(false);
             setPaymentToEdit(null);
+            setInitialSupplierIdForModal(undefined);
           }}
           paymentToEdit={paymentToEdit}
+          initialSupplierId={initialSupplierIdForModal}
         />
       )}
 

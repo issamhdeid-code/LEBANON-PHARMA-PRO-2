@@ -127,6 +127,8 @@ export interface PurchaseItem {
   productCode: string;
   productName: string;
   quantity: number;
+  unitPriceUSD?: number;
+  unitPriceLBP?: number;
   unitCostUSD: number;
   unitCostLBP: number;
   sellingPriceLBP: number;
@@ -351,7 +353,9 @@ export interface SupplierPayment {
   supplierId: string;
   supplierName: string;
   amount: number;
-  currency: 'USD' | 'LBP';
+  currency: 'USD' | 'LBP' | 'MIXED';
+  amountUSD?: number;
+  amountLBP?: number;
   invoices: string[]; // IDs of purchase invoices this payment applies to
   allocations?: { invoiceId: string, amountUSD: number, amountLBP: number }[];
   isPaymentOnAccount: boolean;

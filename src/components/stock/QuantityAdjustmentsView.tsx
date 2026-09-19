@@ -6,7 +6,7 @@ import { formatStockDisplay } from '../../utils/stockUtils';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 
 export const QuantityAdjustmentsView: React.FC = () => {
-  const { products, updateProduct, deleteProduct, currentUser } = usePharmacy();
+  const { products, updateProduct, deleteProduct, currentUser, addLog } = usePharmacy();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
@@ -145,6 +145,27 @@ export const QuantityAdjustmentsView: React.FC = () => {
       piecePriceUSD: formIsDivisible && formPiecePriceUSD ? Number(formPiecePriceUSD) : undefined,
     });
     
+    const delta = totalQuantity - selectedProduct.stockQuantity;
+    if (addLog) {
+      addLog({
+        component: 'Inventory / Stock',
+        action: 'QTY_ADJUSTMENT',
+        level: 'info',
+        title: `Quantity Adjustment: ${selectedProduct.name}`,
+        description: `Stock adjusted from ${selectedProduct.stockQuantity} to ${totalQuantity} (${delta >= 0 ? '+' : ''}${delta})`,
+        entityId: selectedProduct.id,
+        entityType: 'product',
+        details: {
+          productId: selectedProduct.id,
+          productCode: selectedProduct.code,
+          previousStock: selectedProduct.stockQuantity,
+          newStock: totalQuantity,
+          delta,
+          batches: formBatches,
+        }
+      });
+    }
+
     // Clear selection after save
     setSelectedProduct(null);
     setFormBatches([]);

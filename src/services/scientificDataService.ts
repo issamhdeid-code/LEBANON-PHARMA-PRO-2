@@ -1059,6 +1059,18 @@ export function getStraightforwardMonograph(
   ingredients: string,
   drugName?: string
 ): PharmacopoeiaEntry {
+  if (!ingredients || !ingredients.trim()) {
+    return {
+      indications: '',
+      contraindications: '',
+      sideEffects: '',
+      dosage: '',
+      pediatricDosage: '',
+      pregnancyCategory: undefined,
+      storageConditions: '',
+    };
+  }
+
   const text = `${ingredients || ''} ${drugName || ''}`.toLowerCase();
 
   // 1. Pre-configured combination monographs in Pharmacopoeia
@@ -1556,6 +1568,24 @@ export function summarizeClinicalSideEffects(
  * and repairing missing or unpopulated fields cleanly with straightforward monographs.
  */
 export function resolveStraightforwardScientificInfo(product: Product): ScientificDrugInfo {
+  if (!product.ingredients || !product.ingredients.trim()) {
+    return {
+      indications: '',
+      contraindications: '',
+      sideEffects: '',
+      generics: [],
+      dosage: '',
+      pediatricDosage: '',
+      form: product.form || 'Tablet',
+      presentation: product.presentation || 'Box',
+      activeIngredients: '',
+      pregnancyCategory: undefined,
+      storageConditions: '',
+      onlineEnriched: false,
+      onlineSource: '',
+    };
+  }
+
   const fallback = getStraightforwardMonograph(product.ingredients || '', product.name);
   const current = product.scientificInfo;
 
@@ -1922,9 +1952,13 @@ export async function searchOnlineScientificData(
   scientificInfo: ScientificDrugInfo;
   source: string;
   inStockAlternatives: Product[];
-}> {
-  const cleanMolecules = extractCleanMolecules(ingredients || drugName || '');
-  const primaryMolecule = cleanMolecules[0] || ingredients || drugName || 'Active Molecule';
+} | null> {
+  if (!ingredients || !ingredients.trim()) {
+    return null;
+  }
+
+  const cleanMolecules = extractCleanMolecules(ingredients);
+  const primaryMolecule = cleanMolecules[0] || ingredients.trim();
 
   // 1. PRIORITY ONE: Online AI Clinical Intelligence (Gemini Server API)
   try {

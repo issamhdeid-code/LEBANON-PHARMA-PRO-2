@@ -225,10 +225,10 @@ app.post('/api/scientifics/enrich', rateLimit(12, 60_000), async (req, res) => {
     const dosage = sanitize(req.body?.dosage);
     const form = sanitize(req.body?.form);
     const presentation = sanitize(req.body?.presentation);
-    const queryIngredients = (ingredients || drugName || '').trim();
+    const queryIngredients = ingredients.trim();
 
     if (!queryIngredients) {
-      return res.status(400).json({ error: 'Missing drug ingredients or name' });
+      return res.status(400).json({ error: 'Active ingredient is required to enrich scientific data' });
     }
 
     const ai = getAIClient();

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   X,
   Pill,
@@ -17,13 +17,18 @@ import {
   Shuffle,
   Clock,
   Sparkles,
-  Info
+  Info,
+  Layers,
+  History,
+  ExternalLink
 } from 'lucide-react';
 import { Product } from '../../types/pharmacy';
-import { formatStockDisplay } from '../../utils/stockUtils';
+import { formatStockDisplay, parseExpiryDate, resolveProductBatches, ResolvedBatch } from '../../utils/stockUtils';
 import { getPriceChangeInfoUSD, getPriceChangeInfoLBP, formatLBPValue } from '../../utils/priceUtils';
 import { resolveStraightforwardScientificInfo } from '../../services/scientificDataService';
 import { DesktopWindow } from '../common/DesktopWindow';
+import { usePharmacy } from '../../context/PharmacyContext';
+import { OperationDetailModal, ProductOperationItem } from './OperationDetailModal';
 
 interface DrugDetailsModalProps {
   product: Product | null;
@@ -33,40 +38,6 @@ interface DrugDetailsModalProps {
   exchangeRate?: number;
 }
 
-// Helper to format diverse date formats into clean MM-YYYY
-const parseExpiryDate = (dateStr?: string): { date: Date | null; displayMMYYYY: string } => {
-  if (!dateStr) return { date: null, displayMMYYYY: 'N/A' };
-  const str = dateStr.trim();
-
-  // Handle MM-YYYY or MM/YYYY
-  if (/^\d{1,2}[-/]\d{4}$/.test(str)) {
-    const parts = str.split(/[-/]/);
-    const m = parseInt(parts[0], 10);
-    const y = parseInt(parts[1], 10);
-    const d = new Date(y, m - 1, 1);
-    const mm = m < 10 ? `0${m}` : `${m}`;
-    return { date: d, displayMMYYYY: `${mm}-${y}` };
-  }
-
-  // Handle YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-    const parts = str.split('-');
-    const y = parseInt(parts[0], 10);
-    const m = parseInt(parts[1], 10);
-    const d = new Date(y, m - 1, parseInt(parts[2], 10));
-    const mm = m < 10 ? `0${m}` : `${m}`;
-    return { date: d, displayMMYYYY: `${mm}-${y}` };
-  }
-
-  const d = new Date(str);
-  if (!isNaN(d.getTime())) {
-    const mm = d.getMonth() + 1 < 10 ? `0${d.getMonth() + 1}` : `${d.getMonth() + 1}`;
-    return { date: d, displayMMYYYY: `${mm}-${d.getFullYear()}` };
-  }
-
-  return { date: null, displayMMYYYY: str };
-};
-
 export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
   product,
   isOpen,
@@ -74,6 +45,10 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
   onViewScientific,
   exchangeRate = 89500,
 }) => {
+  const { purchases, sales, logs } = usePharmacy();
+  const [showAllExpiries, setShowAllExpiries] = useState(true);
+  const [selectedOperation, setSelectedOperation] = useState<ProductOperationItem | null>(null);
+
   // Close on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -87,6 +62,114 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
+  const batches = useMemo(() => {
+    if (!product) return [];
+    return resolveProductBatches(product, purchases);
+  }, [product, purchases]);
+
+  const operations: ProductOperationItem[] = useMemo(() => {
+    if (!product) return [];
+    const list: ProductOperationItem[] = [];
+
+    // 1. Inbound purchases
+    (purchases || []).forEach((p) => {
+      if (!p.items || !Array.isArray(p.items)) return;
+      p.items.forEach((it, itIdx) => {
+        if (it.productId === product.id || (product.code && it.productCode === product.code)) {
+          const { displayMMYYYY } = parseExpiryDate(it.expiryDate);
+          const expLabel = displayMMYYYY !== 'N/A' ? displayMMYYYY : '—';
+
+          const qty = it.quantity || 0;
+          list.push({
+            id: `${p.id}-${itIdx}`,
+            referenceId: p.id,
+            invoiceNumber: p.invoiceNumber,
+            operationType: 'Purchase',
+            type: 'purchase',
+            quantity: qty,
+            formattedQuantity: `+${formatStockDisplay(qty, product.isDivisible, product.piecesPerBox, product.pieceName)}`,
+            expiry: expLabel,
+            rawExpiry: it.expiryDate,
+            batchNumber: it.batchNumber,
+            date: p.date,
+            timestamp: p.date ? new Date(p.date).getTime() : p.timestamp || 0,
+            purchase: p,
+          });
+        }
+      });
+    });
+
+    // 2. Outbound sales
+    (sales || []).forEach((s) => {
+      if (!s.items || !Array.isArray(s.items)) return;
+      s.items.forEach((it, itIdx) => {
+        if (it.productId === product.id || (product.code && it.productCode === product.code)) {
+          const expStr = it.selectedExpiryDate || product.expiryDate || '';
+          const { displayMMYYYY } = parseExpiryDate(expStr);
+          const batchNum = it.selectedBatchNumber || product.batchNumber || '';
+          const expLabel = displayMMYYYY !== 'N/A' ? displayMMYYYY : '—';
+
+          const qty = it.quantity || 0;
+          list.push({
+            id: `${s.id}-${itIdx}`,
+            referenceId: s.id,
+            invoiceNumber: s.invoiceNumber,
+            operationType: 'Sale',
+            type: 'sale',
+            quantity: qty,
+            formattedQuantity: `-${formatStockDisplay(qty, product.isDivisible, product.piecesPerBox, product.pieceName)}`,
+            expiry: expLabel,
+            rawExpiry: expStr,
+            batchNumber: batchNum,
+            date: s.date,
+            timestamp: s.timestamp || (s.date ? new Date(s.date).getTime() : 0),
+            sale: s,
+          });
+        }
+      });
+    });
+
+    // 3. Genuine manual quantity adjustments only (performed by user in Qty Adjustments)
+    (logs || []).forEach((l) => {
+      const isEntity = l.entityId === product.id;
+      const isDetails = l.details && (l.details.productId === product.id || l.details.code === product.code);
+      if ((isEntity || isDetails) && l.action === 'QTY_ADJUSTMENT') {
+        const delta = l.details?.delta;
+        const newStock = l.details?.newStock ?? l.details?.stockQuantity;
+        const batchExp = l.details?.batches?.[0]?.expiryDate || l.details?.expiryDate || product.expiryDate;
+        const { displayMMYYYY } = parseExpiryDate(batchExp);
+        const batchNum = l.details?.batches?.[0]?.batchNumber || l.details?.batchNumber || product.batchNumber;
+        const expLabel = displayMMYYYY !== 'N/A' ? displayMMYYYY : '—';
+
+        const qtyDisplay = delta !== undefined
+          ? `${delta >= 0 ? '+' : ''}${formatStockDisplay(Math.abs(delta), product.isDivisible, product.piecesPerBox, product.pieceName)}`
+          : newStock !== undefined
+          ? `${formatStockDisplay(newStock, product.isDivisible, product.piecesPerBox, product.pieceName)}`
+          : '—';
+
+        list.push({
+          id: l.id,
+          referenceId: l.id,
+          invoiceNumber: l.id,
+          operationType: 'Qty Adj',
+          type: 'adjustment',
+          quantity: typeof delta === 'number' ? Math.abs(delta) : (typeof newStock === 'number' ? newStock : 0),
+          formattedQuantity: qtyDisplay,
+          expiry: expLabel,
+          rawExpiry: batchExp,
+          batchNumber: batchNum,
+          date: new Date(l.timestamp).toISOString(),
+          timestamp: l.timestamp || 0,
+          log: l,
+        });
+      }
+    });
+
+    // Sort chronologically descending (newest operation first)
+    list.sort((a, b) => b.timestamp - a.timestamp);
+    return list;
+  }, [product, purchases, sales, logs]);
+
   if (!isOpen || !product) return null;
 
   const isLowStock = product.stockQuantity <= product.minStockAlert;
@@ -98,20 +181,6 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
     (product.category === 'drug'
       ? resolveStraightforwardScientificInfo(product)
       : undefined);
-
-  // Parse active batches
-  const batches =
-    product.batches && product.batches.length > 0
-      ? product.batches
-      : product.expiryDate || product.batchNumber
-      ? [
-          {
-            batchNumber: product.batchNumber || 'Default Batch',
-            expiryDate: product.expiryDate || '',
-            quantity: product.stockQuantity,
-          },
-        ]
-      : [];
 
   const renderClinicalLines = (text?: string, bulletColor = 'text-teal-600 dark:text-teal-400') => {
     if (!text || !text.trim()) return null;
@@ -362,6 +431,11 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
               <div className="flex items-center space-x-1.5 font-bold text-xs text-slate-800 dark:text-slate-200">
                 <Boxes className="h-4 w-4 text-teal-600" />
                 <span>Inventory & Batch Expiry Tracking</span>
+                {operations.length > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-semibold bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300 rounded border border-teal-200/60 dark:border-teal-800/60">
+                    {operations.length} Record{operations.length === 1 ? '' : 's'}
+                  </span>
+                )}
               </div>
               <div className="flex items-center space-x-3 text-xs">
                 <span>
@@ -388,75 +462,127 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
               </div>
             </div>
 
-            {batches.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {batches.map((batch, index) => {
-                  const { displayMMYYYY, date: expDate } = parseExpiryDate(batch.expiryDate);
-                  let isExpired = false;
-                  let isNear = false;
-                  if (expDate && !isNaN(expDate.getTime())) {
-                    const now = new Date();
-                    now.setHours(0, 0, 0, 0);
-                    const diffDays = Math.ceil(
-                      (expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-                    );
-                    isExpired = diffDays < 0;
-                    isNear = diffDays >= 0 && diffDays <= 90;
-                  }
+            {operations.length > 0 ? (
+              <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 shadow-2xs">
+                <div className="max-h-64 overflow-y-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700/80 shadow-2xs">
+                      <tr>
+                        <th className="py-2.5 px-3">Operation</th>
+                        <th className="py-2.5 px-3 text-center">Quantity</th>
+                        <th className="py-2.5 px-3">Expiry</th>
+                        <th className="py-2.5 px-3 text-right">Reference</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                      {operations.map((op) => {
+                        const { date: expDate } = parseExpiryDate(op.rawExpiry);
+                        let isExpired = false;
+                        let isNear = false;
+                        if (expDate && !isNaN(expDate.getTime())) {
+                          const now = new Date();
+                          now.setHours(0, 0, 0, 0);
+                          const diffDays = Math.ceil(
+                            (expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+                          );
+                          isExpired = diffDays < 0;
+                          isNear = diffDays >= 0 && diffDays <= 90;
+                        }
 
-                  return (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between rounded-lg border border-slate-200/80 bg-slate-50/70 p-2.5 dark:border-slate-800 dark:bg-slate-900/50"
-                    >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center space-x-1.5">
-                          <span className="text-[10px] font-semibold text-slate-400 uppercase">
-                            Batch:
-                          </span>
-                          <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                            {batch.batchNumber || 'N/A'}
-                          </span>
-                        </div>
-                        <div className="flex items-center space-x-1 text-[11px]">
-                          <Calendar className="h-3 w-3 text-slate-400" />
-                          <span
-                            className={
-                              isExpired
-                                ? 'font-bold text-red-600'
-                                : isNear
-                                ? 'font-semibold text-amber-600'
-                                : 'text-slate-600 dark:text-slate-300'
-                            }
+                        return (
+                          <tr
+                            key={op.id}
+                            className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
                           >
-                            Exp: {displayMMYYYY}
-                          </span>
-                          {isExpired && (
-                            <span className="text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300 px-1 rounded">
-                              EXPIRED
-                            </span>
-                          )}
-                          {isNear && (
-                            <span className="text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-1 rounded">
-                              SOON
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                            {/* 1. Operation */}
+                            <td className="py-2 px-3">
+                              <div className="flex flex-col items-start gap-0.5">
+                                {op.operationType === 'Purchase' ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/60">
+                                    Purchase
+                                  </span>
+                                ) : op.operationType === 'Sale' ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800/60">
+                                    Sale
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60">
+                                    Qty Adj
+                                  </span>
+                                )}
+                                <span className="text-[10px] text-slate-400 font-medium">
+                                  {new Date(op.timestamp || op.date).toLocaleDateString()}
+                                </span>
+                              </div>
+                            </td>
 
-                      <div className="text-right">
-                        <span className="text-[10px] font-semibold text-slate-400 block">Quantity</span>
-                        <span className="font-extrabold text-teal-700 dark:text-teal-400 text-sm">
-                          {formatStockDisplay(batch.quantity ?? product.stockQuantity, product.isDivisible, product.piecesPerBox, product.pieceName)}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
+                            {/* 2. Quantity */}
+                            <td className="py-2 px-3 text-center font-mono">
+                              <span
+                                className={`font-extrabold text-xs ${
+                                  op.operationType === 'Purchase'
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : op.operationType === 'Sale'
+                                    ? 'text-blue-700 dark:text-blue-400'
+                                    : 'text-amber-700 dark:text-amber-400'
+                                }`}
+                              >
+                                {op.formattedQuantity}
+                              </span>
+                            </td>
+
+                            {/* 3. Expiry */}
+                            <td className="py-2 px-3">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span
+                                  className={`font-mono text-xs font-semibold ${
+                                    isExpired
+                                      ? 'text-red-600 dark:text-red-400 font-bold'
+                                      : isNear
+                                      ? 'text-amber-600 dark:text-amber-400'
+                                      : 'text-slate-800 dark:text-slate-200'
+                                  }`}
+                                >
+                                  {op.expiry}
+                                </span>
+                                {op.batchNumber && (
+                                  <span
+                                    className="font-mono text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700"
+                                    title={`Batch / Lot Number: ${op.batchNumber}`}
+                                  >
+                                    Batch: {op.batchNumber}
+                                  </span>
+                                )}
+                                {isExpired && (
+                                  <span className="text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300 px-1 py-0.2 rounded">
+                                    EXP
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* 4. Reference */}
+                            <td className="py-2 px-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedOperation(op)}
+                                className="inline-flex items-center gap-1 font-mono text-xs font-bold text-teal-600 dark:text-teal-400 hover:text-teal-800 dark:hover:text-teal-200 underline decoration-teal-300 dark:decoration-teal-700 underline-offset-2 hover:bg-teal-50 dark:hover:bg-teal-950/50 px-2 py-1 rounded cursor-pointer transition-colors"
+                                title={`View details for ${op.referenceId}`}
+                              >
+                                <span>{op.referenceId}</span>
+                                <ExternalLink className="h-3 w-3 shrink-0" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             ) : (
-              <div className="rounded-lg border border-dashed border-slate-200 p-3 text-center text-slate-400 dark:border-slate-800">
-                No individual batches recorded for this item.
+              <div className="rounded-lg border border-dashed border-slate-200 p-4 text-center text-slate-400 dark:border-slate-800 text-xs">
+                No inventory operations recorded for this item.
               </div>
             )}
           </div>
@@ -601,6 +727,14 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
           </div>
         </div>
       </div>
+
+      {selectedOperation && (
+        <OperationDetailModal
+          operation={selectedOperation}
+          product={product}
+          onClose={() => setSelectedOperation(null)}
+        />
+      )}
     </DesktopWindow>
   );
 };

@@ -51,6 +51,9 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
     enrichProductWithOnlineScientifics,
     enrichAllProductsOnline,
     isSearchingScientifics,
+    updateProduct,
+    addNotification,
+    setActiveTab,
   } = usePharmacy();
 
   // Filter only items with category 'drug'
@@ -69,6 +72,8 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isEnrichingAll, setIsEnrichingAll] = useState(false);
+  const [newActiveIngredient, setNewActiveIngredient] = useState('');
+  const [isSavingIngredient, setIsSavingIngredient] = useState(false);
 
   // Keep selected product synchronized with global products state
   const selectedProduct = useMemo(() => {
@@ -76,29 +81,34 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
     return products.find((p) => p.id === selectedProductId) || drugProducts[0] || null;
   }, [products, selectedProductId, drugProducts]);
 
-  // Guaranteed straightforward, concise scientific dossier (formatted consistently like Adol Extra)
-  const currentScientificInfo = useMemo(() => {
-    if (!selectedProduct) return null;
-    return resolveStraightforwardScientificInfo(selectedProduct);
-  }, [selectedProduct]);
+  // Check if active ingredient is defined
+  const hasActiveIngredient = Boolean(
+    selectedProduct?.ingredients && selectedProduct.ingredients.trim().length > 0
+  );
 
-  // Clean molecule list for display
+  // Guaranteed straightforward, concise scientific dossier (only if active ingredient is defined)
+  const currentScientificInfo = useMemo(() => {
+    if (!selectedProduct || !hasActiveIngredient) return null;
+    return resolveStraightforwardScientificInfo(selectedProduct);
+  }, [selectedProduct, hasActiveIngredient]);
+
+  // Clean molecule list for display (only if active ingredient is defined)
   const activeMolecules = useMemo(() => {
-    if (!selectedProduct) return [];
-    return extractCleanMolecules(selectedProduct.ingredients || selectedProduct.name);
-  }, [selectedProduct]);
+    if (!selectedProduct || !hasActiveIngredient) return [];
+    return extractCleanMolecules(selectedProduct.ingredients || '');
+  }, [selectedProduct, hasActiveIngredient]);
 
   // Requirement: Generic Alternatives in Lebanon - show ONLY drugs available in stock with the same active ingredients / molecule
   const inStockGenericAlternatives = useMemo(() => {
-    if (!selectedProduct) return [];
+    if (!selectedProduct || !hasActiveIngredient) return [];
     return findInStockGenericAlternatives(selectedProduct, products);
-  }, [selectedProduct, products]);
+  }, [selectedProduct, products, hasActiveIngredient]);
 
   // Out of stock alternatives for transparency
   const outOfStockGenericAlternatives = useMemo(() => {
-    if (!selectedProduct) return [];
+    if (!selectedProduct || !hasActiveIngredient) return [];
     return findOutOfStockGenericAlternatives(selectedProduct, products);
-  }, [selectedProduct, products]);
+  }, [selectedProduct, products, hasActiveIngredient]);
 
   const filteredDrugs = useMemo(() => {
     const q = debouncedSearchQuery.trim().toLowerCase();
@@ -123,8 +133,46 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
     getItemKey: (index) => filteredDrugs[index]?.id || index,
   });
 
+  const handleSaveActiveIngredient = () => {
+    if (!selectedProduct) return;
+    const trimmed = newActiveIngredient.trim();
+    if (!trimmed) {
+      addNotification(
+        'Ingredient Required',
+        'Please enter a valid active ingredient name.',
+        'inventory',
+        'warning'
+      );
+      return;
+    }
+    setIsSavingIngredient(true);
+    try {
+      updateProduct(selectedProduct.id, {
+        ingredients: trimmed,
+      });
+      addNotification(
+        'Active Ingredient Saved',
+        `Active ingredient for "${selectedProduct.name}" set to "${trimmed}".`,
+        'inventory',
+        'success'
+      );
+      setNewActiveIngredient('');
+    } finally {
+      setIsSavingIngredient(false);
+    }
+  };
+
   const handleRefreshOnlineData = async () => {
     if (!selectedProduct) return;
+    if (!hasActiveIngredient) {
+      addNotification(
+        'Active Ingredient Missing',
+        `Cannot fetch scientific data for "${selectedProduct.name}". Please define the active ingredient first.`,
+        'inventory',
+        'warning'
+      );
+      return;
+    }
     setIsRefreshing(true);
     try {
       await enrichProductWithOnlineScientifics(selectedProduct.id, true);
@@ -135,6 +183,18 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
 
   const handleEnrichAllOnline = async () => {
     if (isEnrichingAll || isSearchingScientifics) return;
+    const validDrugs = drugProducts.filter(
+      (p) => p.ingredients && p.ingredients.trim().length > 0
+    );
+    if (validDrugs.length === 0) {
+      addNotification(
+        'No Active Ingredients',
+        'None of your medications have active ingredients defined. Please define active ingredients in Stock first.',
+        'inventory',
+        'warning'
+      );
+      return;
+    }
     setIsEnrichingAll(true);
     try {
       await enrichAllProductsOnline();
@@ -333,8 +393,15 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                       </span>
                     </div>
                     <div className="text-[10px] text-gray-500 dark:text-slate-400 truncate flex items-center justify-between gap-1">
-                      <span className="truncate">{prod.ingredients} • {prod.dosage}</span>
-                      {extractCleanMolecules(prod.ingredients || prod.name).length > 1 && (
+                      {prod.ingredients?.trim() ? (
+                        <span className="truncate">{prod.ingredients} • {prod.dosage}</span>
+                      ) : (
+                        <span className="truncate text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1">
+                          <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                          <span>No active ingredient</span>
+                        </span>
+                      )}
+                      {prod.ingredients?.trim() && extractCleanMolecules(prod.ingredients).length > 1 && (
                         <span className="shrink-0 px-1 py-0.2 text-[9px] rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-semibold border border-purple-200 dark:border-purple-800">
                           Multi
                         </span>
@@ -383,7 +450,12 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                         <span>Combination ({activeMolecules.length} Actives)</span>
                       </span>
                     )}
-                    {currentScientificInfo?.onlineEnriched ? (
+                    {!hasActiveIngredient ? (
+                      <span className="inline-flex items-center space-x-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-900 border border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800">
+                        <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                        <span>Active Ingredient Missing</span>
+                      </span>
+                    ) : currentScientificInfo?.onlineEnriched ? (
                       <span className="inline-flex items-center space-x-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         {currentScientificInfo.onlineSource?.includes('AI') ? (
@@ -409,7 +481,7 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                     <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
                       {activeMolecules.length > 1 ? 'Active Molecules (Combination):' : 'Active Molecule:'}
                     </span>
-                    {activeMolecules.length > 0 ? (
+                    {hasActiveIngredient ? (
                       activeMolecules.map((m, idx) => (
                         <React.Fragment key={idx}>
                           <span
@@ -423,11 +495,14 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                         </React.Fragment>
                       ))
                     ) : (
-                      <span className="text-xs text-slate-700 dark:text-slate-300">
-                        {selectedProduct.ingredients || selectedProduct.name}
+                      <span className="inline-flex items-center space-x-1 rounded bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-800 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800">
+                        <AlertTriangle className="h-3 w-3 text-amber-600" />
+                        <span>Blank / Not Defined</span>
                       </span>
                     )}
-                    <span className="text-xs text-slate-400">({selectedProduct.dosage})</span>
+                    {selectedProduct.dosage && (
+                      <span className="text-xs text-slate-400">({selectedProduct.dosage})</span>
+                    )}
                   </div>
                 </div>
 
@@ -447,11 +522,19 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                   <div className="flex flex-wrap items-center justify-end gap-1.5 pt-1">
                     <button
                       onClick={handleRefreshOnlineData}
-                      disabled={isRefreshing || isSearchingScientifics}
-                      className="flex items-center space-x-1.5 rounded border border-teal-300 bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-800 hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200 cursor-pointer disabled:opacity-50 transition-colors shadow-2xs"
-                      title="Search online scientific data using AI and NIH multi-ingredient synthesis"
+                      disabled={!hasActiveIngredient || isRefreshing || isSearchingScientifics}
+                      className={`flex items-center space-x-1.5 rounded border px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs ${
+                        !hasActiveIngredient
+                          ? 'border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-500 cursor-not-allowed'
+                          : 'border-teal-300 bg-teal-50 text-teal-800 hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200 cursor-pointer disabled:opacity-50'
+                      }`}
+                      title={
+                        !hasActiveIngredient
+                          ? 'Active ingredient is blank. Define active ingredient in Stock first.'
+                          : 'Search online scientific data using AI and NIH multi-ingredient synthesis'
+                      }
                     >
-                      <RefreshCw className={`h-3 w-3 text-teal-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+                      <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin text-teal-600' : ''}`} />
                       <Sparkles className="h-3 w-3 text-purple-600 dark:text-purple-400" />
                       <span>{isRefreshing ? 'AI Analyzing Monograph...' : 'Search Online Data (AI)'}</span>
                     </button>
@@ -501,8 +584,79 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
               </div>
             </div>
 
-            {/* 4 Core Scientific Sections Filled via Online Search & Stock Engine */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {!hasActiveIngredient ? (
+              <div className="rounded-xl border border-amber-300 bg-amber-50/70 p-5 shadow-2xs dark:border-amber-900/60 dark:bg-amber-950/20">
+                <div className="flex items-start space-x-3.5">
+                  <div className="rounded-lg bg-amber-100 p-2.5 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300 shrink-0 mt-0.5">
+                    <AlertTriangle className="h-5 w-5" />
+                  </div>
+                  <div className="space-y-3 flex-1">
+                    <div>
+                      <h2 className="text-sm font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
+                        <span>Active Ingredient Not Defined</span>
+                        <span className="text-[10px] uppercase font-semibold px-2 py-0.5 bg-amber-200/80 text-amber-900 rounded dark:bg-amber-900 dark:text-amber-200">
+                          Action Required
+                        </span>
+                      </h2>
+                      <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-300/90 leading-relaxed font-normal">
+                        The active ingredient for <strong>{selectedProduct.name}</strong> is currently blank in stock records. In accordance with pharmaceutical pharmacology standards, scientific data (clinical indications, contraindications, side effects, and in-stock generic bio-equivalents) cannot be fetched or displayed until the active ingredient is defined.
+                      </p>
+                    </div>
+
+                    {/* Quick inline definition form */}
+                    <div className="rounded-lg border border-amber-200 bg-white p-3.5 shadow-2xs dark:border-amber-900/40 dark:bg-slate-900 space-y-2">
+                      <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Define Active Ingredient for {selectedProduct.name}:
+                      </label>
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        <input
+                          type="text"
+                          value={newActiveIngredient}
+                          onChange={(e) => setNewActiveIngredient(e.target.value)}
+                          placeholder="e.g. Paracetamol, Amoxicillin, Ibuprofen, Atorvastatin..."
+                          className="flex-1 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSaveActiveIngredient();
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveActiveIngredient}
+                          disabled={!newActiveIngredient.trim() || isSavingIngredient}
+                          className="inline-flex items-center justify-center space-x-1.5 rounded bg-teal-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-2xs shrink-0"
+                        >
+                          <CheckCircle className="h-3.5 w-3.5" />
+                          <span>{isSavingIngredient ? 'Saving...' : 'Save & Enable Scientific Data'}</span>
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Saving updates this medication in your local stock catalog and immediately unlocks the scientific monograph.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('stock')}
+                        className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-600 hover:text-teal-600 dark:text-slate-400 dark:hover:text-teal-300 cursor-pointer"
+                      >
+                        <span>Open Item in Stock Management</span>
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                      <span className="text-[11px] text-slate-400">
+                        Code: {selectedProduct.code}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* 4 Core Scientific Sections Filled via Online Search & Stock Engine */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {/* 1. CLINICAL INDICATIONS & USES */}
               <div className="rounded-xl border border-gray-200 bg-white p-3.5 shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col justify-between">
                 <div>
@@ -730,6 +884,8 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                 Active Molecule Index: <strong>{activeMolecules.join(' + ') || selectedProduct.ingredients}</strong>
               </div>
             </div>
+          </>
+        )}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-64 text-gray-400 text-xs">

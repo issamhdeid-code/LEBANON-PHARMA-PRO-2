@@ -27,9 +27,9 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
 import { useDebounce } from '../../hooks/useDebounce';
-import { Product, ProductCategory, ScientificDrugInfo } from '../../types/pharmacy';
+import { Product, ProductCategory, ScientificDrugInfo, PurchaseInvoice } from '../../types/pharmacy';
 import { getSubcategoryOptions, suggestSubcategory } from '../../constants/subcategories';
-import { formatStockDisplay, generateRandomBarcode } from '../../utils/stockUtils';
+import { formatStockDisplay, generateRandomBarcode, resolveProductBatches } from '../../utils/stockUtils';
 import { resolveStraightforwardScientificInfo } from '../../services/scientificDataService';
 import { getPriceChangeInfoUSD, getPriceChangeInfoLBP, formatLBPValue } from '../../utils/priceUtils';
 import { PriceUpdaterModal } from './PriceUpdaterModal';
@@ -132,6 +132,7 @@ interface StockTableRowProps {
   onViewScientific: (prod: Product) => void;
   onEdit: (prod: Product) => void;
   onFilterSubcategory?: (subcat: string) => void;
+  purchases?: PurchaseInvoice[];
 }
 
 const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTableRowProps & { dataIndex?: number; style?: React.CSSProperties }>(function StockTableRow({
@@ -147,14 +148,29 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
   onViewScientific,
   onEdit,
   onFilterSubcategory,
+  purchases,
   dataIndex,
   style,
 }, ref) {
   const isLow = prod.stockQuantity <= prod.minStockAlert;
   const isOut = prod.stockQuantity <= 0;
 
-  const renderExpiryCellView = React.useCallback((prod: Product) => {
-    const expiry = prod.expiryDate || prod.batches?.[0]?.expiryDate;
+  const resolvedBatches = React.useMemo(() => {
+    return resolveProductBatches(prod, purchases || []);
+  }, [prod, purchases]);
+
+  const renderExpiryCellView = React.useCallback((targetProd: Product = prod) => {
+    // Filter active batches with quantity > 0 (omit zero quantity batches)
+    const activeBatches = resolvedBatches.filter((b) => (b.quantity || 0) > 0);
+
+    // Primary expiry to display on the shelf/row:
+    // If there are active batches in stock, show the EARLIEST expiring active batch (FIFO/FEFO).
+    // If out of stock, fallback to the first resolved batch or targetProd.expiryDate.
+    const primaryBatch = activeBatches.length > 0
+      ? activeBatches[0]
+      : (resolvedBatches.length > 0 ? resolvedBatches[0] : null);
+
+    const expiry = primaryBatch?.expiryDate || targetProd.expiryDate;
     if (!expiry || !expiry.trim()) {
       return null;
     }
@@ -175,29 +191,40 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
       monthsLeft = Math.max(1, Math.round(diffDays / 30));
     }
 
-    // Filter active batches with quantity > 0 (omit zero quantity batches)
-    const activeBatches = prod.batches && prod.batches.length > 0
-      ? prod.batches.filter((b) => (b.quantity || 0) > 0)
-      : (prod.stockQuantity > 0
-          ? [{ batchNumber: prod.batchNumber || 'N/A', expiryDate: expiry, quantity: prod.stockQuantity }]
-          : []);
+    // Build comprehensive, accurate tooltip displaying real batches, expiries and quantities:
+    let tooltipText: string | undefined;
 
-    // Tooltip format in exact requested order: (batch number, expiry, quantity of each batch)
-    const tooltipText = activeBatches.length > 0
-      ? activeBatches
-          .map((b) => {
-            const expFormatted = parseExpiryDate(b.expiryDate).displayMMYYYY || b.expiryDate || 'N/A';
-            return `Batch: ${b.batchNumber || 'N/A'}, Expiry: ${expFormatted}, Quantity: ${formatStockDisplay(b.quantity || 0, prod.isDivisible, prod.piecesPerBox, prod.pieceName)}`;
-          })
-          .join('\n')
-      : undefined;
+    if (activeBatches.length > 0) {
+      const lines = activeBatches.map((b) => {
+        const expFormatted = parseExpiryDate(b.expiryDate).displayMMYYYY || b.expiryDate || 'N/A';
+        const qtyFormatted = formatStockDisplay(b.quantity || 0, targetProd.isDivisible, targetProd.piecesPerBox, targetProd.pieceName);
+        return `Batch: ${b.batchNumber || 'N/A'}, Expiry: ${expFormatted}, Quantity: ${qtyFormatted}`;
+      });
+
+      if (activeBatches.length > 1) {
+        lines.push(`Total: ${formatStockDisplay(targetProd.stockQuantity, targetProd.isDivisible, targetProd.piecesPerBox, targetProd.pieceName)} (${activeBatches.length} batches)`);
+      }
+      tooltipText = lines.join('\n');
+    } else if (targetProd.stockQuantity <= 0) {
+      if (resolvedBatches.length > 0) {
+        const lines = [`Out of stock (0 in stock)`];
+        resolvedBatches.forEach((b) => {
+          const expFormatted = parseExpiryDate(b.expiryDate).displayMMYYYY || b.expiryDate || 'N/A';
+          lines.push(`Batch: ${b.batchNumber || 'N/A'}, Expiry: ${expFormatted} (Depleted)`);
+        });
+        tooltipText = lines.join('\n');
+      } else {
+        tooltipText = `Out of stock`;
+      }
+    }
 
     const extraBatchesCount = activeBatches.length > 1 ? activeBatches.length - 1 : 0;
 
     return (
       <div className="flex flex-col py-0.5" title={tooltipText}>
-        <div className="flex items-center gap-1.5 cursor-default">
+        <div className="flex items-center gap-1.5 cursor-default" title={tooltipText}>
           <span
+            title={tooltipText}
             className={`font-mono text-xs ${
               isExpired
                 ? 'font-bold text-red-600 dark:text-red-400'
@@ -210,7 +237,7 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
           </span>
           {extraBatchesCount > 0 && (
             <span
-              className="text-[9px] px-1 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded font-medium"
+              className="text-[9px] px-1 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded font-medium cursor-help"
               title={tooltipText}
             >
               +{extraBatchesCount}
@@ -228,7 +255,7 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
         ) : null}
       </div>
     );
-  }, []);
+  }, [prod, resolvedBatches]);
 
   return (
     <tr
@@ -439,6 +466,7 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
 export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCSVImport, onOpenMOPHUpdater }) => {
   const {
     products,
+    purchases,
     addProduct,
     updateProduct,
     bulkDeleteProducts,
@@ -453,6 +481,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     addSupplier,
     searchScientificDataOnline,
     settings,
+    addNotification,
   } = usePharmacy();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -600,6 +629,11 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
       const q = debouncedSearchQuery.trim().toLowerCase();
       const rawExpiry = prod.expiryDate || prod.batches?.[0]?.expiryDate || '';
       const formattedExp = rawExpiry ? parseExpiryDate(rawExpiry).displayMMYYYY.toLowerCase() : '';
+      const matchBatch = prod.batches?.some(
+        (b) =>
+          (b.batchNumber && b.batchNumber.toLowerCase().includes(q)) ||
+          (b.expiryDate && (b.expiryDate.toLowerCase().includes(q) || parseExpiryDate(b.expiryDate).displayMMYYYY.toLowerCase().includes(q)))
+      );
       const matchSearch =
         !q ||
         (prod.code || '').toLowerCase().includes(q) ||
@@ -610,7 +644,8 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         (prod.ingredients || '').toLowerCase().includes(q) ||
         (prod.agent || '').toLowerCase().includes(q) ||
         rawExpiry.toLowerCase().includes(q) ||
-        formattedExp.includes(q);
+        formattedExp.includes(q) ||
+        matchBatch;
       return matchCat && matchSubcat && matchLow && matchSearch;
     });
   }, [products, selectedCategory, selectedSubcategory, showLowStockOnly, debouncedSearchQuery]);
@@ -873,7 +908,10 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormPriceUSD(prod.priceUSD.toString());
     setFormMargin(prod.pharmacistMarginProfit.toString());
     setFormAgent(prod.agent);
-    if (prod.batches && prod.batches.length > 0) {
+    const resolved = resolveProductBatches(prod, purchases);
+    if (resolved && resolved.length > 0) {
+      setFormBatches(resolved.map(b => ({ batchNumber: b.batchNumber, expiryDate: b.expiryDate, quantity: b.quantity })));
+    } else if (prod.batches && prod.batches.length > 0) {
       setFormBatches(JSON.parse(JSON.stringify(prod.batches)));
     } else {
       setFormBatches([{ batchNumber: prod.batchNumber || '', expiryDate: prod.expiryDate || '', quantity: prod.stockQuantity || 0 }]);
@@ -894,12 +932,20 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   };
 
   const handleAutoFetchScientificData = async () => {
-    const term = formIngredients.trim() || formName.trim();
-    if (!term) return;
+    const term = formIngredients.trim();
+    if (!term) {
+      addNotification(
+        'Active Ingredient Required',
+        'Please define the active ingredient first before fetching scientific data.',
+        'inventory',
+        'warning'
+      );
+      return;
+    }
     setIsFetchingScientifics(true);
     try {
       const res = await searchScientificDataOnline(term, formName.trim());
-      if (res.scientificInfo) {
+      if (res && res.scientificInfo) {
         setFormIndications(res.scientificInfo.indications || '');
         setFormContraindications(res.scientificInfo.contraindications || '');
         setFormSideEffects(res.scientificInfo.sideEffects || '');
@@ -1401,6 +1447,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                         ref={rowVirtualizer.measureElement}
                         dataIndex={virtualRow.index}
                         prod={prod}
+                        purchases={purchases}
                         index={virtualRow.index}
                         isSelected={selectedStockProduct?.id === prod.id}
                         isRowSelected={selectedProductIds.has(prod.id)}

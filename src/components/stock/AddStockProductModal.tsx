@@ -167,12 +167,12 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
   if (!isOpen) return null;
 
   const handleAutoFetchScientificData = async () => {
-    const term = formIngredients.trim() || formName.trim();
+    const term = formIngredients.trim();
     if (!term) return;
     setIsFetchingScientifics(true);
     try {
       const res = await searchScientificDataOnline(term, formName.trim());
-      if (res.scientificInfo) {
+      if (res && res.scientificInfo) {
         setFormIndications(res.scientificInfo.indications || '');
         setFormContraindications(res.scientificInfo.contraindications || '');
         setFormSideEffects(res.scientificInfo.sideEffects || '');
