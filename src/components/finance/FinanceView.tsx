@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { usePharmacy } from '../../context/PharmacyContext';
-import { DollarSign, Percent, TrendingUp, TrendingDown, Wallet, ArrowRightLeft, FileSpreadsheet, Building2, Calculator, Settings, Receipt } from 'lucide-react';
+import { DollarSign, Percent, TrendingUp, TrendingDown, Wallet, ArrowRightLeft, FileSpreadsheet, Building2, Calculator, Settings, Receipt, Banknote } from 'lucide-react';
 import { ProductCategory } from '../../types/pharmacy';
+import { CashDrawerView } from './CashDrawerView';
 
 export const FinanceView: React.FC = () => {
   const { sales, purchases, settings, updateSettings, formatUSD, formatLBP } = usePharmacy();
-  const [activeTab, setActiveTab] = useState<'overview' | 'vat' | 'transactions'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'cash_drawer' | 'vat'>('overview');
 
   const vatRates = settings.vatRates || { drug: 0, vitamins: 11, cosmetics: 11, para: 11 };
 
@@ -102,6 +103,19 @@ export const FinanceView: React.FC = () => {
           </div>
         </button>
         <button
+          onClick={() => setActiveTab('cash_drawer')}
+          className={`px-4 py-3 text-sm font-bold border-b-2 whitespace-nowrap transition-colors ${
+            activeTab === 'cash_drawer'
+              ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Banknote className="h-4 w-4" />
+            <span>Cash Drawer</span>
+          </div>
+        </button>
+        <button
           onClick={() => setActiveTab('vat')}
           className={`px-4 py-3 text-sm font-bold border-b-2 whitespace-nowrap transition-colors ${
             activeTab === 'vat'
@@ -115,6 +129,8 @@ export const FinanceView: React.FC = () => {
           </div>
         </button>
       </div>
+
+      {activeTab === 'cash_drawer' && <CashDrawerView />}
 
       {activeTab === 'overview' && (
         <div className="space-y-6">

@@ -24,6 +24,7 @@ import {
   Monitor,
   Package,
   ShoppingCart,
+  Globe,
 } from 'lucide-react';
 import { UsersPanel } from './UsersPanel';
 import { StockSettingsPanel } from './StockSettingsPanel';
@@ -60,6 +61,7 @@ export const SettingsView: React.FC = () => {
 
   const currentOrigin = getCurrentAppOrigin();
   const syncPort = (() => { try { return new URL(currentOrigin).port || '3000'; } catch { return '3000'; } })();
+  const isWebPreview = typeof window !== 'undefined' && (window.location.hostname.includes('run.app') || window.location.protocol === 'https:');
 
   useEffect(() => {
     if (mode !== 'main') return;
@@ -69,7 +71,10 @@ export const SettingsView: React.FC = () => {
         const res = await fetch('/api/network/ipv4');
         if (!res.ok) throw new Error(String(res.status));
         const data = await res.json();
-        if (!cancelled && Array.isArray(data?.addresses)) setLocalIps(data.addresses);
+        if (!cancelled && Array.isArray(data?.addresses)) {
+          const valid = data.addresses.filter((a: string) => !a.startsWith('169.254.') && !a.startsWith('127.'));
+          setLocalIps(valid);
+        }
       } catch {
         if (!cancelled) setIpFetchFailed(true);
       }
@@ -231,29 +236,32 @@ export const SettingsView: React.FC = () => {
 
   
   const handleTestConnection = async () => {
-    if (!ip) {
-      addNotification('Error', 'Please enter an IP address first', 'system', 'error');
-      return;
-    }
-    
     setIsTesting(true);
-    let url = ip;
-    if (!url.startsWith('http')) {
-      url = 'http://' + url;
+    let target = (ip || '').trim();
+    if (!target) {
+      target = currentOrigin;
     }
-    if (url.startsWith('http://') && !url.includes('.run.app') && url.split(':').length === 2) {
-      url = url + ':3000';
+    if (!target.startsWith('http://') && !target.startsWith('https://')) {
+      const isHttps = (typeof window !== 'undefined' && window.location.protocol === 'https:') || target.includes('.run.app');
+      target = (isHttps ? 'https://' : 'http://') + target;
     }
+    if (target.includes('.run.app') && target.startsWith('http://')) {
+      target = target.replace('http://', 'https://');
+    }
+    if (target.startsWith('http://') && !target.includes('.run.app') && target.split(':').length === 2) {
+      target = target + ':3000';
+    }
+    target = target.replace(/\/+$/, '');
 
     try {
-      const res = await fetch(`${url}/api/health`);
+      const res = await fetch(`${target}/api/health`);
       if (res.ok) {
-        addNotification('Success', 'Successfully reached the Main PC!', 'system', 'success');
+        addNotification('Success', 'Successfully reached the Main PC server!', 'system', 'success');
       } else {
-        addNotification('Error', `Reached IP but received error status: ${res.status}`, 'system', 'error');
+        addNotification('Error', `Reached server but received error status: ${res.status}`, 'system', 'error');
       }
-    } catch (e: any) {
-      addNotification('Connection Failed', `Could not reach ${url}. Check your firewall and network.`, 'system', 'error');
+    } catch {
+      addNotification('Connection Failed', `Could not reach ${target}. Check your network or URL.`, 'system', 'error');
     } finally {
       setIsTesting(false);
     }
@@ -261,15 +269,32 @@ export const SettingsView: React.FC = () => {
 
   const handleSave = () => {
     setIsSaving(true);
+    let target = (ip || '').trim();
+    if (target) {
+      if (!target.startsWith('http://') && !target.startsWith('https://')) {
+        const isHttps = (typeof window !== 'undefined' && window.location.protocol === 'https:') || target.includes('.run.app');
+        target = (isHttps ? 'https://' : 'http://') + target;
+      }
+      if (target.includes('.run.app') && target.startsWith('http://')) {
+        target = target.replace('http://', 'https://');
+      }
+      if (target.startsWith('http://') && !target.includes('.run.app') && target.split(':').length === 2) {
+        target = target + ':3000';
+      }
+      target = target.replace(/\/+$/, '');
+    } else if (mode === 'secondary' && isWebPreview) {
+      target = currentOrigin;
+    }
+
     updateSettings({
       ...settings,
       syncMode: mode,
-      mainPcIp: ip,
+      mainPcIp: target,
     });
     // Add small delay for visual feedback
     setTimeout(() => {
       setIsSaving(false);
-      // Let's force a reload to reinitialize socket (easiest way in this architecture)
+      // Force a reload to reinitialize socket cleanly
       window.location.reload();
     }, 600);
   };
@@ -1006,15 +1031,46 @@ export const SettingsView: React.FC = () => {
             </div>
 
             {mode === 'main' && (
-              <div className="animate-in fade-in slide-in-from-top-4 duration-300">
-                <div className="p-4 bg-teal-50/60 dark:bg-teal-900/20 rounded-lg border border-teal-200 dark:border-teal-800">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Info className="h-4 w-4 text-teal-700 dark:text-teal-300" />
-                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                      This PC's local IP address (enter it on the Secondary PC)
-                    </label>
+              <div className="animate-in fade-in slide-in-from-top-4 duration-300 space-y-3">
+                {isWebPreview && (
+                  <div className="p-4 bg-teal-50/80 dark:bg-teal-900/20 rounded-lg border border-teal-300 dark:border-teal-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Globe className="h-4 w-4 text-teal-700 dark:text-teal-300" />
+                        <span className="text-sm font-bold text-teal-900 dark:text-teal-100">
+                          Main PC Cloud Web URL
+                        </span>
+                      </div>
+                      <span className="px-2 py-0.5 text-[10px] font-semibold bg-teal-200 dark:bg-teal-800 text-teal-800 dark:text-teal-200 rounded">
+                        Live Cloud Sync
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 mb-2">
+                      To pair a Secondary PC on your Wi-Fi, open this URL on that PC, go to <strong>Settings → Network & Sync</strong>, choose <strong>Secondary PC</strong>, and click <strong>Save & Restart</strong>:
+                    </p>
+                    <div className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-800 rounded-lg">
+                      <code className="text-xs font-mono font-bold text-teal-800 dark:text-teal-300 break-all select-all">
+                        {currentOrigin}
+                      </code>
+                      <button
+                        onClick={() => handleCopy(currentOrigin, 'webOrigin')}
+                        className="shrink-0 flex items-center gap-1 px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded text-xs font-medium transition-colors"
+                      >
+                        {copiedKey === 'webOrigin' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedKey === 'webOrigin' ? 'Copied' : 'Copy URL'}</span>
+                      </button>
+                    </div>
                   </div>
-                  {localIps.length > 0 ? (
+                )}
+
+                {localIps.length > 0 && (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Info className="h-4 w-4 text-slate-700 dark:text-slate-300" />
+                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Local Wi-Fi IP Address (for desktop Electron app)
+                      </label>
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       {localIps.map((addr) => (
                         <div key={addr} className="flex items-center gap-1 px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg">
@@ -1030,44 +1086,61 @@ export const SettingsView: React.FC = () => {
                         </div>
                       ))}
                     </div>
-                  ) : (
+                  </div>
+                )}
+
+                {!isWebPreview && localIps.length === 0 && (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-200 dark:border-slate-700">
                     <p className="text-xs text-slate-500 dark:text-slate-400">
                       {ipFetchFailed
                         ? "Could not detect this PC's local IP address. Open a command prompt and run the following to find it:"
                         : "Detecting this PC's local IP address..."}
                     </p>
-                  )}
-                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    On the Secondary PC: Settings → Network & Sync → choose <strong>Secondary PC</strong>, then enter
-                    this address (port :{syncPort} is added automatically if you leave it out).
-                  </p>
-                  {ipFetchFailed && (
-                    <code className="mt-2 inline-block text-xs font-mono bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded text-slate-700 dark:text-slate-300">
-                      ipconfig
-                    </code>
-                  )}
-                </div>
+                    {ipFetchFailed && (
+                      <code className="mt-2 inline-block text-xs font-mono bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded text-slate-700 dark:text-slate-300">
+                        ipconfig
+                      </code>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {mode === 'secondary' && (
               <div className="animate-in fade-in slide-in-from-top-4 duration-300">
-                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    Main PC IP Address
-                  </label>
+                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Main PC Address or URL
+                    </label>
+                    {isWebPreview && (
+                      <button
+                        type="button"
+                        onClick={() => setIp(currentOrigin)}
+                        className="text-xs text-teal-600 dark:text-teal-400 hover:underline font-medium flex items-center gap-1"
+                      >
+                        ⚡ Use This Web App URL
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={ip}
                     onChange={(e) => setIp(e.target.value)}
-                    placeholder="e.g., 192.168.1.100:3000"
-                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-shadow"
+                    placeholder={isWebPreview ? currentOrigin : 'e.g., 192.168.1.100:3000'}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-shadow text-xs font-mono"
                   />
-                  <p className="mt-2 text-xs text-slate-500">
-                    Enter the local IP address of the Main PC. 
-                    <br/><br/>
-                    <strong>Web Preview Note:</strong> If testing in this browser, leave this blank or use the current URL. Open the app in a new incognito window, set one to Main and one to Secondary to test live sync!
-                  </p>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 space-y-1">
+                    {isWebPreview ? (
+                      <p>
+                        <strong>Cloud Web Preview Mode:</strong> Click <strong>"⚡ Use This Web App URL"</strong> above (or leave it blank). Both PCs will connect through this web server to sync sales, stock, and customers live!
+                      </p>
+                    ) : (
+                      <p>
+                        Enter the local IP address of the Main PC (e.g. 192.168.1.xxx:3000).
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -1078,7 +1151,7 @@ export const SettingsView: React.FC = () => {
              {mode === 'secondary' && (
                <button
                   onClick={handleTestConnection}
-                  disabled={isTesting || !ip}
+                  disabled={isTesting}
                   className="flex items-center gap-2 px-6 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 font-medium rounded-lg transition-colors disabled:opacity-70"
                >
                  {isTesting ? (

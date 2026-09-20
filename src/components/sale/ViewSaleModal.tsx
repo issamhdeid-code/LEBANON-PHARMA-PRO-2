@@ -53,9 +53,6 @@ export const ViewSaleModal: React.FC<ViewSaleModalProps> = ({ sale, onClose, onE
                 <User className="h-3.5 w-3.5 mr-1 text-gray-400" />
                 Customer: {sale.customerName || 'Cash Client'}
               </span>
-              {customer && customer.phone && (
-                <span className="text-[10px] text-gray-500 font-mono">{customer.phone}</span>
-              )}
             </div>
             {customer?.allergies && (
               <div className="mt-1 flex items-center text-[10px] text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30 px-2 py-0.5 rounded border border-rose-200 dark:border-rose-900">

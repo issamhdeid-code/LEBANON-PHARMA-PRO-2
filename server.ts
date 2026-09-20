@@ -51,7 +51,9 @@ function refreshLocalIpv4() {
   localIpv4Cache = [];
   for (const addrs of Object.values(os.networkInterfaces())) {
     for (const a of addrs || []) {
-      if (a.family === 'IPv4' && !a.internal) localIpv4Cache.push(a.address);
+      if (a.family === 'IPv4' && !a.internal && !a.address.startsWith('169.254.')) {
+        localIpv4Cache.push(a.address);
+      }
     }
   }
 }

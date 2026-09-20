@@ -253,6 +253,7 @@ export function buildProductSearchPayload(product: Product): {
   const nameOnly = (product.name || '').toLowerCase();
   const code = (product.code || '').toLowerCase();
   const barcode = (product.barcode || '').toLowerCase();
+  const pieceBarcode = (product.pieceBarcode || '').toLowerCase();
   const ingredients = (product.ingredients || '').toLowerCase();
   const dosage = (product.dosage || '').toLowerCase();
   const form = (product.form || '').toLowerCase();
@@ -262,7 +263,7 @@ export function buildProductSearchPayload(product: Product): {
   const subcategory = (product.subcategory || '').toLowerCase();
   const generics = (product.scientificInfo?.generics || []).join(' ').toLowerCase();
 
-  const latinText = `${nameOnly} ${code} ${barcode} ${ingredients} ${dosage} ${form} ${presentation} ${agent} ${category} ${subcategory} ${generics}`;
+  const latinText = `${nameOnly} ${code} ${barcode} ${pieceBarcode} ${ingredients} ${dosage} ${form} ${presentation} ${agent} ${category} ${subcategory} ${generics}`;
   const arabicText = normalizeArabic(latinText);
 
   return {
@@ -310,10 +311,11 @@ export function filterProductsByMultiWordQuery(
       continue;
     }
 
-    // 2. Barcode or code exact match priority
+    // 2. Barcode, pieceBarcode, or code exact match priority
     const cleanBarcode = (product.barcode || '').toLowerCase();
+    const cleanPieceBarcode = (product.pieceBarcode || '').toLowerCase();
     const cleanCode = (product.code || '').toLowerCase();
-    if (cleanBarcode === fullQueryLower || cleanCode === fullQueryLower) {
+    if (cleanBarcode === fullQueryLower || cleanPieceBarcode === fullQueryLower || cleanCode === fullQueryLower) {
       matchedWithScores.push({ product, score: 1000 });
       continue;
     }

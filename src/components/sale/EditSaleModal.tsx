@@ -162,7 +162,7 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
                 <option value="">Cash Client</option>
                 {customers.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name} ({c.phone})
+                    {c.name}
                   </option>
                 ))}
               </select>

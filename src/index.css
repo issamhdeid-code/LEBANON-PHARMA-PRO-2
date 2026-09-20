@@ -21,21 +21,25 @@
   }
 }
 
-/* Print styling for Lebanese Pharmacy Receipts */
+/* Print styling for Lebanese Pharmacy Receipts and Reports */
 @media print {
   body * {
     visibility: hidden;
   }
-  #printable-receipt, #printable-receipt * {
+  #printable-receipt, #printable-receipt *,
+  #printable-report, #printable-report * {
     visibility: visible;
   }
-  #printable-receipt {
+  #printable-receipt,
+  #printable-report {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
     margin: 0;
-    padding: 10px;
+    padding: 12px;
+    background: #ffffff !important;
+    color: #0f172a !important;
   }
   .no-print {
     display: none !important;

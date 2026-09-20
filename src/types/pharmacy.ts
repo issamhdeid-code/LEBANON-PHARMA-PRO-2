@@ -54,7 +54,9 @@ export interface Product {
   isDivisible?: boolean; // Whether the product can be sold in pieces
   piecesPerBox?: number; // Number of pieces in a box
   pieceName?: string; // Name of the piece (e.g. sachet, ampoule)
+  pieceBarcode?: string; // Optional barcode assigned to an individual piece (blank if none)
   piecePriceUSD?: number; // Price of 1 piece in USD
+  piecePriceLBP?: number; // Price of 1 piece in LBP
   priceLBP: number; // Selling price in Lebanese Pounds
   priceUSD: number; // Selling price in USD
   previousPriceLBP?: number; // Previous price for tracking changes

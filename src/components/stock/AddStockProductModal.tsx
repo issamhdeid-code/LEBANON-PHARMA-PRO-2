@@ -15,6 +15,7 @@ import {
   getStandardPresentations,
   normalizePresentation,
 } from '../../utils/presentationUtils';
+import { formatLBPValue } from '../../utils/priceUtils';
 
 export interface AddStockProductModalProps {
   isOpen: boolean;
@@ -84,7 +85,9 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
   const [formIsDivisible, setFormIsDivisible] = useState(false);
   const [formPiecesPerBox, setFormPiecesPerBox] = useState<string | number>('');
   const [formPieceName, setFormPieceName] = useState('');
+  const [formPieceBarcode, setFormPieceBarcode] = useState('');
   const [formPiecePriceUSD, setFormPiecePriceUSD] = useState('');
+  const [formPiecePriceLBP, setFormPiecePriceLBP] = useState('');
   const [isPiecePriceManual, setIsPiecePriceManual] = useState(false);
 
   // Form (Pharmaceutical) Dropdown State
@@ -403,7 +406,8 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
     if (formIsDivisible) return true;
     if (formPiecesPerBox !== '' && formPiecesPerBox !== 0) return true;
     if (formPieceName.trim() !== '') return true;
-    if (formPiecePriceUSD.trim() !== '') return true;
+    if (formPieceBarcode.trim() !== '') return true;
+    if (formPiecePriceUSD.trim() !== '' || formPiecePriceLBP.trim() !== '') return true;
     if (formCode.trim() !== (initialCode || '').trim() && formCode.trim() !== '') return true;
     if (formBatchNumber.trim() !== (initialBatch || '').trim() && formBatchNumber.trim() !== '') return true;
     if (formExpiryDate.trim() !== (initialExpiry || '').trim() && formExpiryDate.trim() !== '') return true;
@@ -480,6 +484,14 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
       .filter((m) => m.name.trim())
       .map((m) => ({ name: m.name.trim(), strength: m.strength.trim() }));
 
+    const resolvedPiecePriceUSD = formIsDivisible
+      ? (formPiecePriceUSD ? Number(parseFloat(formPiecePriceUSD).toFixed(2)) : (formPiecePriceLBP ? Number((parseFloat(formPiecePriceLBP.replace(/[^\d.]/g, '')) / exchangeRate).toFixed(2)) : undefined))
+      : undefined;
+    const resolvedPiecePriceLBP = formIsDivisible
+      ? (formPiecePriceLBP ? Math.round(parseFloat(formPiecePriceLBP.replace(/[^\d.]/g, ''))) : (resolvedPiecePriceUSD ? Math.round(resolvedPiecePriceUSD * exchangeRate) : undefined))
+      : undefined;
+    const resolvedPieceBarcode = formIsDivisible && formPieceBarcode.trim() ? formPieceBarcode.trim() : undefined;
+
     let scientificInfo: ScientificDrugInfo | undefined = undefined;
     if (resolvedCat === 'drug') {
       const baseProd: Product = {
@@ -497,7 +509,9 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
         isDivisible: formIsDivisible,
         piecesPerBox: formIsDivisible ? Number(formPiecesPerBox) || 0 : undefined,
         pieceName: formIsDivisible ? formPieceName : undefined,
-        piecePriceUSD: formIsDivisible && formPiecePriceUSD ? Number(formPiecePriceUSD) : undefined,
+        pieceBarcode: resolvedPieceBarcode,
+        piecePriceUSD: resolvedPiecePriceUSD,
+        piecePriceLBP: resolvedPiecePriceLBP,
         priceLBP,
         priceUSD,
         costPriceUSD,
@@ -536,7 +550,9 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
       isDivisible: formIsDivisible,
       piecesPerBox: formIsDivisible ? Number(formPiecesPerBox) || 0 : undefined,
       pieceName: formIsDivisible ? formPieceName : undefined,
-      piecePriceUSD: formIsDivisible && formPiecePriceUSD ? Number(formPiecePriceUSD) : undefined,
+      pieceBarcode: resolvedPieceBarcode,
+      piecePriceUSD: resolvedPiecePriceUSD,
+      piecePriceLBP: resolvedPiecePriceLBP,
       priceLBP,
       priceUSD,
       costPriceUSD,
@@ -1587,53 +1603,110 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
               </label>
             </div>
             {formIsDivisible && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pl-6 border-l-2 border-teal-200 dark:border-teal-900 mt-2">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Pieces per Box *
-                  </label>
-                  <input
-                    type="number"
-                    min="2"
-                    value={formPiecesPerBox}
-                    onChange={(e) => {
-                      setFormPiecesPerBox(e.target.value);
-                      const val = parseFloat(e.target.value);
-                      if (!isPiecePriceManual && !isNaN(val) && val > 0 && formPriceUSD) {
-                        setFormPiecePriceUSD((Number(formPriceUSD) / val).toFixed(2));
-                      }
-                    }}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    required={formIsDivisible}
-                  />
+              <div className="space-y-3 pl-6 border-l-2 border-teal-200 dark:border-teal-900 mt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Pieces per Box *
+                    </label>
+                    <input
+                      type="number"
+                      min="2"
+                      value={formPiecesPerBox}
+                      onChange={(e) => {
+                        setFormPiecesPerBox(e.target.value);
+                        const val = parseFloat(e.target.value);
+                        if (!isPiecePriceManual && !isNaN(val) && val > 0 && formPriceUSD) {
+                          const calcUSD = (Number(formPriceUSD) / val).toFixed(2);
+                          setFormPiecePriceUSD(calcUSD);
+                          setFormPiecePriceLBP(formatLBPValue(Number(calcUSD) * exchangeRate));
+                        }
+                      }}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      required={formIsDivisible}
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Piece Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={formPieceName}
+                      onChange={(e) => setFormPieceName(e.target.value)}
+                      placeholder="e.g. tablet, sachet"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      required={formIsDivisible}
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Piece Barcode <span className="text-xs font-normal text-slate-400">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={formPieceBarcode}
+                      onChange={(e) => setFormPieceBarcode(e.target.value)}
+                      placeholder="Leave blank if none"
+                      className="w-full h-[38px] rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Piece Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={formPieceName}
-                    onChange={(e) => setFormPieceName(e.target.value)}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    required={formIsDivisible}
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    1 Piece Price ($)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={formPiecePriceUSD}
-                    onChange={(e) => {
-                      setFormPiecePriceUSD(e.target.value);
-                      setIsPiecePriceManual(true);
-                    }}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      1 Piece Price (L.L.)
+                    </label>
+                    <input
+                      type="text"
+                      value={formPiecePriceLBP}
+                      onChange={(e) => {
+                        setFormPiecePriceLBP(e.target.value);
+                        setIsPiecePriceManual(true);
+                        const num = parseFloat(e.target.value.replace(/[^\d.]/g, ''));
+                        if (!isNaN(num) && num > 0) {
+                          const usdVal = num / exchangeRate;
+                          setFormPiecePriceUSD(usdVal.toFixed(2));
+                        } else if (!e.target.value.trim()) {
+                          setFormPiecePriceUSD('');
+                          setIsPiecePriceManual(false);
+                        }
+                      }}
+                      onBlur={() => {
+                        const num = parseFloat(formPiecePriceLBP.replace(/[^\d.]/g, ''));
+                        if (!isNaN(num) && num > 0) {
+                          setFormPiecePriceLBP(formatLBPValue(num));
+                        }
+                      }}
+                      placeholder="e.g. 50,000"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-bold focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      1 Piece Price ($)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={formPiecePriceUSD}
+                      onChange={(e) => {
+                        setFormPiecePriceUSD(e.target.value);
+                        setIsPiecePriceManual(true);
+                        const num = parseFloat(e.target.value);
+                        if (!isNaN(num) && num > 0) {
+                          setFormPiecePriceLBP(formatLBPValue(num * exchangeRate));
+                        } else if (!e.target.value.trim()) {
+                          setFormPiecePriceLBP('');
+                          setIsPiecePriceManual(false);
+                        }
+                      }}
+                      placeholder="e.g. 0.55"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-bold focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -1658,8 +1731,10 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                     if (!isNaN(num)) {
                       const usdVal = num / exchangeRate;
                       setFormPriceUSD(usdVal.toFixed(2));
-                      if (formPiecesPerBox && !formPiecePriceUSD) {
-                        setFormPiecePriceUSD((usdVal / Number(formPiecesPerBox)).toFixed(2));
+                      if (formPiecesPerBox && !isPiecePriceManual) {
+                        const calcUSD = (usdVal / Number(formPiecesPerBox)).toFixed(2);
+                        setFormPiecePriceUSD(calcUSD);
+                        setFormPiecePriceLBP(formatLBPValue(Number(calcUSD) * exchangeRate));
                       }
                     }
                   }}
@@ -1681,8 +1756,10 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
                     const num = parseFloat(e.target.value);
                     if (!isNaN(num)) {
                       setFormPriceLBP(Math.round(num * exchangeRate).toString());
-                      if (formPiecesPerBox && !formPiecePriceUSD) {
-                        setFormPiecePriceUSD((num / Number(formPiecesPerBox)).toFixed(2));
+                      if (formPiecesPerBox && !isPiecePriceManual) {
+                        const calcUSD = (num / Number(formPiecesPerBox)).toFixed(2);
+                        setFormPiecePriceUSD(calcUSD);
+                        setFormPiecePriceLBP(formatLBPValue(Number(calcUSD) * exchangeRate));
                       }
                     }
                   }}

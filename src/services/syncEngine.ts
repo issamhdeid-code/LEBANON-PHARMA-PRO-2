@@ -77,15 +77,19 @@ class SyncEngine {
         serverUrl = isWebPreview ? window.location.origin : 'http://127.0.0.1:3000';
       } else {
         // secondary
-        serverUrl = this.targetIp || window.location.origin;
-        // ensure http:// prefix if missing
-        if (serverUrl && !serverUrl.startsWith('http')) {
-          serverUrl = 'http://' + serverUrl;
+        serverUrl = (this.targetIp || '').trim() || window.location.origin;
+        if (serverUrl && !serverUrl.startsWith('http://') && !serverUrl.startsWith('https://')) {
+          const isHttps = (typeof window !== 'undefined' && window.location.protocol === 'https:') || serverUrl.includes('.run.app');
+          serverUrl = (isHttps ? 'https://' : 'http://') + serverUrl;
+        }
+        if (serverUrl.includes('.run.app') && serverUrl.startsWith('http://')) {
+          serverUrl = serverUrl.replace('http://', 'https://');
         }
         // Auto-append port 3000 if it's a local network IP and the user forgot to type the port
         if (serverUrl.startsWith('http://') && !serverUrl.includes('.run.app') && serverUrl.split(':').length === 2) {
           serverUrl = serverUrl + ':3000';
         }
+        serverUrl = serverUrl.replace(/\/+$/, '');
       }
     } else {
       serverUrl = this.mode === 'main' ? 'http://127.0.0.1:3000' : (this.targetIp || 'http://127.0.0.1:3000');

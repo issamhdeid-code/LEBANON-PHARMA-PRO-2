@@ -383,11 +383,22 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
 
   useBarcodeScanner({
     onScan: (barcode) => {
+      const cleanScan = barcode.toLowerCase();
+      // First check if it matches an individual pieceBarcode
+      const pieceMatch = products.find(
+        (p) => p.isDivisible && (p.pieceBarcode || '').toLowerCase() === cleanScan
+      );
+      if (pieceMatch) {
+        addToCart(pieceMatch, true);
+        setSearchQuery('');
+        return;
+      }
+
       const product = products.find(
-        (p) => (p.barcode || '').toLowerCase() === barcode.toLowerCase() || p.code.toLowerCase() === barcode.toLowerCase()
+        (p) => (p.barcode || '').toLowerCase() === cleanScan || p.code.toLowerCase() === cleanScan
       );
       if (product) {
-        addToCart(product);
+        addToCart(product, false);
         setSearchQuery('');
       } else {
         setErrorMessage(`Product with barcode "${barcode}" not found.`);
@@ -603,9 +614,9 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
       let initialUnitPriceUSD = 0;
       let initialUnitPriceLBP = 0;
       
-      if (isPiece && product.piecePriceUSD != null) {
-        initialUnitPriceUSD = product.piecePriceUSD;
-        initialUnitPriceLBP = Math.round(product.piecePriceUSD * exchangeRate);
+      if (isPiece && (product.piecePriceUSD != null || product.piecePriceLBP != null)) {
+        initialUnitPriceUSD = product.piecePriceUSD != null ? product.piecePriceUSD : Number(((product.piecePriceLBP ?? 0) / exchangeRate).toFixed(2));
+        initialUnitPriceLBP = product.piecePriceLBP != null ? product.piecePriceLBP : Math.round((product.piecePriceUSD ?? 0) * exchangeRate);
       } else {
         initialUnitPriceUSD = Number((product.priceUSD / divisor).toFixed(2));
         initialUnitPriceLBP = Math.round(product.priceLBP / divisor);
@@ -1167,11 +1178,19 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && searchQuery.trim()) {
                         const trimmed = searchQuery.trim().toLowerCase();
+                        const exactPiece = products.find(
+                          p => p.isDivisible && (p.pieceBarcode || '').toLowerCase() === trimmed
+                        );
+                        if (exactPiece) {
+                          addToCart(exactPiece, true);
+                          setSearchQuery('');
+                          return;
+                        }
                         const exactProduct = products.find(
                           p => (p.barcode || '').toLowerCase() === trimmed || (p.code || '').toLowerCase() === trimmed
                         );
                         if (exactProduct) {
-                          addToCart(exactProduct);
+                          addToCart(exactProduct, false);
                           setSearchQuery('');
                         } else if (filteredProducts.length > 0) {
                           addToCart(filteredProducts[0]);
@@ -1317,7 +1336,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
               <option value="">Cash Client</option>
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name} ({c.phone}) {c.balanceUSD > 0 ? `• Debt: $${c.balanceUSD}` : ''}
+                  {c.name} {c.balanceUSD > 0 ? `• Debt: $${c.balanceUSD}` : ''}
                 </option>
               ))}
             </select>
@@ -1860,7 +1879,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
               <div className="flex justify-between items-center">
                 <span className="text-gray-500 dark:text-slate-400">Customer:</span>
                 <span className="font-bold text-slate-900 dark:text-slate-100">
-                  {selectedCust.name} {selectedCust.phone ? `(${selectedCust.phone})` : ''}
+                  {selectedCust.name}
                 </span>
               </div>
               <div className="flex justify-between items-center">

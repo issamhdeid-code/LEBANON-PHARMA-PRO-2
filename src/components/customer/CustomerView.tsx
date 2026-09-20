@@ -84,84 +84,125 @@ export const CustomerView: React.FC = () => {
     });
 
     salesByCustomer.forEach((custSales, custId) => {
-      const custPayments = paymentsByCustomer.get(custId) || [];
-      const paidInvoiceIds = new Set(custPayments.flatMap(p => p.invoices || []));
-
-      let unassignedUSD = 0;
-      let unassignedLBP = 0;
-      custPayments.forEach(p => {
-        if (!p.invoices || p.invoices.length === 0 || p.isPaymentOnAccount) {
-          if (p.currency === 'USD') {
-            unassignedUSD += p.amount;
-            unassignedLBP += p.amount * (exchangeRate || 1);
-          } else if (p.currency === 'LBP') {
-            unassignedLBP += p.amount;
-            unassignedUSD += p.amount / (exchangeRate || 1);
-          } else if (p.currency === 'MIXED') {
-            const u = p.amountUSD || 0;
-            const l = p.amountLBP || 0;
-            unassignedUSD += u + (l / (exchangeRate || 1));
-            unassignedLBP += l + (u * (exchangeRate || 1));
-          }
+      // 1. All non-credit sales were paid at checkout (cash/card) -> settled with 0 remaining
+      custSales.forEach(s => {
+        if (s.paymentMethod !== 'credit_debt') {
+          const origLBP = s.totalLBP || Math.round(s.totalUSD * (exchangeRate || 1));
+          map.set(s.id, {
+            remainingUSD: 0,
+            remainingLBP: 0,
+            origUSD: s.totalUSD,
+            origLBP,
+            isSettled: true,
+            isPartial: false,
+          });
         }
       });
 
+      // 2. Track credit sales
       const creditSales = custSales
         .filter(s => s.paymentMethod === 'credit_debt')
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-      custSales.forEach(s => {
+      if (creditSales.length === 0) return;
+
+      // Track running state for each credit sale
+      const salesState = creditSales.map(s => {
+        const origUSD = s.totalUSD;
         const origLBP = s.totalLBP || Math.round(s.totalUSD * (exchangeRate || 1));
-        if (s.paymentMethod !== 'credit_debt') {
-          map.set(s.id, {
-            remainingUSD: 0,
-            remainingLBP: 0,
-            origUSD: s.totalUSD,
-            origLBP,
-            isSettled: true,
-            isPartial: false,
+        return {
+          sale: s,
+          origUSD,
+          origLBP,
+          remainingUSD: origUSD,
+          remainingLBP: origLBP,
+        };
+      });
+
+      // Sort customer payments chronologically
+      const custPayments = (paymentsByCustomer.get(custId) || []).slice().sort(
+        (a, b) => (a.timestamp || new Date(a.date).getTime()) - (b.timestamp || new Date(b.date).getTime())
+      );
+
+      custPayments.forEach(p => {
+        // Calculate payment value in USD and LBP
+        let payUSD = 0;
+        let payLBP = 0;
+        if (p.currency === 'USD') {
+          payUSD = p.amountUSD != null ? p.amountUSD : p.amount;
+          payLBP = p.amountLBP != null ? p.amountLBP : payUSD * (exchangeRate || 1);
+        } else if (p.currency === 'LBP') {
+          payLBP = p.amountLBP != null ? p.amountLBP : p.amount;
+          payUSD = p.amountUSD != null ? p.amountUSD : payLBP / (exchangeRate || 1);
+        } else if (p.currency === 'MIXED') {
+          const u = p.amountUSD != null ? p.amountUSD : 0;
+          const l = p.amountLBP != null ? p.amountLBP : 0;
+          payUSD = u + (l / (exchangeRate || 1));
+          payLBP = l + (u * (exchangeRate || 1));
+        } else {
+          payUSD = p.amount || 0;
+          payLBP = payUSD * (exchangeRate || 1);
+        }
+
+        if (payUSD <= 0.001 && payLBP <= 1) return;
+
+        // Step A: If the payment specifically targets certain invoices, apply to them first
+        const targetedInvRefs = p.invoices || [];
+        if (targetedInvRefs.length > 0) {
+          salesState.forEach(state => {
+            if (payUSD <= 0.001 && payLBP <= 1) return;
+            const matches = targetedInvRefs.some(
+              invRef => invRef === state.sale.id || invRef === state.sale.invoiceNumber
+            );
+            if (matches && state.remainingUSD > 0.001) {
+              const deductUSD = Math.min(state.remainingUSD, payUSD);
+              const deductLBP = Math.min(state.remainingLBP, payLBP);
+              state.remainingUSD = Math.max(0, state.remainingUSD - deductUSD);
+              state.remainingLBP = Math.max(0, state.remainingLBP - deductLBP);
+              payUSD = Math.max(0, payUSD - deductUSD);
+              payLBP = Math.max(0, payLBP - deductLBP);
+            }
           });
-        } else if (paidInvoiceIds.has(s.id)) {
-          map.set(s.id, {
-            remainingUSD: 0,
-            remainingLBP: 0,
-            origUSD: s.totalUSD,
-            origLBP,
-            isSettled: true,
-            isPartial: false,
+        }
+
+        // Step B: If there is remaining unassigned payment value (or no specific invoices were selected),
+        // apply to remaining unpaid credit sales in FIFO order
+        if (payUSD > 0.001 || payLBP > 1) {
+          salesState.forEach(state => {
+            if (payUSD <= 0.001 && payLBP <= 1) return;
+            if (state.remainingUSD > 0.001) {
+              const deductUSD = Math.min(state.remainingUSD, payUSD);
+              const deductLBP = Math.min(state.remainingLBP, payLBP);
+              state.remainingUSD = Math.max(0, state.remainingUSD - deductUSD);
+              state.remainingLBP = Math.max(0, state.remainingLBP - deductLBP);
+              payUSD = Math.max(0, payUSD - deductUSD);
+              payLBP = Math.max(0, payLBP - deductLBP);
+            }
           });
         }
       });
 
-      creditSales.forEach(s => {
-        if (map.has(s.id)) return;
+      // Now save each credit sale's final remaining state into the map
+      salesState.forEach(state => {
+        let finalRemUSD = Number(state.remainingUSD.toFixed(2));
+        let finalRemLBP = Math.round(state.remainingLBP);
 
-        const origUSD = s.totalUSD;
-        const origLBP = s.totalLBP || Math.round(s.totalUSD * (exchangeRate || 1));
-
-        let remUSD = origUSD;
-        let remLBP = origLBP;
-
-        if (unassignedUSD > 0 || unassignedLBP > 0) {
-          const payUSD = Math.min(remUSD, unassignedUSD);
-          remUSD -= payUSD;
-          unassignedUSD -= payUSD;
-
-          const payLBP = Math.min(remLBP, unassignedLBP);
-          remLBP -= payLBP;
-          unassignedLBP -= payLBP;
+        if (finalRemUSD <= 0.005) {
+          finalRemUSD = 0;
+          finalRemLBP = 0;
+        } else if (state.origUSD > 0) {
+          // Keep LBP and USD remaining in exact proportional sync
+          finalRemLBP = Math.round(state.origLBP * (finalRemUSD / state.origUSD));
         }
 
-        const finalRemUSD = Math.max(0, Number(remUSD.toFixed(2)));
-        const finalRemLBP = Math.max(0, Math.round(remLBP));
-        const isSettled = finalRemUSD <= 0.001 && finalRemLBP <= 1;
-        const isPartial = !isSettled && (finalRemUSD < origUSD || finalRemLBP < origLBP);
+        const isSettled = finalRemUSD <= 0.005;
+        const isPartial = !isSettled && (finalRemUSD < state.origUSD - 0.005);
 
-        map.set(s.id, {
+        map.set(state.sale.id, {
           remainingUSD: isSettled ? 0 : finalRemUSD,
           remainingLBP: isSettled ? 0 : finalRemLBP,
-          origUSD,
-          origLBP,
+          origUSD: state.origUSD,
+          origLBP: state.origLBP,
           isSettled,
           isPartial,
         });
@@ -173,15 +214,15 @@ export const CustomerView: React.FC = () => {
 
   const unpaidCustomerSales = useMemo(() => {
     if (!paymentCustomerId) return [];
-    const paidInvoiceIds = new Set(
-      customerPayments
-        .filter(p => p.id !== editingPaymentId)
-        .flatMap(p => p.invoices || [])
-    );
-    return sales.filter(
-      s => s.customerId === paymentCustomerId && s.paymentMethod === 'credit_debt' && !paidInvoiceIds.has(s.id)
-    );
-  }, [sales, paymentCustomerId, customerPayments, editingPaymentId]);
+    return sales.filter(s => {
+      if (s.customerId !== paymentCustomerId || s.paymentMethod !== 'credit_debt') return false;
+      const rem = saleRemainingMap.get(s.id);
+      if (rem) {
+        return !rem.isSettled && rem.remainingUSD > 0.005;
+      }
+      return s.totalUSD > 0;
+    });
+  }, [sales, paymentCustomerId, saleRemainingMap]);
 
   const selectedInvoicesTotal = useMemo(() => {
     let usd = 0;
@@ -189,12 +230,15 @@ export const CustomerView: React.FC = () => {
     selectedInvoices.forEach(id => {
       const sale = unpaidCustomerSales.find(s => s.id === id);
       if (sale) {
-        usd += sale.totalUSD;
-        lbp += sale.totalLBP || Math.round(sale.totalUSD * (exchangeRate || 1));
+        const rem = saleRemainingMap.get(sale.id);
+        const remUSD = rem ? rem.remainingUSD : sale.totalUSD;
+        const remLBP = rem ? rem.remainingLBP : (sale.totalLBP || Math.round(sale.totalUSD * (exchangeRate || 1)));
+        usd += remUSD;
+        lbp += remLBP;
       }
     });
     return { usd, lbp };
-  }, [selectedInvoices, unpaidCustomerSales, exchangeRate]);
+  }, [selectedInvoices, unpaidCustomerSales, saleRemainingMap, exchangeRate]);
 
   const targetDebtAmount = useMemo(() => {
     if (selectedInvoices.length > 0) {
@@ -524,10 +568,6 @@ export const CustomerView: React.FC = () => {
                         <h3 className="font-bold text-xs text-slate-900 dark:text-slate-100">
                           {cust.name}
                         </h3>
-                        <span className="text-[10px] text-gray-400 flex items-center">
-                          <Phone className="h-2.5 w-2.5 mr-1" />
-                          {cust.phone}
-                        </span>
                       </div>
                     </div>
 
@@ -613,7 +653,7 @@ export const CustomerView: React.FC = () => {
               <option value="ALL">-- All Patients --</option>
               {customers.map(c => (
                 <option key={c.id} value={c.id}>
-                  {c.name} {c.phone ? `(${c.phone})` : ''} — Balance: ${(c.balanceUSD || 0).toFixed(2)} / {formatLBPValue(c.balanceLBP || 0)} LBP
+                  {c.name} — Balance: ${(c.balanceUSD || 0).toFixed(2)} / {formatLBPValue(c.balanceLBP || 0)} LBP
                 </option>
               ))}
             </select>
@@ -627,9 +667,27 @@ export const CustomerView: React.FC = () => {
                    {selectedPaymentCustomerId === 'ALL' ? 'Customer Balances' : 'Customer Transactions (Sales)'}
                  </h3>
                  {selectedPaymentCustomerId !== 'ALL' && (
-                   <span className="text-[10px] text-gray-500 dark:text-gray-400">
-                     Total Visits: {sales.filter(s => s.customerId === selectedPaymentCustomerId).length}
-                   </span>
+                   <div className="flex items-center gap-2">
+                     {(() => {
+                       const selCust = customers.find(c => c.id === selectedPaymentCustomerId);
+                       if (!selCust) return null;
+                       const balUSD = selCust.balanceUSD || 0;
+                       const balLBP = selCust.balanceLBP || 0;
+                       const hasDebt = balUSD > 0 || balLBP > 0;
+                       return (
+                         <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${
+                           hasDebt
+                             ? 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-900'
+                             : 'bg-teal-50 text-teal-700 border border-teal-200 dark:bg-teal-950/40 dark:text-teal-400 dark:border-teal-900'
+                         }`}>
+                           Remaining Debt: ${balUSD.toFixed(2)} / {formatLBPValue(balLBP)} LBP
+                         </span>
+                       );
+                     })()}
+                     <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                       Total Visits: {sales.filter(s => s.customerId === selectedPaymentCustomerId).length}
+                     </span>
+                   </div>
                  )}
               </div>
               <div className="flex-1 overflow-y-auto">
@@ -1083,8 +1141,13 @@ export const CustomerView: React.FC = () => {
                                 </div>
                               </div>
                               <div className="text-right">
-                                <div className="font-bold text-rose-600 dark:text-rose-400">${sale.totalUSD.toFixed(2)}</div>
-                                <div className="text-[9px] text-slate-500 dark:text-slate-400">{formatLBPValue(sale.totalLBP)} LBP</div>
+                                <div className="font-bold text-rose-600 dark:text-rose-400">
+                                  ${(saleRemainingMap.get(sale.id)?.remainingUSD ?? sale.totalUSD).toFixed(2)}
+                                </div>
+                                <div className="text-[9px] text-slate-500 dark:text-slate-400">
+                                  {saleRemainingMap.get(sale.id)?.isPartial ? 'Rem: ' : ''}
+                                  {formatLBPValue(saleRemainingMap.get(sale.id)?.remainingLBP ?? (sale.totalLBP || Math.round(sale.totalUSD * (exchangeRate || 1))))} LBP
+                                </div>
                               </div>
                             </label>
                           ))

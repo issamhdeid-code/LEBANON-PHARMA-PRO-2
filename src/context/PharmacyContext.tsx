@@ -1883,9 +1883,17 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const lower = h.trim().toLowerCase().replace(/['"]/g, '');
       return lower.includes('piece') && lower.includes('name');
     });
+    const colPieceBarcode = rawHeaders.find(h => {
+      const lower = h.trim().toLowerCase().replace(/['"]/g, '');
+      return lower.includes('piece') && lower.includes('barcode');
+    });
     const colPiecePriceUSD = rawHeaders.find(h => {
       const lower = h.trim().toLowerCase().replace(/['"]/g, '');
-      return lower.includes('piece') && lower.includes('price');
+      return lower.includes('piece') && (lower.includes('price usd') || (lower.includes('price') && !lower.includes('lbp')));
+    });
+    const colPiecePriceLBP = rawHeaders.find(h => {
+      const lower = h.trim().toLowerCase().replace(/['"]/g, '');
+      return lower.includes('piece') && lower.includes('lbp');
     });
     const colExpiry = rawHeaders.find(h => h.trim().toLowerCase().replace(/['"]/g, '').includes('expiry'));
     const colBatchNumber = rawHeaders.find(h => {
@@ -1979,7 +1987,9 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const divisibleFromCsv = colDivisible ? cellBool(row[colDivisible]) : undefined;
       const piecesPerBoxFromCsv = colPiecesPerBox ? cellNum(row[colPiecesPerBox]) : undefined;
       const pieceNameFromCsv = colPieceName ? cellText(row[colPieceName]) || undefined : undefined;
+      const pieceBarcodeFromCsv = colPieceBarcode ? cellText(row[colPieceBarcode]) || undefined : undefined;
       const piecePriceUSDFromCsv = colPiecePriceUSD ? cellNum(row[colPiecePriceUSD]) : undefined;
+      const piecePriceLBPFromCsv = colPiecePriceLBP ? cellNum(row[colPiecePriceLBP]) : undefined;
       const expiryFromCsv = colExpiry ? cellText(row[colExpiry]) : undefined;
       const batchNoFromCsv = colBatchNumber ? cellText(row[colBatchNumber]) : undefined;
       let batchesFromCsv: ProductBatch[] | undefined;
@@ -2115,7 +2125,9 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           isDivisible: divisibleFromCsv ?? existing.isDivisible,
           piecesPerBox: piecesPerBoxFromCsv ?? existing.piecesPerBox,
           pieceName: pieceNameFromCsv ?? existing.pieceName,
+          pieceBarcode: pieceBarcodeFromCsv ?? existing.pieceBarcode,
           piecePriceUSD: piecePriceUSDFromCsv ?? existing.piecePriceUSD,
+          piecePriceLBP: piecePriceLBPFromCsv ?? existing.piecePriceLBP,
           updatedAt: Date.now(),
           version: (existing.version || 1) + 1,
         };
@@ -2148,7 +2160,9 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           isDivisible: divisibleFromCsv,
           piecesPerBox: piecesPerBoxFromCsv,
           pieceName: pieceNameFromCsv,
+          pieceBarcode: pieceBarcodeFromCsv,
           piecePriceUSD: piecePriceUSDFromCsv,
+          piecePriceLBP: piecePriceLBPFromCsv,
           updatedAt: Date.now(),
           version: 1,
           scientificInfo: (() => {
