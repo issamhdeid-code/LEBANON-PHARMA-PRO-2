@@ -216,7 +216,7 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
   };
 
   return (
-    <DesktopWindow title="Drug Intelligence & Details" isOpen={true} onClose={onClose} width="750px" height="85vh">
+    <DesktopWindow id="stock-card-modal" section="stock" title={product ? `${product.name} (Stock Card)` : "Stock Card & Details"} isOpen={true} onClose={onClose} width="750px" height="85vh">
       <div className="w-full h-full flex flex-col min-h-0">
         {/* MODAL HEADER */}
         <div className="flex items-start justify-between border-b border-slate-100 bg-slate-50/80 px-5 py-4 dark:border-slate-800 dark:bg-slate-800/50">

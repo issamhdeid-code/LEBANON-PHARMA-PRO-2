@@ -38,6 +38,7 @@ import { DrugDetailsModal } from './DrugDetailsModal';
 import { BulkEditStockModal } from './BulkEditStockModal';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
+import { useWindowContext } from '../../context/WindowContext';
 import {
   getStandardPharmaceuticalForms,
   normalizePharmaceuticalForm,
@@ -494,6 +495,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     updateSettings,
     addNotification,
   } = usePharmacy();
+  const { restoreWindow, restoreSectionWindows } = useWindowContext();
 
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -588,25 +590,46 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   const [customCategoryInput, setCustomCategoryInput] = useState('');
   const categoryDropdownRef = useRef<HTMLDivElement>(null);
   const [formSubcategory, setFormSubcategory] = useState('');
-  const [isCustomFormSubcategory, setIsCustomFormSubcategory] = useState(false);
+  const [isSubcategoryDropdownOpen, setIsSubcategoryDropdownOpen] = useState(false);
+  const [subcategorySearchQuery, setSubcategorySearchQuery] = useState('');
+  const [isAddingCustomSubcategory, setIsAddingCustomSubcategory] = useState(false);
+  const [customSubcategoryInput, setCustomSubcategoryInput] = useState('');
+  const subcategoryDropdownRef = useRef<HTMLDivElement>(null);
+
   const [formMolecules, setFormMolecules] = useState<MoleculeStrength[]>([{ name: '', strength: '' }]);
   const formIngredients = formMolecules.map((m) => m.name.trim()).filter(Boolean).join(' + ');
   const formDosage = formMolecules.map((m) => m.strength.trim()).filter(Boolean).join(', ');
   const [formPediatricDosage, setFormPediatricDosage] = useState('');
   const [formPresentation, setFormPresentation] = useState('');
+  const [isPresentationDropdownOpen, setIsPresentationDropdownOpen] = useState(false);
+  const [presentationSearchQuery, setPresentationSearchQuery] = useState('');
+  const [isAddingCustomPresentation, setIsAddingCustomPresentation] = useState(false);
+  const [customPresentationInput, setCustomPresentationInput] = useState('');
+  const presentationDropdownRef = useRef<HTMLDivElement>(null);
+
   const [formIsDivisible, setFormIsDivisible] = useState(false);
   const [formPiecesPerBox, setFormPiecesPerBox] = useState<string | number>('');
   const [formPieceName, setFormPieceName] = useState('');
   const [formPiecePriceUSD, setFormPiecePriceUSD] = useState('');
   const [isPiecePriceManual, setIsPiecePriceManual] = useState(false);
   const [formForm, setFormForm] = useState('');
-  const [isCustomFormForm, setIsCustomFormForm] = useState(false);
+  const [isFormDropdownOpen, setIsFormDropdownOpen] = useState(false);
+  const [formSearchQuery, setFormSearchQuery] = useState('');
+  const [isAddingCustomForm, setIsAddingCustomForm] = useState(false);
   const [customFormInput, setCustomFormInput] = useState('');
+  const formDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Agent / Distributor Dropdown State
+  const [isAgentDropdownOpen, setIsAgentDropdownOpen] = useState(false);
+  const [agentSearchQuery, setAgentSearchQuery] = useState('');
+  const [isAddingCustomAgent, setIsAddingCustomAgent] = useState(false);
+  const [customAgentInput, setCustomAgentInput] = useState('');
+  const agentDropdownRef = useRef<HTMLDivElement>(null);
+
   const [formPriceLBP, setFormPriceLBP] = useState('');
   const [formPriceUSD, setFormPriceUSD] = useState('');
   const [formMargin, setFormMargin] = useState('20');
   const [formAgent, setFormAgent] = useState('Mersaco Sal');
-  const [showAgentDropdown, setShowAgentDropdown] = useState(false);
   const [isAddSupplierModalOpen, setIsAddSupplierModalOpen] = useState(false);
   const [newSupplierName, setNewSupplierName] = useState('');
   const [newSupplierPhone, setNewSupplierPhone] = useState('');
@@ -627,11 +650,35 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   // All subcategories for the active modal form (shows all subcategories with custom support)
   const allFormSubcategories = useMemo(() => {
     const list = getSubcategoryOptions('all', products, settings.customGlobalSubcategories);
-    if (formSubcategory && !list.includes(formSubcategory) && !isCustomFormSubcategory) {
+    if (formSubcategory && !list.includes(formSubcategory)) {
       return [formSubcategory, ...list];
     }
     return list;
-  }, [products, formSubcategory, isCustomFormSubcategory, settings.customGlobalSubcategories]);
+  }, [products, formSubcategory, settings.customGlobalSubcategories]);
+
+  const filteredSubcategories = useMemo(() => {
+    if (!subcategorySearchQuery.trim()) return allFormSubcategories;
+    const q = subcategorySearchQuery.toLowerCase().trim();
+    return allFormSubcategories.filter((s) => s.toLowerCase().includes(q));
+  }, [allFormSubcategories, subcategorySearchQuery]);
+
+  const handleSelectSubcategory = (sub: string) => {
+    setFormSubcategory(sub);
+    setIsSubcategoryDropdownOpen(false);
+    setSubcategorySearchQuery('');
+  };
+
+  const handleAddCustomSubcategory = (newSub: string) => {
+    const trimmed = newSub.trim();
+    if (!trimmed) return;
+    const currentCustom = settings.customGlobalSubcategories || [];
+    if (!currentCustom.includes(trimmed)) {
+      updateSettings({ customGlobalSubcategories: [...currentCustom, trimmed] });
+    }
+    handleSelectSubcategory(trimmed);
+    setIsAddingCustomSubcategory(false);
+    setCustomSubcategoryInput('');
+  };
 
   // Smart suggestion for form subcategory
   const suggestedFormSubcategory = useMemo(() => {
@@ -644,18 +691,27 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     return getStandardPharmaceuticalForms(settings.customForms);
   }, [settings.customForms]);
 
-  // Canonical presentation standards + custom presentations from settings
-  const allAvailablePresentations = useMemo(() => {
-    return getStandardPresentations(settings.customPresentations);
-  }, [settings.customPresentations]);
+  const filteredForms = useMemo(() => {
+    if (!formSearchQuery.trim()) return allAvailableForms;
+    const q = formSearchQuery.toLowerCase().trim();
+    return allAvailableForms.filter((f) => f.toLowerCase().includes(q));
+  }, [allAvailableForms, formSearchQuery]);
+
+  const handleSelectForm = (f: string) => {
+    setFormForm(f);
+    setIsFormDropdownOpen(false);
+    setFormSearchQuery('');
+  };
 
   const handleAddCustomForm = (newForm: string) => {
     const trimmed = newForm.trim();
     if (!trimmed) return;
     const normalized = normalizePharmaceuticalForm(trimmed);
     setFormForm(normalized);
-    setIsCustomFormForm(false);
+    setIsAddingCustomForm(false);
     setCustomFormInput('');
+    setIsFormDropdownOpen(false);
+    setFormSearchQuery('');
     // If no new form other than the 24 standard forms, don't add anything to customForms
     if (!isCanonicalPharmaceuticalForm(normalized)) {
       const existing = settings.customForms || [];
@@ -665,17 +721,105 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     }
   };
 
-  // Click outside category dropdown
+  // Canonical presentation standards + custom presentations from settings
+  const allAvailablePresentations = useMemo(() => {
+    return getStandardPresentations(settings.customPresentations);
+  }, [settings.customPresentations]);
+
+  const filteredPresentations = useMemo(() => {
+    if (!presentationSearchQuery.trim()) return allAvailablePresentations;
+    const q = presentationSearchQuery.toLowerCase().trim();
+    return allAvailablePresentations.filter((p) => p.toLowerCase().includes(q));
+  }, [allAvailablePresentations, presentationSearchQuery]);
+
+  const handleSelectPresentation = (p: string) => {
+    setFormPresentation(p);
+    setIsPresentationDropdownOpen(false);
+    setPresentationSearchQuery('');
+  };
+
+  const handleAddCustomPresentation = (newPres: string) => {
+    const trimmed = newPres.trim();
+    if (!trimmed) return;
+    setFormPresentation(trimmed);
+    setIsAddingCustomPresentation(false);
+    setCustomPresentationInput('');
+    setIsPresentationDropdownOpen(false);
+    setPresentationSearchQuery('');
+    const existing = settings.customPresentations || [];
+    if (!existing.includes(trimmed)) {
+      updateSettings({ customPresentations: [...existing, trimmed] });
+    }
+  };
+
+  // Click outside category/subcategory/form/presentation dropdowns
   useEffect(() => {
-    if (!isCategoryDropdownOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target as Node)) {
         setIsCategoryDropdownOpen(false);
       }
+      if (subcategoryDropdownRef.current && !subcategoryDropdownRef.current.contains(e.target as Node)) {
+        setIsSubcategoryDropdownOpen(false);
+      }
+      if (formDropdownRef.current && !formDropdownRef.current.contains(e.target as Node)) {
+        setIsFormDropdownOpen(false);
+      }
+      if (presentationDropdownRef.current && !presentationDropdownRef.current.contains(e.target as Node)) {
+        setIsPresentationDropdownOpen(false);
+      }
+      if (agentDropdownRef.current && !agentDropdownRef.current.contains(e.target as Node)) {
+        setIsAgentDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isCategoryDropdownOpen]);
+  }, []);
+
+  // Agent / Lebanese Distributor options
+  const allAvailableAgents = useMemo(() => {
+    const set = new Set<string>();
+    suppliers.forEach((s) => {
+      if (s.name?.trim()) set.add(s.name.trim());
+    });
+    if (formAgent?.trim()) set.add(formAgent.trim());
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [suppliers, formAgent]);
+
+  const filteredAgents = useMemo(() => {
+    if (!agentSearchQuery.trim()) return allAvailableAgents;
+    const q = agentSearchQuery.toLowerCase().trim();
+    return allAvailableAgents.filter((a) => a.toLowerCase().includes(q));
+  }, [allAvailableAgents, agentSearchQuery]);
+
+  const handleSelectAgent = (agentName: string) => {
+    setFormAgent(agentName);
+    setIsAgentDropdownOpen(false);
+    setAgentSearchQuery('');
+  };
+
+  const handleAddCustomAgent = (newAgent: string) => {
+    const trimmed = newAgent.trim();
+    if (!trimmed) return;
+    const existing = suppliers.some((s) => s.name.toLowerCase() === trimmed.toLowerCase());
+    if (!existing) {
+      addSupplier({
+        name: trimmed,
+        code: `SUP-${Math.floor(100 + Math.random() * 900)}`,
+        phone: '',
+        email: '',
+        address: 'Lebanon',
+        contactPerson: '',
+        paymentTerms: '30 Days Net',
+        balanceUSD: 0,
+        balanceLBP: 0,
+      });
+    }
+    setFormAgent(trimmed);
+    setIsAddingCustomAgent(false);
+    setCustomAgentInput('');
+    setIsAgentDropdownOpen(false);
+    setAgentSearchQuery('');
+  };
 
   const standardCategories: { value: ProductCategory; label: string }[] = useMemo(() => [
     { value: 'cosmetics', label: 'Cosmetics' },
@@ -701,7 +845,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setFormCategory(newCat);
     setIsCategoryDropdownOpen(false);
     setCategorySearchQuery('');
-    if (!formSubcategory && !isCustomFormSubcategory) {
+    if (!formSubcategory) {
       const suggested = suggestSubcategory(formName, newCat as ProductCategory, formIngredients);
       if (suggested) setFormSubcategory(suggested);
     }
@@ -897,7 +1041,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     if (formDosage.trim() !== '') return true;
     if (formPediatricDosage.trim() !== '') return true;
     if (formPresentation.trim() !== '') return true;
-    if (formSubcategory.trim() !== '' || isCustomFormSubcategory) return true;
+    if (formSubcategory.trim() !== '') return true;
     if (formIngredients.trim() !== '') return true;
     if (formPriceLBP.trim() !== '' && formPriceLBP.trim() !== '0') return true;
     if (formPriceUSD.trim() !== '' && formPriceUSD.trim() !== '0' && formPriceUSD.trim() !== '0.00') return true;
@@ -926,7 +1070,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     formPediatricDosage,
     formPresentation,
     formSubcategory,
-    isCustomFormSubcategory,
     formIngredients,
     formPriceLBP,
     formPriceUSD,
@@ -955,6 +1098,14 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   }, [editingProductId, hasAddFormFilledData]);
 
   const openAddModal = () => {
+    restoreWindow('stock-product-modal');
+    restoreWindow('stock_add_new_inventory_item');
+    restoreWindow('add-stock-product-window');
+    restoreWindow('add new item');
+    restoreSectionWindows('stock');
+    if (isEditModalOpen && !editingProductId) {
+      return;
+    }
     setEditingProductId(null);
     setFormCode('');
     setFormBarcode('');
@@ -965,22 +1116,35 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setIsAddingCustomCategory(false);
     setCustomCategoryInput('');
     setFormSubcategory('');
-    setIsCustomFormSubcategory(false);
+    setIsSubcategoryDropdownOpen(false);
+    setSubcategorySearchQuery('');
+    setIsAddingCustomSubcategory(false);
+    setCustomSubcategoryInput('');
     setFormMolecules([{ name: '', strength: '' }]);
     setFormPediatricDosage('');
     setFormPresentation('');
+    setIsPresentationDropdownOpen(false);
+    setPresentationSearchQuery('');
+    setIsAddingCustomPresentation(false);
+    setCustomPresentationInput('');
     setFormIsDivisible(false);
     setFormPiecesPerBox('');
     setFormPieceName('');
     setFormPiecePriceUSD('');
     setIsPiecePriceManual(false);
     setFormForm('');
-    setIsCustomFormForm(false);
+    setIsFormDropdownOpen(false);
+    setFormSearchQuery('');
+    setIsAddingCustomForm(false);
     setCustomFormInput('');
     setFormPriceLBP('');
     setFormPriceUSD('');
     setFormMargin('20');
-    setFormAgent(suppliers[0]?.name || 'Mersaco Sal');
+    setFormAgent('');
+    setIsAgentDropdownOpen(false);
+    setAgentSearchQuery('');
+    setIsAddingCustomAgent(false);
+    setCustomAgentInput('');
     setFormBatches([]);
     setFormIndications('');
     setFormContraindications('');
@@ -991,6 +1155,10 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   };
 
   const openEditModal = (prod: Product) => {
+    restoreWindow('stock-product-modal');
+    restoreWindow('stock_edit_pharmacy_item');
+    restoreWindow('edit pharmacy item');
+    restoreSectionWindows('stock');
     setShowDiscardConfirmModal(false);
     setEditingProductId(prod.id);
     setFormCode(prod.code);
@@ -1002,23 +1170,35 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     setIsAddingCustomCategory(false);
     setCustomCategoryInput('');
     setFormSubcategory(prod.subcategory || '');
-    const allSubs = getSubcategoryOptions('all', products, settings.customGlobalSubcategories);
-    setIsCustomFormSubcategory(Boolean(prod.subcategory && !allSubs.includes(prod.subcategory)));
+    setIsSubcategoryDropdownOpen(false);
+    setSubcategorySearchQuery('');
+    setIsAddingCustomSubcategory(false);
+    setCustomSubcategoryInput('');
     setFormMolecules(splitProductMolecule(prod));
     setFormPediatricDosage(prod.scientificInfo?.pediatricDosage || '');
     setFormPresentation(prod.presentation);
+    setIsPresentationDropdownOpen(false);
+    setPresentationSearchQuery('');
+    setIsAddingCustomPresentation(false);
+    setCustomPresentationInput('');
     setFormIsDivisible(prod.isDivisible || false);
     setFormPiecesPerBox(prod.piecesPerBox || '');
     setFormPieceName(prod.pieceName || '');
     setFormPiecePriceUSD(prod.piecePriceUSD ? prod.piecePriceUSD.toString() : '');
     setIsPiecePriceManual(!!prod.piecePriceUSD);
     setFormForm(prod.form ? normalizePharmaceuticalForm(prod.form) : '');
-    setIsCustomFormForm(false);
+    setIsFormDropdownOpen(false);
+    setFormSearchQuery('');
+    setIsAddingCustomForm(false);
     setCustomFormInput('');
     setFormPriceLBP(prod.priceLBP.toString());
     setFormPriceUSD(prod.priceUSD.toString());
     setFormMargin(prod.pharmacistMarginProfit.toString());
     setFormAgent(prod.agent);
+    setIsAgentDropdownOpen(false);
+    setAgentSearchQuery('');
+    setIsAddingCustomAgent(false);
+    setCustomAgentInput('');
     const resolved = resolveProductBatches(prod, purchases);
     if (resolved && resolved.length > 0) {
       setFormBatches(resolved.map(b => ({ batchNumber: b.batchNumber, expiryDate: b.expiryDate, quantity: b.quantity })));
@@ -1262,6 +1442,8 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                 if (selectedProductIds.size === 0) {
                   handleSelectAllFiltered();
                 }
+                restoreWindow('stock_bulk_edit_inventory_items');
+                restoreWindow('bulk_edit');
                 setIsBulkEditModalOpen(true);
               }}
               className={`text-xs border px-2.5 py-1 rounded cursor-pointer font-medium flex items-center gap-1.5 transition-colors shadow-2xs ${
@@ -1279,7 +1461,10 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               </span>
             </button>
             <button
-              onClick={() => setIsDeleteAllModalOpen(true)}
+              onClick={() => {
+                restoreWindow('confirm_global_stock_clearance');
+                setIsDeleteAllModalOpen(true);
+              }}
               disabled={products.length === 0}
               className="text-xs border border-rose-300 dark:border-rose-800/60 px-2.5 py-1 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 rounded cursor-pointer font-medium text-rose-700 dark:text-rose-300 flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs"
               title="Delete and remove all stock items completely"
@@ -1295,7 +1480,10 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               Clear Price Indicators
             </button>
             <button
-              onClick={onOpenCSVImport}
+              onClick={() => {
+                restoreWindow('bulk_inventory_csv_import');
+                onOpenCSVImport();
+              }}
               className="text-xs border border-gray-300 dark:border-slate-700 px-2.5 py-1 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 rounded cursor-pointer font-medium text-gray-700 dark:text-gray-200"
             >
               Import CSV
@@ -1309,7 +1497,11 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               Export CSV
             </button>
             <button
-              onClick={onOpenMOPHUpdater}
+              onClick={() => {
+                restoreWindow('moph_official_drug_price_list');
+                restoreWindow('moph');
+                onOpenMOPHUpdater();
+              }}
               className="text-xs border border-teal-300 dark:border-teal-700/60 px-2.5 py-1 bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-900/50 rounded cursor-pointer font-medium text-teal-700 dark:text-teal-300 flex items-center gap-1.5 transition-colors shadow-2xs"
               title="Update prices directly from the official MOPH price list"
             >
@@ -1319,6 +1511,8 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             <button
               onClick={() => {
                 setSelectedProductCode('');
+                restoreWindow('stock_update_drug_price_by_code');
+                restoreWindow('update_drug_price');
                 setIsPriceModalOpen(true);
               }}
               className="text-xs border border-gray-300 dark:border-slate-700 px-2.5 py-1 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 rounded cursor-pointer font-medium text-gray-700 dark:text-gray-200"
@@ -1600,10 +1794,14 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                         onToggleRowSelect={handleToggleRowSelect}
                         onOpenDetails={(p) => {
                           setSelectedStockProduct(p);
+                          restoreWindow('stock_drug_intelligence_details');
+                          restoreWindow('drug_intelligence');
                           setIsDetailsModalOpen(true);
                         }}
                         onOpenPrice={(code) => {
                           setSelectedProductCode(code);
+                          restoreWindow('stock_update_drug_price_by_code');
+                          restoreWindow('update_drug_price');
                           setIsPriceModalOpen(true);
                         }}
                         onViewScientific={onViewScientific}
@@ -1645,6 +1843,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
       {/* Add / Edit Product Modal */}
       {isEditModalOpen && (
         <DesktopWindow
+          id="stock-product-modal"
           title={editingProductId ? 'Edit Pharmacy Item' : 'Add New Inventory Item'}
           isOpen={true}
           section="stock"
@@ -1715,7 +1914,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             </div>
 
             {/* Requirement 21: Category Selection (drug, vitamins, cosmetics, para) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="relative" ref={categoryDropdownRef}>
                 <label className="block font-bold leading-4 text-slate-700 dark:text-slate-300 mb-1">
                   Category
@@ -1794,25 +1993,34 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                       </div>
                     </div>
 
-                    {/* Options list */}
-                    <div className="max-h-48 overflow-y-auto p-1 space-y-0.5">
-                      {!categorySearchQuery && (
+                    {/* Custom Category Button (at top) */}
+                    <div className="border-b border-slate-100 dark:border-slate-700/60 p-1 bg-slate-50/50 dark:bg-slate-800/40">
+                      {categorySearchQuery.trim() && !allCategoryOptions.some((c) => c.label.toLowerCase() === categorySearchQuery.trim().toLowerCase()) ? (
+                        <button
+                          type="button"
+                          onClick={() => handleAddCustomCategory(categorySearchQuery.trim())}
+                          className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add "{categorySearchQuery.trim()}" as Category</span>
+                        </button>
+                      ) : (
                         <button
                           type="button"
                           onClick={() => {
-                            setFormCategory('');
+                            setIsAddingCustomCategory(true);
                             setIsCategoryDropdownOpen(false);
                           }}
-                          className={`w-full text-left px-2.5 py-1.5 rounded text-xs italic transition-colors cursor-pointer ${
-                            !formCategory
-                              ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 font-medium'
-                              : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700/50'
-                          }`}
+                          className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-1.5 cursor-pointer"
                         >
-                          Choose Category
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Custom Category</span>
                         </button>
                       )}
+                    </div>
 
+                    {/* Options list */}
+                    <div className="max-h-48 overflow-y-auto p-1 space-y-0.5">
                       {filteredCategories.map((cat) => {
                         const isSelected = formCategory === cat.value;
                         return (
@@ -1836,32 +2044,6 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                         <div className="px-2.5 py-2 text-xs text-slate-400 dark:text-slate-500 text-center">
                           No categories found
                         </div>
-                      )}
-                    </div>
-
-                    {/* Custom Category Button */}
-                    <div className="border-t border-slate-100 dark:border-slate-700/60 p-1 bg-slate-50/50 dark:bg-slate-800/40">
-                      {categorySearchQuery.trim() && !allCategoryOptions.some((c) => c.label.toLowerCase() === categorySearchQuery.trim().toLowerCase()) ? (
-                        <button
-                          type="button"
-                          onClick={() => handleAddCustomCategory(categorySearchQuery.trim())}
-                          className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Add "{categorySearchQuery.trim()}" as Category</span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsAddingCustomCategory(true);
-                            setIsCategoryDropdownOpen(false);
-                          }}
-                          className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Custom Category</span>
-                        </button>
                       )}
                     </div>
                   </div>
@@ -1915,240 +2097,568 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                 )}
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">
-                    Subcategory
-                  </label>
-                  {suggestedFormSubcategory && suggestedFormSubcategory !== formSubcategory && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCustomFormSubcategory(false);
-                        setFormSubcategory(suggestedFormSubcategory);
-                      }}
-                      className="text-[10px] text-teal-600 hover:text-teal-700 dark:text-teal-400 font-semibold underline cursor-pointer truncate max-w-[130px]"
-                      title={`Click to apply suggestion: ${suggestedFormSubcategory}`}
-                    >
-                      Suggest: {suggestedFormSubcategory}
-                    </button>
-                  )}
-                </div>
-                <select
-                  value={isCustomFormSubcategory ? 'custom' : formSubcategory}
-                  onChange={(e) => {
-                    if (e.target.value === 'custom') {
-                      setIsCustomFormSubcategory(true);
-                      setFormSubcategory('');
-                    } else {
-                      setIsCustomFormSubcategory(false);
-                      setFormSubcategory(e.target.value);
-                    }
-                  }}
-                  className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-normal focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 text-xs ${
-                    !formSubcategory && !isCustomFormSubcategory
-                      ? 'text-slate-400 dark:text-slate-500'
-                      : 'text-slate-700 dark:text-slate-100'
-                  }`}
-                >
-                  <option value="custom" className="text-slate-700 dark:text-slate-100">Custom (Create new subcategory...)</option>
-                  <option value="" className="text-slate-400 dark:text-slate-500">Choose Subcategory</option>
-                  {allFormSubcategories.map((sub) => (
-                    <option key={sub} value={sub} className="text-slate-700 dark:text-slate-100">
-                      {sub}
-                    </option>
-                  ))}
-                </select>
-
-                {isCustomFormSubcategory && (
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      autoFocus
-                      value={formSubcategory}
-                      onChange={(e) => setFormSubcategory(e.target.value)}
-                      className="flex-1 rounded-lg border border-emerald-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-emerald-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCustomFormSubcategory(false);
-                        setFormSubcategory('');
-                      }}
-                      className="px-2 py-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
-                      title="Cancel custom subcategory"
-                    >
-                      Cancel
-                    </button>
-                  </div>
+            {/* Subcategory */}
+            <div className="relative" ref={subcategoryDropdownRef}>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-bold leading-4 text-slate-700 dark:text-slate-300">
+                  Subcategory
+                </label>
+                {suggestedFormSubcategory && suggestedFormSubcategory !== formSubcategory && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSelectSubcategory(suggestedFormSubcategory);
+                    }}
+                    className="text-[10px] text-teal-600 hover:text-teal-700 dark:text-teal-400 font-semibold underline cursor-pointer truncate max-w-[130px]"
+                    title={`Click to apply suggestion: ${suggestedFormSubcategory}`}
+                  >
+                    Suggest: {suggestedFormSubcategory}
+                  </button>
                 )}
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Form
-                </label>
-                <select
-                  value={isCustomFormForm ? 'custom' : formForm}
-                  onChange={(e) => {
-                    if (e.target.value === 'custom') {
-                      setIsCustomFormForm(true);
-                      setCustomFormInput('');
-                    } else {
-                      setIsCustomFormForm(false);
-                      setFormForm(e.target.value);
-                    }
-                  }}
-                  className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-normal focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 text-xs ${
-                    !formForm && !isCustomFormForm
-                      ? 'text-slate-400 dark:text-slate-500'
-                      : 'text-slate-700 dark:text-slate-100'
-                  }`}
-                >
-                  <option value="" className="text-slate-400 dark:text-slate-500">
-                    Choose Form
-                  </option>
-                  {allAvailableForms.map((f) => (
-                    <option key={f} value={f} className="text-slate-700 dark:text-slate-100">
-                      {f}
-                    </option>
-                  ))}
-                  <option value="custom" className="text-slate-700 dark:text-slate-100 font-medium">
-                    Custom (Add new form...)
-                  </option>
-                </select>
+              {/* Backwards-compatible select for form DOM query compatibility */}
+              <select
+                value={formSubcategory}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'custom') {
+                    setIsAddingCustomSubcategory(true);
+                    setIsSubcategoryDropdownOpen(false);
+                  } else {
+                    handleSelectSubcategory(val);
+                  }
+                }}
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
+              >
+                <option value="" className="text-slate-400">Choose Subcategory</option>
+                {allFormSubcategories.map((sub) => (
+                  <option key={sub} value={sub}>{sub}</option>
+                ))}
+                <option value="custom">Custom Subcategory</option>
+              </select>
 
-                {isCustomFormForm && (
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      autoFocus
-                      placeholder="Enter new form (e.g. Capsule)..."
-                      value={customFormInput}
-                      onChange={(e) => setCustomFormInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          if (customFormInput.trim()) {
-                            handleAddCustomForm(customFormInput.trim());
+              {/* Searchable Combobox Trigger */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSubcategoryDropdownOpen((prev) => !prev);
+                  setSubcategorySearchQuery('');
+                }}
+                className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs normal-case flex items-center justify-between focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 cursor-pointer ${
+                  !formSubcategory
+                    ? 'text-slate-400 dark:text-slate-500 font-normal'
+                    : 'text-slate-800 dark:text-slate-100 font-normal'
+                }`}
+              >
+                <span className="truncate normal-case">
+                  {formSubcategory || 'Choose Subcategory'}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isSubcategoryDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Searchable Dropdown Menu */}
+              {isSubcategoryDropdownOpen && (
+                <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                  {/* Search by typing */}
+                  <div className="p-1.5 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/80">
+                    <div className="relative flex items-center">
+                      <Search className="w-3.5 h-3.5 absolute left-2 text-slate-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="Search subcategory..."
+                        value={subcategorySearchQuery}
+                        onChange={(e) => setSubcategorySearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (filteredSubcategories.length > 0) {
+                              handleSelectSubcategory(filteredSubcategories[0]);
+                            } else if (subcategorySearchQuery.trim()) {
+                              handleAddCustomSubcategory(subcategorySearchQuery.trim());
+                            }
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setIsSubcategoryDropdownOpen(false);
                           }
-                        } else if (e.key === 'Escape') {
-                          setIsCustomFormForm(false);
-                          setCustomFormInput('');
-                        }
-                      }}
-                      className="flex-1 rounded-lg border border-emerald-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-emerald-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (customFormInput.trim()) {
-                          handleAddCustomForm(customFormInput.trim());
-                        }
-                      }}
-                      disabled={!customFormInput.trim()}
-                      className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-40 cursor-pointer shrink-0"
-                    >
-                      Add
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCustomFormForm(false);
-                        setCustomFormInput('');
-                      }}
-                      className="rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
-                    >
-                      Cancel
-                    </button>
+                        }}
+                        className="w-full pl-7 pr-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
                   </div>
-                )}
-              </div>
 
-              <div className="sm:col-span-2 lg:col-span-2">
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Presentation
-                </label>
-                <input
-                  type="text"
-                  list="stockview-presentations-list"
-                  value={formPresentation}
-                  onChange={(e) => setFormPresentation(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
-                <datalist id="stockview-presentations-list">
-                  {allAvailablePresentations.map((p) => (
-                    <option key={p} value={p} />
-                  ))}
-                </datalist>
-              </div>
-            </div>
+                  {/* Custom Subcategory Button (at top) */}
+                  <div className="border-b border-slate-100 dark:border-slate-700/60 p-1 bg-slate-50/50 dark:bg-slate-800/40">
+                    {subcategorySearchQuery.trim() && !allFormSubcategories.some((s) => s.toLowerCase() === subcategorySearchQuery.trim().toLowerCase()) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleAddCustomSubcategory(subcategorySearchQuery.trim())}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add "{subcategorySearchQuery.trim()}" as Subcategory</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingCustomSubcategory(true);
+                          setIsSubcategoryDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Custom Subcategory</span>
+                      </button>
+                    )}
+                  </div>
 
-            {/* Pieces Division Setup */}
-            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
-              <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="isDivisibleCheck"
-                  checked={formIsDivisible}
-                  onChange={(e) => setFormIsDivisible(e.target.checked)}
-                  className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-gray-300 cursor-pointer"
-                />
-                <label htmlFor="isDivisibleCheck" className="font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
-                  Divide Box into Pieces
-                </label>
-              </div>
-              {formIsDivisible && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-6 border-l-2 border-teal-200 dark:border-teal-900 mt-2">
-                  <div>
-                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      Pieces per Box
-                    </label>
-                    <input
-                      type="number"
-                      min="2"
-                      value={formPiecesPerBox}
-                      onChange={(e) => {
-                        setFormPiecesPerBox(e.target.value);
-                        const val = parseFloat(e.target.value);
-                        if (!isPiecePriceManual && !isNaN(val) && val > 0 && formPriceUSD) {
-                          setFormPiecePriceUSD((Number(formPriceUSD) / val).toFixed(2));
-                        }
-                      }}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                      required={formIsDivisible}
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      Piece Name
-                    </label>
-                    <input
-                      type="text"
-                      value={formPieceName}
-                      onChange={(e) => setFormPieceName(e.target.value)}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                      required={formIsDivisible}
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      1 Piece Price ($)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={formPiecePriceUSD}
-                      onChange={(e) => {
-                        setFormPiecePriceUSD(e.target.value);
-                        setIsPiecePriceManual(true);
-                      }}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    />
+                  {/* Options list */}
+                  <div className="max-h-48 overflow-y-auto p-1 space-y-0.5">
+                    {filteredSubcategories.map((sub) => {
+                      const isSelected = formSubcategory === sub;
+                      return (
+                        <button
+                          key={sub}
+                          type="button"
+                          onClick={() => handleSelectSubcategory(sub)}
+                          className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 font-semibold'
+                              : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          <span>{sub}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-teal-600" />}
+                        </button>
+                      );
+                    })}
+
+                    {filteredSubcategories.length === 0 && (
+                      <div className="px-2.5 py-2 text-xs text-slate-400 dark:text-slate-500 text-center">
+                        No subcategories found
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
+
+              {/* Inline custom subcategory input */}
+              {isAddingCustomSubcategory && (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Enter new subcategory..."
+                    value={customSubcategoryInput}
+                    onChange={(e) => setCustomSubcategoryInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (customSubcategoryInput.trim()) {
+                          handleAddCustomSubcategory(customSubcategoryInput.trim());
+                        }
+                      } else if (e.key === 'Escape') {
+                        setIsAddingCustomSubcategory(false);
+                        setCustomSubcategoryInput('');
+                      }
+                    }}
+                    className="flex-1 rounded-lg border border-teal-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-teal-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (customSubcategoryInput.trim()) {
+                        handleAddCustomSubcategory(customSubcategoryInput.trim());
+                      }
+                    }}
+                    disabled={!customSubcategoryInput.trim()}
+                    className="rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-40 cursor-pointer shrink-0"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingCustomSubcategory(false);
+                      setCustomSubcategoryInput('');
+                    }}
+                    className="rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Form */}
+            <div className="relative" ref={formDropdownRef}>
+              <label className="block font-bold leading-4 text-slate-700 dark:text-slate-300 mb-1">
+                Form
+              </label>
+
+              {/* Backwards-compatible select for form DOM query compatibility */}
+              <select
+                value={formForm}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'custom') {
+                    setIsAddingCustomForm(true);
+                    setIsFormDropdownOpen(false);
+                  } else {
+                    handleSelectForm(val);
+                  }
+                }}
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
+              >
+                <option value="" className="text-slate-400">Choose Form</option>
+                {allAvailableForms.map((f) => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+                <option value="custom">Custom Form</option>
+              </select>
+
+              {/* Searchable Combobox Trigger */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFormDropdownOpen((prev) => !prev);
+                  setFormSearchQuery('');
+                }}
+                className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs normal-case flex items-center justify-between focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 cursor-pointer ${
+                  !formForm
+                    ? 'text-slate-400 dark:text-slate-500 font-normal'
+                    : 'text-slate-800 dark:text-slate-100 font-normal'
+                }`}
+              >
+                <span className="truncate normal-case">
+                  {formForm || 'Choose Form'}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isFormDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Searchable Dropdown Menu */}
+              {isFormDropdownOpen && (
+                <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                  {/* Search by typing */}
+                  <div className="p-1.5 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/80">
+                    <div className="relative flex items-center">
+                      <Search className="w-3.5 h-3.5 absolute left-2 text-slate-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="Search form..."
+                        value={formSearchQuery}
+                        onChange={(e) => setFormSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (filteredForms.length > 0) {
+                              handleSelectForm(filteredForms[0]);
+                            } else if (formSearchQuery.trim()) {
+                              handleAddCustomForm(formSearchQuery.trim());
+                            }
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setIsFormDropdownOpen(false);
+                          }
+                        }}
+                        className="w-full pl-7 pr-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Custom Form Button (at top) */}
+                  <div className="border-b border-slate-100 dark:border-slate-700/60 p-1 bg-slate-50/50 dark:bg-slate-800/40">
+                    {formSearchQuery.trim() && !allAvailableForms.some((f) => f.toLowerCase() === formSearchQuery.trim().toLowerCase()) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleAddCustomForm(formSearchQuery.trim())}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add "{formSearchQuery.trim()}" as Form</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingCustomForm(true);
+                          setIsFormDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Custom Form</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Options list */}
+                  <div className="max-h-48 overflow-y-auto p-1 space-y-0.5">
+                    {filteredForms.map((f) => {
+                      const isSelected = formForm === f;
+                      return (
+                        <button
+                          key={f}
+                          type="button"
+                          onClick={() => handleSelectForm(f)}
+                          className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 font-semibold'
+                              : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          <span>{f}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-teal-600" />}
+                        </button>
+                      );
+                    })}
+
+                    {filteredForms.length === 0 && (
+                      <div className="px-2.5 py-2 text-xs text-slate-400 dark:text-slate-500 text-center">
+                        No forms found
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Inline custom form input */}
+              {isAddingCustomForm && (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Enter new form (e.g. Capsule)..."
+                    value={customFormInput}
+                    onChange={(e) => setCustomFormInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (customFormInput.trim()) {
+                          handleAddCustomForm(customFormInput.trim());
+                        }
+                      } else if (e.key === 'Escape') {
+                        setIsAddingCustomForm(false);
+                        setCustomFormInput('');
+                      }
+                    }}
+                    className="flex-1 rounded-lg border border-teal-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-teal-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (customFormInput.trim()) {
+                        handleAddCustomForm(customFormInput.trim());
+                      }
+                    }}
+                    disabled={!customFormInput.trim()}
+                    className="rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-40 cursor-pointer shrink-0"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingCustomForm(false);
+                      setCustomFormInput('');
+                    }}
+                    className="rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Presentation */}
+            <div className="relative" ref={presentationDropdownRef}>
+              <label className="block font-bold leading-4 text-slate-700 dark:text-slate-300 mb-1">
+                Presentation
+              </label>
+
+              {/* Backwards-compatible select for form DOM query compatibility */}
+              <select
+                value={formPresentation}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'custom') {
+                    setIsAddingCustomPresentation(true);
+                    setIsPresentationDropdownOpen(false);
+                  } else {
+                    handleSelectPresentation(val);
+                  }
+                }}
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
+              >
+                <option value="" className="text-slate-400">Choose Presentation</option>
+                {allAvailablePresentations.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+                <option value="custom">Custom Presentation</option>
+              </select>
+
+              {/* Searchable Combobox Trigger */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPresentationDropdownOpen((prev) => !prev);
+                  setPresentationSearchQuery('');
+                }}
+                className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs normal-case flex items-center justify-between focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 cursor-pointer ${
+                  !formPresentation
+                    ? 'text-slate-400 dark:text-slate-500 font-normal'
+                    : 'text-slate-800 dark:text-slate-100 font-normal'
+                }`}
+              >
+                <span className="truncate normal-case">
+                  {formPresentation || 'Choose Presentation'}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isPresentationDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Searchable Dropdown Menu */}
+              {isPresentationDropdownOpen && (
+                <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                  {/* Search by typing */}
+                  <div className="p-1.5 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/80">
+                    <div className="relative flex items-center">
+                      <Search className="w-3.5 h-3.5 absolute left-2 text-slate-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="Search presentation..."
+                        value={presentationSearchQuery}
+                        onChange={(e) => setPresentationSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (filteredPresentations.length > 0) {
+                              handleSelectPresentation(filteredPresentations[0]);
+                            } else if (presentationSearchQuery.trim()) {
+                              handleAddCustomPresentation(presentationSearchQuery.trim());
+                            }
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setIsPresentationDropdownOpen(false);
+                          }
+                        }}
+                        className="w-full pl-7 pr-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Custom Presentation Button (at top) */}
+                  <div className="border-b border-slate-100 dark:border-slate-700/60 p-1 bg-slate-50/50 dark:bg-slate-800/40">
+                    {presentationSearchQuery.trim() && !allAvailablePresentations.some((p) => p.toLowerCase() === presentationSearchQuery.trim().toLowerCase()) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleAddCustomPresentation(presentationSearchQuery.trim())}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add "{presentationSearchQuery.trim()}" as Presentation</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingCustomPresentation(true);
+                          setIsPresentationDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs font-semibold text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Custom Presentation</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Options list */}
+                  <div className="max-h-48 overflow-y-auto p-1 space-y-0.5">
+                    {filteredPresentations.map((p) => {
+                      const isSelected = formPresentation === p;
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => handleSelectPresentation(p)}
+                          className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 font-semibold'
+                              : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          <span>{p}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-teal-600" />}
+                        </button>
+                      );
+                    })}
+
+                    {filteredPresentations.length === 0 && (
+                      <div className="px-2.5 py-2 text-xs text-slate-400 dark:text-slate-500 text-center">
+                        No presentations found
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Inline custom presentation input */}
+              {isAddingCustomPresentation && (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Enter new presentation (e.g. 30 Tablets)..."
+                    value={customPresentationInput}
+                    onChange={(e) => setCustomPresentationInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (customPresentationInput.trim()) {
+                          handleAddCustomPresentation(customPresentationInput.trim());
+                        }
+                      } else if (e.key === 'Escape') {
+                        setIsAddingCustomPresentation(false);
+                        setCustomPresentationInput('');
+                      }
+                    }}
+                    className="flex-1 rounded-lg border border-teal-500 bg-white px-3 py-1.5 text-xs font-medium focus:outline-hidden dark:border-teal-400 dark:bg-slate-900 dark:text-slate-100 shadow-2xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (customPresentationInput.trim()) {
+                        handleAddCustomPresentation(customPresentationInput.trim());
+                      }
+                    }}
+                    disabled={!customPresentationInput.trim()}
+                    className="rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-40 cursor-pointer shrink-0"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingCustomPresentation(false);
+                      setCustomPresentationInput('');
+                    }}
+                    className="rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -2207,55 +2717,181 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                 </button>
               </div>
 
-              <div className="relative">
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+              <div className="relative" ref={agentDropdownRef}>
+                <label className="block font-bold leading-4 text-slate-700 dark:text-slate-300 mb-1">
                   Agent / Lebanese Distributor
                 </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={formAgent}
-                    onChange={(e) => {
-                      setFormAgent(e.target.value);
-                      setShowAgentDropdown(true);
-                    }}
-                    onFocus={() => setShowAgentDropdown(true)}
-                    onBlur={() => setTimeout(() => setShowAgentDropdown(false), 200)}
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  {showAgentDropdown && (
-                    <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                      {suppliers
-                        .filter(s => s.name.toLowerCase().includes(formAgent.toLowerCase()))
-                        .slice(0, 5)
-                        .map(agent => (
-                          <div
-                            key={agent.id}
-                            className="px-3 py-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-sm"
-                            onMouseDown={(e) => {
-                              e.preventDefault(); // Prevent blur
-                              setFormAgent(agent.name);
-                              setShowAgentDropdown(false);
-                            }}
-                          >
-                            {agent.name}
-                          </div>
-                      ))}
-                      <div
-                        className="px-3 py-2 cursor-pointer bg-teal-50 hover:bg-teal-100 dark:bg-teal-900/30 dark:hover:bg-teal-900/50 text-teal-700 dark:text-teal-400 font-medium text-sm flex items-center justify-between sticky bottom-0 border-t border-teal-100 dark:border-teal-800/50"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          setNewSupplierName(formAgent);
-                          setIsAddSupplierModalOpen(true);
-                          setShowAgentDropdown(false);
-                        }}
-                      >
-                        + Add Custom Supplier
+
+                {/* Backwards-compatible select for form DOM query compatibility */}
+                <select
+                  value={formAgent}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === 'custom') {
+                      setIsAddingCustomAgent(true);
+                      setIsAgentDropdownOpen(false);
+                    } else {
+                      handleSelectAgent(val);
+                    }
+                  }}
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                >
+                  <option value="" className="text-slate-400">Choose Agent</option>
+                  {allAvailableAgents.map((agentName) => (
+                    <option key={agentName} value={agentName}>{agentName}</option>
+                  ))}
+                  <option value="custom">Custom Supplier</option>
+                </select>
+
+                {/* Searchable Combobox Trigger */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAgentDropdownOpen((prev) => !prev);
+                    setAgentSearchQuery('');
+                  }}
+                  className={`w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs normal-case flex items-center justify-between focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 cursor-pointer ${
+                    !formAgent
+                      ? 'text-slate-400 dark:text-slate-500 font-normal'
+                      : 'text-slate-800 dark:text-slate-100 font-normal'
+                  }`}
+                >
+                  <span className={`truncate normal-case ${!formAgent ? 'text-slate-400 dark:text-slate-500' : 'text-slate-800 dark:text-slate-100'}`}>
+                    {formAgent || 'Choose Agent'}
+                  </span>
+                  <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isAgentDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {/* Searchable Dropdown Menu */}
+                {isAgentDropdownOpen && (
+                  <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                    {/* Search by typing */}
+                    <div className="p-1.5 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/80">
+                      <div className="relative flex items-center">
+                        <Search className="w-3.5 h-3.5 absolute left-2 text-slate-400 pointer-events-none" />
+                        <input
+                          type="text"
+                          autoFocus
+                          placeholder="Search agent / distributor..."
+                          value={agentSearchQuery}
+                          onChange={(e) => setAgentSearchQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (filteredAgents.length > 0) {
+                                handleSelectAgent(filteredAgents[0]);
+                              } else if (agentSearchQuery.trim()) {
+                                handleAddCustomAgent(agentSearchQuery.trim());
+                              }
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setIsAgentDropdownOpen(false);
+                            }
+                          }}
+                          className="w-full pl-7 pr-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-teal-500"
+                        />
                       </div>
                     </div>
-                  )}
-                </div>
+
+                    {/* Options list */}
+                    <div className="max-h-48 overflow-y-auto p-1 space-y-0.5">
+                      {filteredAgents.map((agentName) => {
+                        const isSelected = formAgent === agentName;
+                        return (
+                          <button
+                            key={agentName}
+                            type="button"
+                            onClick={() => handleSelectAgent(agentName)}
+                            className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                              isSelected
+                                ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 font-semibold'
+                                : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            <span className="truncate">{agentName}</span>
+                            {isSelected && <Check className="w-3.5 h-3.5 text-teal-600 shrink-0 ml-1" />}
+                          </button>
+                        );
+                      })}
+
+                      {filteredAgents.length === 0 && (
+                        <div className="px-2.5 py-2 text-xs text-slate-400 dark:text-slate-500 text-center">
+                          No agents / distributors found
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
+            </div>
+
+            {/* Pieces Division Setup */}
+            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="isDivisibleCheck"
+                  checked={formIsDivisible}
+                  onChange={(e) => setFormIsDivisible(e.target.checked)}
+                  className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-gray-300 cursor-pointer"
+                />
+                <label htmlFor="isDivisibleCheck" className="font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+                  Divide Box into Pieces
+                </label>
+              </div>
+              {formIsDivisible && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pl-6 border-l-2 border-teal-200 dark:border-teal-900 mt-2">
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Pieces per Box
+                    </label>
+                    <input
+                      type="number"
+                      min="2"
+                      value={formPiecesPerBox}
+                      onChange={(e) => {
+                        setFormPiecesPerBox(e.target.value);
+                        const val = parseFloat(e.target.value);
+                        if (!isPiecePriceManual && !isNaN(val) && val > 0 && formPriceUSD) {
+                          setFormPiecePriceUSD((Number(formPriceUSD) / val).toFixed(2));
+                        }
+                      }}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      required={formIsDivisible}
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Piece Name
+                    </label>
+                    <input
+                      type="text"
+                      value={formPieceName}
+                      onChange={(e) => setFormPieceName(e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      required={formIsDivisible}
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      1 Piece Price ($)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={formPiecePriceUSD}
+                      onChange={(e) => {
+                        setFormPiecePriceUSD(e.target.value);
+                        setIsPiecePriceManual(true);
+                      }}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-emerald-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Pricing in LBP, USD, Margin */}
@@ -2451,8 +3087,10 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
       {/* Add Custom Supplier Modal */}
       {isAddSupplierModalOpen && (
         <DesktopWindow
+          id="stock-add-supplier-modal"
           title="Add New Supplier"
           isOpen={true}
+          section="stock"
           onClose={() => setIsAddSupplierModalOpen(false)}
           width="480px"
           height="auto"
@@ -2524,8 +3162,10 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
       {/* Delete All Stock Confirmation Modal */}
       {isDeleteAllModalOpen && (
         <DesktopWindow
+          id="stock-delete-all-modal"
           title="Confirm Global Stock Clearance"
           isOpen={true}
+          section="stock"
           onClose={() => setIsDeleteAllModalOpen(false)}
           width="450px"
           height="auto"
@@ -2586,6 +3226,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
       {/* Bulk Delete Selected Items Confirmation Modal */}
       {isBulkDeleteModalOpen && (
         <DesktopWindow
+          id="stock-bulk-delete-modal"
           title={`Delete ${selectedProductIds.size} Selected Items`}
           isOpen={true}
           section="stock"

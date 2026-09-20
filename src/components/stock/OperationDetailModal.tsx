@@ -58,7 +58,7 @@ export const OperationDetailModal: React.FC<OperationDetailModalProps> = ({
       : `Stock Adjustment Operation: ${operation.referenceId}`;
 
   return (
-    <DesktopWindow title={title} isOpen={true} onClose={onClose} width="640px" height="auto">
+    <DesktopWindow id="operation-detail-modal" section="stock" title={title} isOpen={true} onClose={onClose} width="640px" height="auto">
       <div className="w-full flex-1 flex flex-col min-h-0 overflow-y-auto">
         <div className="p-4 space-y-4 text-xs">
           

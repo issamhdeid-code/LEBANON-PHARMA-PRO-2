@@ -20,7 +20,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, settings, onCl
   const isCustomFormat = settings.invoiceTemplate?.enabled;
 
   return (
-    <DesktopWindow title="Sale Completed & Receipt" isOpen={true} onClose={onClose} width={isCustomFormat ? "800px" : "450px"} height="85vh">
+    <DesktopWindow id="sale-receipt-modal" section="sale" title="Sale Completed & Receipt" isOpen={true} onClose={onClose} width={isCustomFormat ? "800px" : "450px"} height="85vh">
       <div className="flex flex-col h-full">
         {/* Printable Receipt Area */}
         <div id="printable-receipt" className={`p-6 text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 flex-1 overflow-y-auto ${isCustomFormat ? 'font-sans text-sm' : 'font-mono text-xs'}`}>

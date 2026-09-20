@@ -5,9 +5,11 @@ import { Supplier } from '../../types/pharmacy';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { fetchMOPHPriceList } from '../../services/mophApiService';
+import { useWindowContext } from '../../context/WindowContext';
 
 export const SupplierView: React.FC = () => {
   const { suppliers, addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier, formatLBP, formatUSD, addNotification, purchases, supplierPayments, exchangeRate } = usePharmacy();
+  const { restoreWindow, restoreSectionWindows } = useWindowContext();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
@@ -60,6 +62,14 @@ export const SupplierView: React.FC = () => {
   const [balanceUSD, setBalanceUSD] = useState('0');
 
   const openAddModal = () => {
+    restoreWindow('supplier-profile-modal');
+    restoreWindow('register_new_supplier');
+    restoreWindow('edit_supplier');
+    restoreWindow('supplier');
+    restoreSectionWindows('supplier');
+    if (isModalOpen && !editingSupplierId) {
+      return;
+    }
     setEditingSupplierId(null);
     setName('');
     setCode(`SUP-${Math.floor(100 + Math.random() * 900)}`);
@@ -73,6 +83,11 @@ export const SupplierView: React.FC = () => {
   };
 
   const openEditModal = (sup: Supplier) => {
+    restoreWindow('supplier-profile-modal');
+    restoreWindow('edit_supplier');
+    restoreWindow('register_new_supplier');
+    restoreWindow('supplier');
+    restoreSectionWindows('supplier');
     setEditingSupplierId(sup.id);
     setName(sup.name);
     setCode(sup.code);
@@ -302,6 +317,7 @@ export const SupplierView: React.FC = () => {
       {/* Modal */}
       {isModalOpen && (
         <DesktopWindow
+          id="supplier-profile-modal"
           title={editingSupplierId ? 'Edit Supplier' : 'Register New Supplier'}
           isOpen={true}
           section="supplier"
@@ -447,8 +463,10 @@ export const SupplierView: React.FC = () => {
       {/* Delete Confirmation Modal */}
       {supplierToDelete && (
         <DesktopWindow
+          id="supplier-delete-modal"
           title="Delete Supplier"
           isOpen={true}
+          section="supplier"
           onClose={() => {
             setSupplierToDelete(null);
             setDeleteError(null);

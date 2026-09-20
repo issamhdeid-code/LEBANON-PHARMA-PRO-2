@@ -31,6 +31,7 @@ import { formatLBPValue } from '../../utils/priceUtils';
 import { resolveProductBatches } from '../../utils/stockUtils';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { AddStockProductModal } from '../stock/AddStockProductModal';
+import { useWindowContext } from '../../context/WindowContext';
 
 const formatWithCommas = (val: string | number) => {
   if (val === null || val === undefined) return '';
@@ -732,6 +733,7 @@ export const formatNumber = (val: string | number): string => {
 };
 export const PurchaseView: React.FC = () => {
   const { purchases, supplierPayments, suppliers, products, recordPurchase, updatePurchase, deletePurchase, updateProduct, recordSupplierPayment, updateSupplierPayment, deleteSupplierPayment, exchangeRate, formatLBP, formatUSD, settings, addNotification } = usePharmacy();
+  const { restoreWindow, restoreSectionWindows } = useWindowContext();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -793,6 +795,10 @@ export const PurchaseView: React.FC = () => {
   }, [filteredPayments, selectedPaymentSupplierId]);
 
   const openSupplierPaymentModal = (supplierId?: string, payment?: any) => {
+    restoreWindow('supplier_payment_window');
+    restoreWindow('supplier_payment_modal');
+    restoreWindow('supplier payment');
+    restoreSectionWindows('purchase');
     if (payment) {
       setPaymentToEdit(payment);
       setInitialSupplierIdForModal(payment.supplierId);
@@ -987,6 +993,9 @@ export const PurchaseView: React.FC = () => {
   }>({});
 
   const handleOpenAddStockProduct = () => {
+    restoreWindow('stock_add_new_inventory_item');
+    restoreWindow('add-stock-product-window');
+    restoreWindow('add new item');
     setAddStockInitialData({
       barcode: itemBarcode.trim(),
       code: itemCode.trim(),
@@ -1989,6 +1998,22 @@ export const PurchaseView: React.FC = () => {
   };
 
   const handleOpenCreate = () => {
+    restoreWindow('purchase-invoice-window');
+    restoreWindow('new_purchase_invoice');
+    restoreWindow('edit_purchase_invoice');
+    restoreWindow('view_purchase_invoice');
+    restoreWindow('Receive Supplier Shipment');
+    restoreWindow('purchase invoice');
+    restoreSectionWindows('purchase');
+
+    // If already open in create mode (e.g. was minimized), just restore and focus without clearing draft
+    if (isCreateOpen && !isViewMode && !editingPurchaseId) {
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+      return;
+    }
+
     setIsViewMode(false);
     setIsCreateOpen(true);
     setEditingPurchaseId(null);
@@ -2023,6 +2048,13 @@ export const PurchaseView: React.FC = () => {
   };
 
   const handleViewPurchase = (inv: PurchaseInvoice) => {
+    restoreWindow('purchase-invoice-window');
+    restoreWindow('view_purchase_invoice');
+    restoreWindow('edit_purchase_invoice');
+    restoreWindow('new_purchase_invoice');
+    restoreWindow('Receive Supplier Shipment');
+    restoreWindow('purchase invoice');
+    restoreSectionWindows('purchase');
     setIsViewMode(true);
     setEditingPurchaseId(inv.id);
     setEditingRowIndex(null);
@@ -2044,6 +2076,13 @@ export const PurchaseView: React.FC = () => {
   };
 
   const handleEditPurchase = (inv: PurchaseInvoice) => {
+    restoreWindow('purchase-invoice-window');
+    restoreWindow('edit_purchase_invoice');
+    restoreWindow('new_purchase_invoice');
+    restoreWindow('view_purchase_invoice');
+    restoreWindow('Receive Supplier Shipment');
+    restoreWindow('purchase invoice');
+    restoreSectionWindows('purchase');
     setIsViewMode(false);
     setEditingPurchaseId(inv.id);
     setSelectedSupplierId(inv.supplierId);
@@ -2503,6 +2542,7 @@ export const PurchaseView: React.FC = () => {
       {/* New Purchase Modal */}
       {isCreateOpen && (
         <DesktopWindow
+          id="purchase-invoice-window"
           title={isViewMode ? `View Purchase (ID: ${editingPurchaseId?.replace('pur-', '')})` : editingPurchaseId ? `Edit Purchase (ID: ${editingPurchaseId.replace('pur-', '')})` : "Receive Supplier Shipment (Restock Inventory)"}
           isOpen={true}
           section="purchase"

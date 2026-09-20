@@ -2791,11 +2791,26 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     // Update customer balance
     const cust = customers.find(c => c.id === payment.customerId);
     if (cust) {
+      let deductUSD = 0;
+      let deductLBP = 0;
+
       if (payment.currency === 'USD') {
-        updateCustomer(cust.id, { balanceUSD: Math.max(0, cust.balanceUSD - payment.amount) });
-      } else {
-        updateCustomer(cust.id, { balanceLBP: Math.max(0, cust.balanceLBP - payment.amount) });
+        deductUSD = payment.amount;
+        deductLBP = payment.amount * (exchangeRate || 1);
+      } else if (payment.currency === 'LBP') {
+        deductLBP = payment.amount;
+        deductUSD = payment.amount / (exchangeRate || 1);
+      } else if (payment.currency === 'MIXED') {
+        const u = payment.amountUSD || 0;
+        const l = payment.amountLBP || 0;
+        deductUSD = u + (l / (exchangeRate || 1));
+        deductLBP = l + (u * (exchangeRate || 1));
       }
+
+      const newBalanceUSD = Math.max(0, Number((cust.balanceUSD - deductUSD).toFixed(2)));
+      const newBalanceLBP = Math.max(0, Math.round(cust.balanceLBP - deductLBP));
+
+      updateCustomer(cust.id, { balanceUSD: newBalanceUSD, balanceLBP: newBalanceLBP });
     }
     
     const newPayments = [fullPayment, ...customerPayments];
@@ -2812,24 +2827,47 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const mergedData = { ...oldPayment, ...updatedData, timestamp: Date.now() };
 
-    // Handle balance adjustment if amount or currency changed
-    if (updatedData.amount !== undefined || updatedData.currency !== undefined) {
-      const cust = customers.find(c => c.id === oldPayment.customerId);
-      if (cust) {
-        // Reverse old
-        let currentUsd = cust.balanceUSD;
-        let currentLbp = cust.balanceLBP;
-        if (oldPayment.currency === 'USD') currentUsd += oldPayment.amount;
-        else currentLbp += oldPayment.amount;
-        
-        // Apply new
-        const newCurrency = updatedData.currency || oldPayment.currency;
-        const newAmount = updatedData.amount !== undefined ? updatedData.amount : oldPayment.amount;
-        if (newCurrency === 'USD') currentUsd = Math.max(0, currentUsd - newAmount);
-        else currentLbp = Math.max(0, currentLbp - newAmount);
-        
-        updateCustomer(cust.id, { balanceUSD: currentUsd, balanceLBP: currentLbp });
+    const cust = customers.find(c => c.id === oldPayment.customerId);
+    if (cust) {
+      // 1. Reverse old payment effect
+      let oldDeductUSD = 0;
+      let oldDeductLBP = 0;
+      if (oldPayment.currency === 'USD') {
+        oldDeductUSD = oldPayment.amount;
+        oldDeductLBP = oldPayment.amount * (exchangeRate || 1);
+      } else if (oldPayment.currency === 'LBP') {
+        oldDeductLBP = oldPayment.amount;
+        oldDeductUSD = oldPayment.amount / (exchangeRate || 1);
+      } else if (oldPayment.currency === 'MIXED') {
+        const u = oldPayment.amountUSD || 0;
+        const l = oldPayment.amountLBP || 0;
+        oldDeductUSD = u + (l / (exchangeRate || 1));
+        oldDeductLBP = l + (u * (exchangeRate || 1));
       }
+
+      let currentUsd = cust.balanceUSD + oldDeductUSD;
+      let currentLbp = cust.balanceLBP + oldDeductLBP;
+
+      // 2. Apply new payment effect
+      let newDeductUSD = 0;
+      let newDeductLBP = 0;
+      if (mergedData.currency === 'USD') {
+        newDeductUSD = mergedData.amount;
+        newDeductLBP = mergedData.amount * (exchangeRate || 1);
+      } else if (mergedData.currency === 'LBP') {
+        newDeductLBP = mergedData.amount;
+        newDeductUSD = mergedData.amount / (exchangeRate || 1);
+      } else if (mergedData.currency === 'MIXED') {
+        const u = mergedData.amountUSD || 0;
+        const l = mergedData.amountLBP || 0;
+        newDeductUSD = u + (l / (exchangeRate || 1));
+        newDeductLBP = l + (u * (exchangeRate || 1));
+      }
+
+      const finalUSD = Math.max(0, Number((currentUsd - newDeductUSD).toFixed(2)));
+      const finalLBP = Math.max(0, Math.round(currentLbp - newDeductLBP));
+
+      updateCustomer(cust.id, { balanceUSD: finalUSD, balanceLBP: finalLBP });
     }
 
     const newPayments = customerPayments.map(p => p.id === paymentId ? mergedData : p);
@@ -2847,11 +2885,25 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     // Reverse customer balance
     const cust = customers.find(c => c.id === payment.customerId);
     if (cust) {
+      let oldDeductUSD = 0;
+      let oldDeductLBP = 0;
       if (payment.currency === 'USD') {
-        updateCustomer(cust.id, { balanceUSD: cust.balanceUSD + payment.amount });
-      } else {
-        updateCustomer(cust.id, { balanceLBP: cust.balanceLBP + payment.amount });
+        oldDeductUSD = payment.amount;
+        oldDeductLBP = payment.amount * (exchangeRate || 1);
+      } else if (payment.currency === 'LBP') {
+        oldDeductLBP = payment.amount;
+        oldDeductUSD = payment.amount / (exchangeRate || 1);
+      } else if (payment.currency === 'MIXED') {
+        const u = payment.amountUSD || 0;
+        const l = payment.amountLBP || 0;
+        oldDeductUSD = u + (l / (exchangeRate || 1));
+        oldDeductLBP = l + (u * (exchangeRate || 1));
       }
+
+      updateCustomer(cust.id, {
+        balanceUSD: Number((cust.balanceUSD + oldDeductUSD).toFixed(2)),
+        balanceLBP: Math.round(cust.balanceLBP + oldDeductLBP)
+      });
     }
     
     const newPayments = customerPayments.filter(p => p.id !== paymentId);

@@ -1110,6 +1110,8 @@ export const SettingsView: React.FC = () => {
 
       {showClearDataModal && (
         <DesktopWindow
+          id="clear-all-data-modal"
+          section="settings"
           title="Clear All Data"
           isOpen={true}
           onClose={() => setShowClearDataModal(false)}

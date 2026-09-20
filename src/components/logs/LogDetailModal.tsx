@@ -133,6 +133,8 @@ export const LogDetailModal: React.FC<LogDetailModalProps> = ({
 
   return (
     <DesktopWindow 
+      id="log-detail-modal"
+      section="logs"
       title={`Log Record: ${log.title}`} 
       isOpen={true} 
       onClose={onClose} 

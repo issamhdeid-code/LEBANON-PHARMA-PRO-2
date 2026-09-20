@@ -22,7 +22,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({ onClose 
   };
 
   return (
-    <DesktopWindow title="System Notifications & Inventory Alerts" isOpen={true} onClose={onClose} width="500px" height="85vh">
+    <DesktopWindow id="notifications-modal" section="notifications" title="System Notifications & Inventory Alerts" isOpen={true} onClose={onClose} width="500px" height="85vh">
       <div className="flex flex-col h-full">
         {/* Action bar */}
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-2 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400 bg-slate-50/40">

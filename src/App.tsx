@@ -23,9 +23,11 @@ import { MOPHPriceUpdaterModal } from './components/stock/MOPHPriceUpdaterModal'
 import { Product } from './types/pharmacy';
 import { NotificationToastContainer } from './components/common/NotificationToastContainer';
 import { NotificationsModal } from './components/common/NotificationsModal';
+import { useWindowContext } from './context/WindowContext';
 
 const PharmacyAppContent: React.FC = () => {
   const { currentUser, activeTab, setActiveTab, users, settings } = usePharmacy();
+  const { restoreWindow } = useWindowContext();
 
   // Global modals
   const [isPriceUpdaterOpen, setIsPriceUpdaterOpen] = useState(false);
@@ -44,8 +46,29 @@ const PharmacyAppContent: React.FC = () => {
   };
 
   const handleOpenPriceUpdater = (code: string = '') => {
+    restoreWindow('update_drug_price_by_code');
+    restoreWindow('stock_update_drug_price_by_code');
+    restoreWindow('price updater');
     setPriceUpdaterCode(code);
     setIsPriceUpdaterOpen(true);
+  };
+
+  const handleOpenCSVImport = () => {
+    restoreWindow('bulk_inventory_csv_import');
+    restoreWindow('csv import');
+    setIsCSVImportOpen(true);
+  };
+
+  const handleOpenMOPHUpdater = () => {
+    restoreWindow('moph_official_drug_price_list');
+    restoreWindow('moph');
+    setIsMOPHUpdaterOpen(true);
+  };
+
+  const handleOpenNotifications = () => {
+    restoreWindow('notification_center');
+    restoreWindow('notifications');
+    setIsGlobalNotificationsOpen(true);
   };
 
   // Keyboard Shortcuts (e.g. F1 = Sale POS, F2 = Stock, F4 = Price Updater)
@@ -100,7 +123,7 @@ const PharmacyAppContent: React.FC = () => {
           <DashboardView
             onNavigate={(tab) => setActiveTab(tab)}
             onOpenPriceUpdater={() => handleOpenPriceUpdater('')}
-            onOpenCSVImport={() => setIsCSVImportOpen(true)}
+            onOpenCSVImport={handleOpenCSVImport}
             onViewScientific={handleViewScientific}
           />
         </div>
@@ -112,8 +135,8 @@ const PharmacyAppContent: React.FC = () => {
         <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'stock' ? 'block' : 'hidden'}`}>
           <StockView
             onViewScientific={handleViewScientific}
-            onOpenCSVImport={() => setIsCSVImportOpen(true)}
-            onOpenMOPHUpdater={() => setIsMOPHUpdaterOpen(true)}
+            onOpenCSVImport={handleOpenCSVImport}
+            onOpenMOPHUpdater={handleOpenMOPHUpdater}
           />
         </div>
 
@@ -184,7 +207,7 @@ const PharmacyAppContent: React.FC = () => {
 
       
       {/* Global In-App Notification Toasts */}
-      <NotificationToastContainer onOpenCenter={() => setIsGlobalNotificationsOpen(true)} />
+      <NotificationToastContainer onOpenCenter={handleOpenNotifications} />
 
       {/* Global Notifications Center Modal */}
       {isGlobalNotificationsOpen && (

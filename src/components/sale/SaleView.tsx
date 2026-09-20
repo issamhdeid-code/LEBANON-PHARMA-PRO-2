@@ -35,6 +35,8 @@ import { ReceiptModal } from '../common/ReceiptModal';
 import { SalesTransactionLog } from './SalesTransactionLog';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
+import { DrugDetailsModal } from '../stock/DrugDetailsModal';
+import { useWindowContext } from '../../context/WindowContext';
 
 interface SaleViewProps {
   onViewScientific: (product: Product) => void;
@@ -84,6 +86,8 @@ const ProductCardTitle: React.FC<ProductCardTitleProps> = ({
     const el = containerRef.current;
     if (!el) return;
 
+    let rAF: number | null = null;
+
     const evaluateWrap = () => {
       const containerWidth = el.clientWidth;
       if (containerWidth <= 0) return;
@@ -107,17 +111,21 @@ const ProductCardTitle: React.FC<ProductCardTitleProps> = ({
 
       // If name + meta + required gap (16px) does not fit on one line:
       const shouldWrap = (nameWidth + metaWidth + 16) > containerWidth;
-      setIsWrapped(shouldWrap);
+      setIsWrapped(prev => (prev !== shouldWrap ? shouldWrap : prev));
     };
 
     evaluateWrap();
 
     const resizeObserver = new ResizeObserver(() => {
-      evaluateWrap();
+      if (rAF !== null) cancelAnimationFrame(rAF);
+      rAF = requestAnimationFrame(() => {
+        evaluateWrap();
+      });
     });
     resizeObserver.observe(el);
 
     return () => {
+      if (rAF !== null) cancelAnimationFrame(rAF);
       resizeObserver.disconnect();
     };
   }, [name, trimmedDosage, trimmedPresentation, trimmedForm, hasMeta]);
@@ -201,6 +209,7 @@ interface ProductCardProps {
   onAdd: (prod: Product) => void;
   onAddPiece: (prod: Product) => void;
   onViewScientific: (prod: Product) => void;
+  onOpenStockCard: (prod: Product) => void;
 }
 
 const ProductCard = React.memo(function ProductCard({
@@ -212,6 +221,7 @@ const ProductCard = React.memo(function ProductCard({
   onAdd,
   onAddPiece,
   onViewScientific,
+  onOpenStockCard,
 }: ProductCardProps) {
   const isLow = prod.stockQuantity <= prod.minStockAlert;
   const isOut = prod.stockQuantity <= 0;
@@ -272,6 +282,18 @@ const ProductCard = React.memo(function ProductCard({
                 <span>{totalInCartDisplay} in cart</span>
               </span>
             )}
+            {/* Quick Stock Card button (s) */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenStockCard(prod);
+              }}
+              className="flex items-center justify-center w-5 h-5 rounded border border-gray-200 text-[10px] font-bold text-gray-500 hover:border-teal-400 hover:bg-teal-50 hover:text-teal-700 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer transition-colors leading-none"
+              title="Open Stock Card of this item"
+            >
+              s
+            </button>
             {/* Requirement 22: For drugs, quick scientific info */}
             {prod.category === 'drug' && (
               <button
@@ -280,7 +302,7 @@ const ProductCard = React.memo(function ProductCard({
                   e.stopPropagation();
                   onViewScientific(prod);
                 }}
-                className="rounded border border-gray-200 p-1 text-gray-400 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer transition-colors"
+                className="flex items-center justify-center w-5 h-5 rounded border border-gray-200 text-gray-400 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer transition-colors"
                 title="View Scientific Indications, Contraindications & Generics"
               >
                 <Info className="h-3 w-3" />
@@ -383,6 +405,18 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   const [paymentMethod, setPaymentMethod] = useState<'cash_lbp' | 'cash_usd' | 'mixed' | 'credit_debt'>('cash_lbp');
   const [showPaymentConfirmModal, setShowPaymentConfirmModal] = useState<boolean>(false);
   const [writeOffDifferences, setWriteOffDifferences] = useState<boolean>(false);
+
+  const { restoreWindow } = useWindowContext();
+  const [selectedStockCardProduct, setSelectedStockCardProduct] = useState<Product | null>(null);
+  const [isStockCardOpen, setIsStockCardOpen] = useState<boolean>(false);
+
+  const handleOpenStockCard = useCallback((prod: Product) => {
+    setSelectedStockCardProduct(prod);
+    restoreWindow('stock-card-modal');
+    restoreWindow('stock_drug_intelligence_details');
+    restoreWindow('drug_intelligence');
+    setIsStockCardOpen(true);
+  }, [restoreWindow]);
 
   const selectedCust = useMemo(
     () => customers.find((c) => c.id === selectedCustomerId),
@@ -1223,6 +1257,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                                 onAdd={addToCart}
                                 onAddPiece={(p) => addToCart(p, true)}
                                 onViewScientific={onViewScientific}
+                                onOpenStockCard={handleOpenStockCard}
                               />
                             );
                           })}
@@ -1797,6 +1832,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
       {/* Customer Payment Type Confirmation Modal */}
       {showPaymentConfirmModal && selectedCust && (
         <DesktopWindow
+          id="sale-payment-confirm-modal"
           title="Payment Confirmation"
           isOpen={true}
           section="sale"
@@ -1938,6 +1974,15 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
           onClose={() => setLastCompletedSale(null)}
         />
       )}
+
+      {/* Stock Card & Details Modal */}
+      <DrugDetailsModal
+        product={selectedStockCardProduct}
+        isOpen={isStockCardOpen}
+        onClose={() => setIsStockCardOpen(false)}
+        onViewScientific={onViewScientific}
+        exchangeRate={exchangeRate}
+      />
     </div>
   );
 };

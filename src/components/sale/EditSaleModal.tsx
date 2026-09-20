@@ -138,7 +138,7 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
   };
 
   return (
-    <DesktopWindow title={`Edit Completed Sale Transaction: ${sale.invoiceNumber}`} isOpen={true} onClose={onClose} width="700px" height="80vh">
+    <DesktopWindow id="edit-sale-modal" section="sale" title={`Edit Completed Sale Transaction: ${sale.invoiceNumber}`} isOpen={true} onClose={onClose} width="700px" height="80vh">
       <div className="w-full flex-1 flex flex-col min-h-0">
         <form onSubmit={handleSave} className="p-4 space-y-3.5 text-xs flex-1 flex flex-col justify-between overflow-y-auto min-h-0">
           {error && (

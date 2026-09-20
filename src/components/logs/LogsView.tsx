@@ -598,6 +598,7 @@ export const LogsView: React.FC = () => {
       {/* Clear Logs Confirmation Modal */}
       {isConfirmClearOpen && (
         <DesktopWindow
+          id="clear-logs-confirm-modal"
           title="Clear Audit History"
           isOpen={true}
           section="logs"

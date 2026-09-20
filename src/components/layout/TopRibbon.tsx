@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { NotificationsModal } from '../common/NotificationsModal';
 import { usePharmacy } from '../../context/PharmacyContext';
+import { useWindowContext } from '../../context/WindowContext';
 import { RibbonTab } from '../../types/pharmacy';
 
 export const TopRibbon: React.FC = () => {
@@ -31,6 +32,7 @@ export const TopRibbon: React.FC = () => {
     toggleDarkMode,
     unreadCount,
   } = usePharmacy();
+  const { restoreWindow } = useWindowContext();
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
   const navItems: { id: RibbonTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -109,7 +111,11 @@ export const TopRibbon: React.FC = () => {
         <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
           {/* Notification Center */}
           <button
-            onClick={() => setIsNotificationsOpen(true)}
+            onClick={() => {
+              restoreWindow('notification_center');
+              restoreWindow('notifications');
+              setIsNotificationsOpen(true);
+            }}
             className="relative rounded p-1.5 text-teal-100 hover:bg-teal-600 hover:text-white transition-colors cursor-pointer"
             title="System Notifications & Alerts"
           >

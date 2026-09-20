@@ -345,11 +345,16 @@ export interface CustomerPayment {
   customerId: string;
   customerName: string;
   amount: number;
-  currency: 'USD' | 'LBP';
+  currency: 'USD' | 'LBP' | 'MIXED';
   method: 'cash' | 'card';
+  paymentNumber?: string;
+  notes?: string;
+  amountUSD?: number;
+  amountLBP?: number;
   date: string;
   timestamp: number;
   invoices?: string[];
+  isPaymentOnAccount?: boolean;
 }
 
 export interface SupplierPayment {

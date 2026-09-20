@@ -17,6 +17,8 @@ interface WindowContextProps {
   registerWindow: (id: string, title: string, section?: string) => void;
   unregisterWindow: (id: string) => void;
   setMinimized: (id: string, isMinimized: boolean) => void;
+  restoreWindow: (idOrQuery: string) => boolean;
+  restoreSectionWindows: (section: string) => boolean;
   bringToFront: (id: string) => void;
   updateWindowPosition: (id: string, x: number, y: number) => void;
   updateWindowSize: (id: string, width: number, height: number) => void;
@@ -91,6 +93,98 @@ export const WindowProvider: React.FC<{children: ReactNode}> = ({ children }) =>
     });
   }, []);
 
+  const restoreWindow = useCallback((idOrQuery: string) => {
+    let matched = false;
+    setWindows(prev => {
+      // 1. Direct ID match
+      if (prev[idOrQuery]) {
+        const currentMaxZ = Object.values(prev).reduce((max, w) => Math.max(max, w.zIndex), 100);
+        matched = true;
+        return {
+          ...prev,
+          [idOrQuery]: {
+            ...prev[idOrQuery],
+            isMinimized: false,
+            zIndex: currentMaxZ + 1
+          }
+        };
+      }
+
+      // 2. Query match by sanitized ID, title, section, or token words
+      const q = idOrQuery.toLowerCase().trim();
+      const sanitizedQ = q.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      const queryTokens = q.split(/[\s_\-]+/).filter(t => t.length >= 3);
+
+      // Find best match
+      let bestMatch: (typeof prev)[string] | null = null;
+      let highestScore = 0;
+
+      for (const w of Object.values(prev)) {
+        const wId = w.id.toLowerCase();
+        const wTitle = w.title.toLowerCase();
+        const wSec = (w.section || '').toLowerCase();
+        let score = 0;
+
+        if (wId === q || wId === sanitizedQ) score += 100;
+        else if (wId.includes(sanitizedQ) || sanitizedQ.includes(wId)) score += 80;
+
+        if (wTitle === q) score += 90;
+        else if (wTitle.includes(q) || q.includes(wTitle)) score += 70;
+
+        if (wSec && (wSec === q || wSec === sanitizedQ)) score += 60;
+
+        for (const token of queryTokens) {
+          if (wId.includes(token)) score += 25;
+          if (wTitle.includes(token)) score += 25;
+          if (wSec.includes(token)) score += 20;
+        }
+
+        if (score > highestScore) {
+          highestScore = score;
+          bestMatch = w;
+        }
+      }
+
+      if (bestMatch && highestScore > 0) {
+        const currentMaxZ = Object.values(prev).reduce((max, w) => Math.max(max, w.zIndex), 100);
+        matched = true;
+        return {
+          ...prev,
+          [bestMatch.id]: {
+            ...bestMatch,
+            isMinimized: false,
+            zIndex: currentMaxZ + 1
+          }
+        };
+      }
+
+      return prev;
+    });
+    return matched;
+  }, []);
+
+  const restoreSectionWindows = useCallback((section: string) => {
+    let matched = false;
+    const sec = section.toLowerCase().trim();
+    setWindows(prev => {
+      let currentMaxZ = Object.values(prev).reduce((max, w) => Math.max(max, w.zIndex), 100);
+      let updated = false;
+      const next = { ...prev };
+
+      for (const [id, w] of Object.entries(next)) {
+        if ((w.section || '').toLowerCase() === sec && w.isMinimized) {
+          currentMaxZ += 1;
+          next[id] = { ...w, isMinimized: false, zIndex: currentMaxZ };
+          updated = true;
+          matched = true;
+        }
+      }
+
+      return updated ? next : prev;
+    });
+    return matched;
+  }, []);
+
   const updateWindowPosition = useCallback((id: string, x: number, y: number) => {
     setWindows(prev => {
       if (!prev[id]) return prev;
@@ -121,12 +215,14 @@ export const WindowProvider: React.FC<{children: ReactNode}> = ({ children }) =>
     registerWindow,
     unregisterWindow,
     setMinimized,
+    restoreWindow,
+    restoreSectionWindows,
     bringToFront,
     updateWindowPosition,
     updateWindowSize,
     updatePillPosition,
     getTopZIndex
-  }), [windows, registerWindow, unregisterWindow, setMinimized, bringToFront, updateWindowPosition, updateWindowSize, updatePillPosition, getTopZIndex]);
+  }), [windows, registerWindow, unregisterWindow, setMinimized, restoreWindow, restoreSectionWindows, bringToFront, updateWindowPosition, updateWindowSize, updatePillPosition, getTopZIndex]);
 
   return (
     <WindowContext.Provider value={contextValue}>

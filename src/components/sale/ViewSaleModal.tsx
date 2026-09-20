@@ -17,7 +17,7 @@ export const ViewSaleModal: React.FC<ViewSaleModalProps> = ({ sale, onClose, onE
   const customer = customers.find((c) => c.id === sale.customerId);
 
   return (
-    <DesktopWindow title={`Sale Transaction Details: ${sale.invoiceNumber}`} isOpen={true} onClose={onClose} width="620px" height="auto">
+    <DesktopWindow id="view-sale-modal" section="sale" title={`Sale Transaction Details: ${sale.invoiceNumber}`} isOpen={true} onClose={onClose} width="620px" height="auto">
       <div className="w-full flex-1 flex flex-col min-h-0 overflow-y-auto">
         <div className="p-4 space-y-3.5 text-xs flex-1 flex flex-col justify-between">
           {/* Metadata Badges */}
