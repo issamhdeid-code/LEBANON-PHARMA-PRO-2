@@ -236,32 +236,68 @@ export const CashDrawerView: React.FC = () => {
 
     // C. Cash movements from Supplier Payments
     supplierPayments.forEach((sp) => {
-      let usd = 0;
-      let lbp = 0;
+      const source = sp.fundingSource || 'drawer';
+      const totalUSD = sp.currency === 'USD' ? (sp.amountUSD || sp.amount || 0) : sp.currency === 'MIXED' ? (sp.amountUSD || 0) : 0;
+      const totalLBP = sp.currency === 'LBP' ? (sp.amountLBP || sp.amount || 0) : sp.currency === 'MIXED' ? (sp.amountLBP || 0) : 0;
 
-      if (sp.currency === 'USD') {
-        usd = sp.amountUSD || sp.amount || 0;
-      } else if (sp.currency === 'LBP') {
-        lbp = sp.amountLBP || sp.amount || 0;
-      } else if (sp.currency === 'MIXED') {
-        usd = sp.amountUSD || 0;
-        lbp = sp.amountLBP || 0;
+      let drawerUSD = 0;
+      let drawerLBP = 0;
+      let outsideUSD = 0;
+      let outsideLBP = 0;
+
+      if (source === 'outside') {
+        drawerUSD = 0;
+        drawerLBP = 0;
+        outsideUSD = sp.outsideAmountUSD != null ? sp.outsideAmountUSD : totalUSD;
+        outsideLBP = sp.outsideAmountLBP != null ? sp.outsideAmountLBP : totalLBP;
+      } else if (source === 'mixed') {
+        drawerUSD = sp.drawerAmountUSD != null ? sp.drawerAmountUSD : 0;
+        drawerLBP = sp.drawerAmountLBP != null ? sp.drawerAmountLBP : 0;
+        outsideUSD = sp.outsideAmountUSD != null ? sp.outsideAmountUSD : Math.max(0, totalUSD - drawerUSD);
+        outsideLBP = sp.outsideAmountLBP != null ? sp.outsideAmountLBP : Math.max(0, totalLBP - drawerLBP);
+      } else {
+        // 'drawer' (default)
+        drawerUSD = sp.drawerAmountUSD != null ? sp.drawerAmountUSD : totalUSD;
+        drawerLBP = sp.drawerAmountLBP != null ? sp.drawerAmountLBP : totalLBP;
+        outsideUSD = 0;
+        outsideLBP = 0;
       }
 
-      if (usd > 0 || lbp > 0) {
+      if (drawerUSD > 0 || drawerLBP > 0) {
         entries.push({
           id: `suppay-${sp.id}`,
           timestamp: sp.timestamp || new Date(sp.date).getTime(),
           date: sp.date || new Date(sp.timestamp).toISOString(),
           type: 'OUT',
-          categoryLabel: 'Supplier Cash Payout',
+          categoryLabel: source === 'mixed' ? 'Supplier Payout (Mixed Sources)' : 'Supplier Cash Payout',
           categoryKey: 'supplier_payout',
           referenceNumber: sp.receiptNumber || `SUP-${sp.id.substring(0, 6)}`,
           partyName: sp.supplierName || 'Medicine Distributor',
-          amountUSD: usd,
-          amountLBP: lbp,
+          amountUSD: drawerUSD,
+          amountLBP: drawerLBP,
           performedBy: 'Purchaser / Pharmacist',
-          notes: `Paid invoice(s): ${(sp.invoices || []).join(', ') || 'Direct COD Settlement'}`,
+          notes: `Paid invoice(s): ${(sp.invoices || []).join(', ') || 'Direct COD Settlement'}${
+            source === 'mixed'
+              ? ` [Drawer: $${drawerUSD.toFixed(2)}${drawerLBP > 0 ? ` + ${formatLBPValue(drawerLBP)} LBP` : ''} | Outside: $${outsideUSD.toFixed(2)}${outsideLBP > 0 ? ` + ${formatLBPValue(outsideLBP)} LBP` : ''}${sp.outsideSourceNote ? ` (${sp.outsideSourceNote})` : ''}]`
+              : ''
+          }`,
+          source: 'supplier_payment',
+        });
+      } else if (source === 'outside' && (outsideUSD > 0 || outsideLBP > 0)) {
+        // Outside payment: 0 deduction from drawer ledger, but visible for audit transparency
+        entries.push({
+          id: `suppay-${sp.id}`,
+          timestamp: sp.timestamp || new Date(sp.date).getTime(),
+          date: sp.date || new Date(sp.timestamp).toISOString(),
+          type: 'OUT',
+          categoryLabel: 'Supplier Payout (Outside Drawer)',
+          categoryKey: 'supplier_payout',
+          referenceNumber: sp.receiptNumber || `SUP-${sp.id.substring(0, 6)}`,
+          partyName: sp.supplierName || 'Medicine Distributor',
+          amountUSD: 0,
+          amountLBP: 0,
+          performedBy: 'Purchaser / Pharmacist',
+          notes: `Paid invoice(s): ${(sp.invoices || []).join(', ') || 'Direct COD Settlement'} [Funded Outside: $${outsideUSD.toFixed(2)}${outsideLBP > 0 ? ` + ${formatLBPValue(outsideLBP)} LBP` : ''} (Zero drawer deduction)${sp.outsideSourceNote ? ` - ${sp.outsideSourceNote}` : ''}]`,
           source: 'supplier_payment',
         });
       }

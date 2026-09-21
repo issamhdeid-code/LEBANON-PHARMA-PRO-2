@@ -1,11 +1,11 @@
 import { formatNumber } from './PurchaseView';
 import { formatLBPValue } from '../../utils/priceUtils';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { X, Check, Search, Receipt, ChevronDown } from 'lucide-react';
+import { X, Check, Search, Receipt, ChevronDown, Wallet, ExternalLink, ArrowRightLeft, Info } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { DesktopWindow } from '../common/DesktopWindow';
 
-import { SupplierPayment } from '../../types/pharmacy';
+import { SupplierPayment, PaymentFundingSource } from '../../types/pharmacy';
 
 interface SupplierPaymentModalProps {
   isOpen: boolean;
@@ -35,6 +35,14 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
   const [amountUSDInput, setAmountUSDInput] = useState(paymentToEdit?.amountUSD != null ? paymentToEdit.amountUSD.toString() : '');
   const [amountLBPInput, setAmountLBPInput] = useState(paymentToEdit?.amountLBP != null ? formatLBPValue(paymentToEdit.amountLBP) : '');
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>(paymentToEdit?.invoices || []);
+
+  // Funding source state (Cash drawer vs Outside vs Mixed)
+  const [fundingSource, setFundingSource] = useState<PaymentFundingSource>(paymentToEdit?.fundingSource || 'drawer');
+  const [drawerUSDInput, setDrawerUSDInput] = useState<string>('');
+  const [drawerLBPInput, setDrawerLBPInput] = useState<string>('');
+  const [outsideUSDInput, setOutsideUSDInput] = useState<string>('');
+  const [outsideLBPInput, setOutsideLBPInput] = useState<string>('');
+  const [outsideSourceNote, setOutsideSourceNote] = useState<string>(paymentToEdit?.outsideSourceNote || '');
 
   const sortedSuppliers = useMemo(() => {
     return [...suppliers].sort((a, b) => {
@@ -75,6 +83,19 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
         setAmountLBPInput('');
       }
       setSelectedInvoiceIds(paymentToEdit.invoices || []);
+      setFundingSource(paymentToEdit.fundingSource || 'drawer');
+      setOutsideSourceNote(paymentToEdit.outsideSourceNote || '');
+      if (paymentToEdit.fundingSource === 'mixed') {
+        setDrawerUSDInput(paymentToEdit.drawerAmountUSD != null ? paymentToEdit.drawerAmountUSD.toString() : '');
+        setDrawerLBPInput(paymentToEdit.drawerAmountLBP != null ? formatNumber(paymentToEdit.drawerAmountLBP) : '');
+        setOutsideUSDInput(paymentToEdit.outsideAmountUSD != null ? paymentToEdit.outsideAmountUSD.toString() : '');
+        setOutsideLBPInput(paymentToEdit.outsideAmountLBP != null ? formatNumber(paymentToEdit.outsideAmountLBP) : '');
+      } else {
+        setDrawerUSDInput('');
+        setDrawerLBPInput('');
+        setOutsideUSDInput('');
+        setOutsideLBPInput('');
+      }
     } else if (initialSupplierId) {
       setSelectedSupplierId(initialSupplierId);
       const s = suppliers.find(sup => sup.id === initialSupplierId);
@@ -84,6 +105,12 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
       setAmountUSDInput('');
       setAmountLBPInput('');
       setSelectedInvoiceIds([]);
+      setFundingSource('drawer');
+      setOutsideSourceNote('');
+      setDrawerUSDInput('');
+      setDrawerLBPInput('');
+      setOutsideUSDInput('');
+      setOutsideLBPInput('');
     } else {
       setSelectedSupplierId('');
       setSupplierSearchQuery('');
@@ -92,6 +119,12 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
       setAmountUSDInput('');
       setAmountLBPInput('');
       setSelectedInvoiceIds([]);
+      setFundingSource('drawer');
+      setOutsideSourceNote('');
+      setDrawerUSDInput('');
+      setDrawerLBPInput('');
+      setOutsideUSDInput('');
+      setOutsideLBPInput('');
     }
   }, [paymentToEdit, initialSupplierId, isOpen, suppliers]);
 
@@ -242,6 +275,101 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
     }
   };
 
+  const computedPaymentTotals = useMemo(() => {
+    let finalUSD = 0;
+    let finalLBP = 0;
+    let finalAmount = 0;
+
+    if (currency === 'MIXED') {
+      finalUSD = currentEnteredUSD;
+      finalLBP = currentEnteredLBP;
+      finalAmount = Number((finalUSD + (finalLBP / (exchangeRate || 1))).toFixed(2));
+    } else if (paymentType === 'full') {
+      finalAmount = currency === 'USD' ? selectedInvoicesTotal.usd : selectedInvoicesTotal.lbp;
+      if (currency === 'USD') finalUSD = finalAmount;
+      else finalLBP = finalAmount;
+    } else {
+      const parsed = parseFloat(amountInput.replace(/,/g, '')) || 0;
+      finalAmount = parsed;
+      if (currency === 'USD') finalUSD = parsed;
+      else finalLBP = parsed;
+    }
+    return { finalUSD, finalLBP, finalAmount };
+  }, [currency, paymentType, currentEnteredUSD, currentEnteredLBP, selectedInvoicesTotal, amountInput, exchangeRate]);
+
+  const handleDrawerUSDSplitChange = (raw: string) => {
+    const clean = raw.replace(/[^0-9.]/g, '');
+    setDrawerUSDInput(clean);
+    const parsed = parseFloat(clean);
+    if (!isNaN(parsed) && computedPaymentTotals.finalUSD > 0) {
+      const rem = Math.max(0, Number((computedPaymentTotals.finalUSD - parsed).toFixed(2)));
+      setOutsideUSDInput(rem > 0 ? rem.toFixed(2) : '0');
+    }
+  };
+
+  const handleOutsideUSDSplitChange = (raw: string) => {
+    const clean = raw.replace(/[^0-9.]/g, '');
+    setOutsideUSDInput(clean);
+    const parsed = parseFloat(clean);
+    if (!isNaN(parsed) && computedPaymentTotals.finalUSD > 0) {
+      const rem = Math.max(0, Number((computedPaymentTotals.finalUSD - parsed).toFixed(2)));
+      setDrawerUSDInput(rem > 0 ? rem.toFixed(2) : '0');
+    }
+  };
+
+  const handleDrawerLBPSplitChange = (raw: string) => {
+    const clean = raw.replace(/[^0-9]/g, '');
+    setDrawerLBPInput(clean ? formatNumber(clean) : '');
+    const parsed = parseFloat(clean);
+    if (!isNaN(parsed) && computedPaymentTotals.finalLBP > 0) {
+      const rem = Math.max(0, Math.round(computedPaymentTotals.finalLBP - parsed));
+      setOutsideLBPInput(rem ? formatNumber(rem) : '0');
+    }
+  };
+
+  const handleOutsideLBPSplitChange = (raw: string) => {
+    const clean = raw.replace(/[^0-9]/g, '');
+    setOutsideLBPInput(clean ? formatNumber(clean) : '');
+    const parsed = parseFloat(clean);
+    if (!isNaN(parsed) && computedPaymentTotals.finalLBP > 0) {
+      const rem = Math.max(0, Math.round(computedPaymentTotals.finalLBP - parsed));
+      setDrawerLBPInput(rem ? formatNumber(rem) : '0');
+    }
+  };
+
+  const handleSetSplitPreset = (preset: '50_50' | 'all_drawer' | 'all_outside') => {
+    if (preset === '50_50') {
+      if (computedPaymentTotals.finalUSD > 0) {
+        const half = Number((computedPaymentTotals.finalUSD / 2).toFixed(2));
+        setDrawerUSDInput(half.toFixed(2));
+        setOutsideUSDInput(Number((computedPaymentTotals.finalUSD - half).toFixed(2)).toFixed(2));
+      }
+      if (computedPaymentTotals.finalLBP > 0) {
+        const halfLbp = Math.round(computedPaymentTotals.finalLBP / 2);
+        setDrawerLBPInput(formatNumber(halfLbp));
+        setOutsideLBPInput(formatNumber(computedPaymentTotals.finalLBP - halfLbp));
+      }
+    } else if (preset === 'all_drawer') {
+      if (computedPaymentTotals.finalUSD > 0) {
+        setDrawerUSDInput(computedPaymentTotals.finalUSD.toFixed(2));
+        setOutsideUSDInput('0');
+      }
+      if (computedPaymentTotals.finalLBP > 0) {
+        setDrawerLBPInput(formatNumber(computedPaymentTotals.finalLBP));
+        setOutsideLBPInput('0');
+      }
+    } else if (preset === 'all_outside') {
+      if (computedPaymentTotals.finalUSD > 0) {
+        setDrawerUSDInput('0');
+        setOutsideUSDInput(computedPaymentTotals.finalUSD.toFixed(2));
+      }
+      if (computedPaymentTotals.finalLBP > 0) {
+        setDrawerLBPInput('0');
+        setOutsideLBPInput(formatNumber(computedPaymentTotals.finalLBP));
+      }
+    }
+  };
+
   if (!isOpen) return null;
 
   const handleToggleInvoice = (id: string) => {
@@ -274,6 +402,29 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
       else finalLBP = finalAmount;
     }
 
+    let computedDrawerUSD = 0;
+    let computedDrawerLBP = 0;
+    let computedOutsideUSD = 0;
+    let computedOutsideLBP = 0;
+
+    if (fundingSource === 'drawer') {
+      computedDrawerUSD = finalUSD;
+      computedDrawerLBP = finalLBP;
+      computedOutsideUSD = 0;
+      computedOutsideLBP = 0;
+    } else if (fundingSource === 'outside') {
+      computedDrawerUSD = 0;
+      computedDrawerLBP = 0;
+      computedOutsideUSD = finalUSD;
+      computedOutsideLBP = finalLBP;
+    } else {
+      // mixed
+      computedDrawerUSD = parseFloat(drawerUSDInput.replace(/,/g, '')) || 0;
+      computedDrawerLBP = parseFloat(drawerLBPInput.replace(/,/g, '')) || 0;
+      computedOutsideUSD = parseFloat(outsideUSDInput.replace(/,/g, '')) || 0;
+      computedOutsideLBP = parseFloat(outsideLBPInput.replace(/,/g, '')) || 0;
+    }
+
     const supplier = suppliers.find(s => s.id === selectedSupplierId);
 
     const payload = {
@@ -287,6 +438,12 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
       amountLBP: finalLBP,
       invoices: selectedInvoiceIds, // Send invoices regardless of payment type so it allocates
       isPaymentOnAccount: selectedInvoiceIds.length === 0, // It's only on-account if no invoices are selected
+      fundingSource,
+      drawerAmountUSD: computedDrawerUSD,
+      drawerAmountLBP: computedDrawerLBP,
+      outsideAmountUSD: computedOutsideUSD,
+      outsideAmountLBP: computedOutsideLBP,
+      outsideSourceNote: outsideSourceNote.trim() || undefined,
     };
     
     if (paymentToEdit) {
@@ -675,6 +832,280 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
                     className="w-full sm:w-1/2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-slate-800 dark:text-slate-100 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 font-bold"
                     required
                   />
+                </div>
+              )}
+            </div>
+
+            {/* Money Source (Cash Drawer vs Outside vs Mixed) */}
+            <div className="bg-slate-50/70 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-200 dark:border-slate-700/80 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                    Payment Money Source
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Select where the payment funds originate to keep your cash drawer ledger accurate.
+                  </p>
+                </div>
+              </div>
+
+              {/* Source Option Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {/* 1. Cash Drawer */}
+                <button
+                  type="button"
+                  onClick={() => setFundingSource('drawer')}
+                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    fundingSource === 'drawer'
+                      ? 'border-teal-500 bg-teal-50/50 dark:bg-teal-950/30 text-teal-900 dark:text-teal-100 ring-2 ring-teal-500/20 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1.5">
+                    <div className="flex items-center gap-1.5 font-bold text-xs">
+                      <Wallet className={`w-3.5 h-3.5 ${fundingSource === 'drawer' ? 'text-teal-600 dark:text-teal-400' : 'text-slate-400'}`} />
+                      <span>Cash Drawer</span>
+                    </div>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      fundingSource === 'drawer'
+                        ? 'bg-teal-100 text-teal-800 dark:bg-teal-900/60 dark:text-teal-300'
+                        : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'
+                    }`}>
+                      Ledger
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                    100% taken from physical drawer. Deducts from drawer balance.
+                  </p>
+                </button>
+
+                {/* 2. Outside Drawer */}
+                <button
+                  type="button"
+                  onClick={() => setFundingSource('outside')}
+                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    fundingSource === 'outside'
+                      ? 'border-purple-500 bg-purple-50/50 dark:bg-purple-950/30 text-purple-900 dark:text-purple-100 ring-2 ring-purple-500/20 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1.5">
+                    <div className="flex items-center gap-1.5 font-bold text-xs">
+                      <ExternalLink className={`w-3.5 h-3.5 ${fundingSource === 'outside' ? 'text-purple-600 dark:text-purple-400' : 'text-slate-400'}`} />
+                      <span>Outside Drawer</span>
+                    </div>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      fundingSource === 'outside'
+                        ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-300'
+                        : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'
+                    }`}>
+                      0 Impact
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                    Paid from personal pocket, bank, or safe. Zero drawer deduction.
+                  </p>
+                </button>
+
+                {/* 3. Mixed Sources */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFundingSource('mixed');
+                    if (!drawerUSDInput && !outsideUSDInput && computedPaymentTotals.finalUSD > 0) {
+                      const half = Number((computedPaymentTotals.finalUSD / 2).toFixed(2));
+                      setDrawerUSDInput(half.toFixed(2));
+                      setOutsideUSDInput(Number((computedPaymentTotals.finalUSD - half).toFixed(2)).toFixed(2));
+                    }
+                    if (!drawerLBPInput && !outsideLBPInput && computedPaymentTotals.finalLBP > 0) {
+                      const halfLbp = Math.round(computedPaymentTotals.finalLBP / 2);
+                      setDrawerLBPInput(formatNumber(halfLbp));
+                      setOutsideLBPInput(formatNumber(computedPaymentTotals.finalLBP - halfLbp));
+                    }
+                  }}
+                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    fundingSource === 'mixed'
+                      ? 'border-amber-500 bg-amber-50/50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-100 ring-2 ring-amber-500/20 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1.5">
+                    <div className="flex items-center gap-1.5 font-bold text-xs">
+                      <ArrowRightLeft className={`w-3.5 h-3.5 ${fundingSource === 'mixed' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}`} />
+                      <span>Mixed Sources</span>
+                    </div>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      fundingSource === 'mixed'
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
+                        : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'
+                    }`}>
+                      Split
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                    Custom split between cash drawer and external funds.
+                  </p>
+                </button>
+              </div>
+
+              {/* Outside Details (When Outside) */}
+              {fundingSource === 'outside' && (
+                <div className="bg-purple-50/60 dark:bg-purple-950/20 p-3 rounded-lg border border-purple-200/80 dark:border-purple-800/40 space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-purple-900 dark:text-purple-200">
+                    <Info className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                    <span>Outside Funding Details (Optional)</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={outsideSourceNote}
+                    onChange={(e) => setOutsideSourceNote(e.target.value)}
+                    placeholder="e.g. Owner personal wallet, Bank transfer, External safe, Cheque"
+                    className="w-full text-xs rounded-md border border-purple-300 dark:border-purple-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-purple-500 focus:outline-none"
+                  />
+                  <p className="text-[11px] text-purple-700 dark:text-purple-300">
+                    The supplier balance will be credited, but zero amount will be subtracted from the cash drawer register.
+                  </p>
+                </div>
+              )}
+
+              {/* Mixed Split Breakdown (When Mixed) */}
+              {fundingSource === 'mixed' && (
+                <div className="bg-amber-50/60 dark:bg-amber-950/20 p-3.5 rounded-lg border border-amber-200/80 dark:border-amber-800/40 space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900 dark:text-amber-200">
+                      <ArrowRightLeft className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                      <span>Allocate Split Amounts</span>
+                    </div>
+                    {/* Quick Preset Buttons */}
+                    <div className="flex items-center gap-1 text-[10px] font-bold">
+                      <button
+                        type="button"
+                        onClick={() => handleSetSplitPreset('50_50')}
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
+                      >
+                        50% / 50%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSetSplitPreset('all_drawer')}
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
+                      >
+                        All Drawer
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSetSplitPreset('all_outside')}
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
+                      >
+                        All Outside
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* USD split inputs if payment includes USD */}
+                  {(currency === 'USD' || (currency === 'MIXED' && computedPaymentTotals.finalUSD > 0)) && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        <span>USD Portion to allocate:</span>
+                        <span className="font-mono font-bold text-teal-700 dark:text-teal-400">${computedPaymentTotals.finalUSD.toFixed(2)}</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                            From Cash Drawer ($)
+                          </label>
+                          <input
+                            type="text"
+                            value={drawerUSDInput}
+                            onChange={(e) => handleDrawerUSDSplitChange(e.target.value)}
+                            placeholder="0.00"
+                            className="w-full text-xs font-mono font-bold rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-slate-900 dark:text-slate-100 focus:border-teal-500 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                            From Outside Drawer ($)
+                          </label>
+                          <input
+                            type="text"
+                            value={outsideUSDInput}
+                            onChange={(e) => handleOutsideUSDSplitChange(e.target.value)}
+                            placeholder="0.00"
+                            className="w-full text-xs font-mono font-bold rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-slate-900 dark:text-slate-100 focus:border-teal-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* LBP split inputs if payment includes LBP */}
+                  {(currency === 'LBP' || (currency === 'MIXED' && computedPaymentTotals.finalLBP > 0)) && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        <span>LBP Portion to allocate:</span>
+                        <span className="font-mono font-bold text-teal-700 dark:text-teal-400">{formatLBPValue(computedPaymentTotals.finalLBP)} LBP</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                            From Cash Drawer (LBP)
+                          </label>
+                          <input
+                            type="text"
+                            value={drawerLBPInput}
+                            onChange={(e) => handleDrawerLBPSplitChange(e.target.value)}
+                            placeholder="0"
+                            className="w-full text-xs font-mono font-bold rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-slate-900 dark:text-slate-100 focus:border-teal-500 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                            From Outside Drawer (LBP)
+                          </label>
+                          <input
+                            type="text"
+                            value={outsideLBPInput}
+                            onChange={(e) => handleOutsideLBPSplitChange(e.target.value)}
+                            placeholder="0"
+                            className="w-full text-xs font-mono font-bold rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-slate-900 dark:text-slate-100 focus:border-teal-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Optional Outside Note */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                      Outside Funding Note / Source (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={outsideSourceNote}
+                      onChange={(e) => setOutsideSourceNote(e.target.value)}
+                      placeholder="e.g. Paid part from owner personal funds, bank transfer"
+                      className="w-full text-xs rounded-md border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Split Summary / Verification */}
+                  <div className="bg-white/80 dark:bg-slate-900/60 p-2.5 rounded border border-amber-200 dark:border-amber-800/40 text-[11px] flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-semibold text-slate-600 dark:text-slate-400">Cash Drawer Deduction: </span>
+                      <span className="font-bold text-teal-700 dark:text-teal-400">
+                        ${(parseFloat(drawerUSDInput.replace(/,/g, '')) || 0).toFixed(2)}
+                        {currency !== 'USD' && ` + ${formatLBPValue(parseFloat(drawerLBPInput.replace(/,/g, '')) || 0)} LBP`}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-600 dark:text-slate-400">External / Outside: </span>
+                      <span className="font-bold text-purple-700 dark:text-purple-400">
+                        ${(parseFloat(outsideUSDInput.replace(/,/g, '')) || 0).toFixed(2)}
+                        {currency !== 'USD' && ` + ${formatLBPValue(parseFloat(outsideLBPInput.replace(/,/g, '')) || 0)} LBP`}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

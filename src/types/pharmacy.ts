@@ -363,6 +363,8 @@ export interface CustomerPayment {
   isPaymentOnAccount?: boolean;
 }
 
+export type PaymentFundingSource = 'drawer' | 'outside' | 'mixed';
+
 export interface SupplierPayment {
   id: string;
   receiptNumber: string;
@@ -377,6 +379,13 @@ export interface SupplierPayment {
   allocations?: { invoiceId: string, amountUSD: number, amountLBP: number }[];
   isPaymentOnAccount: boolean;
   timestamp: number;
+  // Funding source details
+  fundingSource?: PaymentFundingSource; // 'drawer' | 'outside' | 'mixed' (defaults to 'drawer')
+  drawerAmountUSD?: number;
+  drawerAmountLBP?: number;
+  outsideAmountUSD?: number;
+  outsideAmountLBP?: number;
+  outsideSourceNote?: string;
 }
 
 export interface PurchaseReturnItem {

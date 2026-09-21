@@ -2498,6 +2498,7 @@ export const PurchaseView: React.FC = () => {
                       <th className="px-4 py-3">Date</th>
                       <th className="px-4 py-3">Receipt #</th>
                       {selectedPaymentSupplierId === 'ALL' && <th className="px-4 py-3">Supplier</th>}
+                      <th className="px-4 py-3 text-center">Money Source</th>
                       <th className="px-4 py-3 text-right">Amount</th>
                       <th className="px-4 py-3 text-center">Actions</th>
                     </tr>
@@ -2505,7 +2506,7 @@ export const PurchaseView: React.FC = () => {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                     {paymentsForView.length === 0 ? (
                       <tr>
-                        <td colSpan={selectedPaymentSupplierId === 'ALL' ? 5 : 4} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                        <td colSpan={selectedPaymentSupplierId === 'ALL' ? 6 : 5} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
                           No payments recorded yet.
                         </td>
                       </tr>
@@ -2521,6 +2522,30 @@ export const PurchaseView: React.FC = () => {
                           {selectedPaymentSupplierId === 'ALL' && (
                             <td className="px-4 py-3 font-semibold text-slate-900 dark:text-slate-100">{payment.supplierName}</td>
                           )}
+                          <td className="px-4 py-3 text-center whitespace-nowrap">
+                            {payment.fundingSource === 'outside' ? (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300 border border-purple-200 dark:border-purple-800/40"
+                                title={payment.outsideSourceNote ? `Outside Drawer: ${payment.outsideSourceNote}` : 'Paid completely outside cash drawer (0 drawer impact)'}
+                              >
+                                Outside Drawer
+                              </span>
+                            ) : payment.fundingSource === 'mixed' ? (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 border border-amber-200 dark:border-amber-800/40"
+                                title={`Cash Drawer: $${(payment.drawerAmountUSD || 0).toFixed(2)}${(payment.drawerAmountLBP || 0) > 0 ? ` + ${formatLBPValue(payment.drawerAmountLBP || 0)} LBP` : ''} | Outside: $${(payment.outsideAmountUSD || 0).toFixed(2)}${(payment.outsideAmountLBP || 0) > 0 ? ` + ${formatLBPValue(payment.outsideAmountLBP || 0)} LBP` : ''}${payment.outsideSourceNote ? ` (${payment.outsideSourceNote})` : ''}`}
+                              >
+                                Mixed Sources
+                              </span>
+                            ) : (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-300 border border-teal-200 dark:border-teal-800/40"
+                                title="Paid completely from Cash Drawer ledger"
+                              >
+                                Cash Drawer
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-right font-bold text-teal-600 dark:text-teal-400 whitespace-nowrap">
                             {payment.currency === 'MIXED'
                               ? `$${formatNumber(payment.amountUSD || 0)} + ${formatLBPValue(payment.amountLBP || 0)} LBP`

@@ -64,6 +64,31 @@ This log tracks all architectural decisions, feature implementations, and module
 - Enhanced scientific monographs, ATC categorization, and ingredient lookup in `ScientificsView.tsx` and `scientificDataService.ts`.
 - Added unit tests in `src/services/scientificDataService.test.ts`.
 
+#### 6. Purchase Module — Payment Money Source Selection (Cash Drawer vs. Outside vs. Mixed)
+- **Requirement**: Allow the user to specify the funding source when recording or editing a supplier payment in the "Record Payment" form:
+  - **100% Cash Drawer (Ledger)**: Paid fully from the pharmacy's physical cash drawer register; balance deducted from the drawer ledger.
+  - **100% Outside Cash Drawer**: Paid completely outside the cash drawer (personal funds, owner wallet, external bank account/wire, safe, cheque); zero impact on physical cash drawer balances while still crediting the supplier's balance and tracking invoice settlements.
+  - **Mixed Sources (Split)**: Allocate custom split amounts between the cash drawer and external sources (with quick 50%/50%, all drawer, or all outside preset buttons). Supports dual currency (USD and LBP splits).
+- **Implementation**:
+  - **Data Model & Types** (`src/types/pharmacy.ts`):
+    - Added `PaymentFundingSource = 'drawer' | 'outside' | 'mixed'`.
+    - Enhanced `SupplierPayment` interface with `fundingSource`, `drawerAmountUSD`, `drawerAmountLBP`, `outsideAmountUSD`, `outsideAmountLBP`, and `outsideSourceNote`.
+  - **UI & Form Handling** (`src/components/purchase/SupplierPaymentModal.tsx`):
+    - Added high-contrast, interactive option cards for Cash Drawer, Outside Drawer, and Mixed Sources.
+    - Added dynamic split inputs for USD and LBP with automatic complement calculations and preset buttons.
+    - Added optional note field for external funding details (e.g. Bank wire, personal wallet).
+    - Provided real-time summary indicators displaying exact deductions from cash drawer vs outside.
+  - **Cash Drawer & Financial Ledger Integration** (`src/components/finance/CashDrawerView.tsx`):
+    - Updated cash movement aggregation:
+      - Drawer payments deduct full amount from cash drawer balance.
+      - Outside payments record an audit trail entry with $0 drawer deduction, preserving physical cash drawer balance accuracy.
+      - Mixed payments deduct only the `drawerAmountUSD` and `drawerAmountLBP` from the physical cash drawer.
+  - **Purchase View & Payment History** (`src/components/purchase/PurchaseView.tsx`):
+    - Added a "Money Source" badge column in the supplier payments table with clear visual indicators and tooltips detailing the funding breakdown.
+  - **Unit Testing** (`src/components/purchase/supplierPaymentSource.test.ts`):
+    - Verified legacy payment fallback (defaults to 'drawer'), 0 drawer deduction for outside payments, and mixed split computations across USD and LBP currencies.
+    - All 107 unit tests passing.
+
 ---
 
 ## Ongoing Backlog & Next Steps
