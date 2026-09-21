@@ -9,6 +9,7 @@ import {
   PurchaseReturn,
   SupplierPayment,
   CustomerPayment,
+  Expense,
   PharmacySettings,
   User,
   AppNotification,
@@ -256,6 +257,13 @@ interface PharmacyContextType {
   deletePurchase: (purchaseId: string) => { success: boolean; error?: string };
   recordPurchaseReturn: (returnData: Omit<PurchaseReturn, 'id' | 'timestamp' | 'returnNumber'> & { returnNumber?: string }) => PurchaseReturn;
   deletePurchaseReturn: (returnId: string) => { success: boolean; error?: string };
+
+  // Expenses & Operational Costs
+  expenses: Expense[];
+  recordExpense: (expense: Omit<Expense, 'id' | 'timestamp' | 'expenseNumber'> & { expenseNumber?: string }) => Expense;
+  updateExpense: (expenseId: string, updatedData: Partial<Expense>) => { success: boolean; error?: string };
+  deleteExpense: (expenseId: string) => { success: boolean; error?: string };
+
   suppliers: Supplier[];
   addSupplier: (supplier: Omit<Supplier, 'id'>) => void;
   bulkAddSuppliers: (suppliersData: Omit<Supplier, 'id'>[]) => void;
@@ -415,6 +423,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [purchases, setPurchases] = useState<PurchaseInvoice[]>(() => OfflineStorage.getPurchases());
   const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>(() => OfflineStorage.getPurchaseReturns());
   const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>(() => OfflineStorage.getSupplierPayments());
+  const [expenses, setExpenses] = useState<Expense[]>(() => OfflineStorage.getExpenses());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => OfflineStorage.getNotifications());
   const [, setSyncConflicts] = useState<SyncConflictLog[]>(() => OfflineStorage.getConflicts());
   const [logs, setLogs] = useState<AppLogEntry[]>(() => OfflineStorage.getLogs());
@@ -567,6 +576,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const customersRef = useRef(customers);
   const purchasesRef = useRef(purchases);
   const purchaseReturnsRef = useRef(purchaseReturns);
+  const expensesRef = useRef(expenses);
   const usersRef = useRef(users);
   const settingsRef = useRef(settings);
   const activeSessionsRef = useRef(activeSessions);
@@ -580,6 +590,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => { customersRef.current = customers; }, [customers]);
   useEffect(() => { purchasesRef.current = purchases; }, [purchases]);
   useEffect(() => { purchaseReturnsRef.current = purchaseReturns; }, [purchaseReturns]);
+  useEffect(() => { expensesRef.current = expenses; }, [expenses]);
   useEffect(() => { usersRef.current = users; }, [users]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { activeSessionsRef.current = activeSessions; }, [activeSessions]);
@@ -776,6 +787,22 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             OfflineStorage.savePurchaseReturns(next);
             return next;
           });
+        } else if (payload.type === 'EXPENSE_CREATED') {
+          const remoteExp = payload.data as Expense;
+          setExpenses(prev => {
+            if (!remoteExp || prev.some(e => e.id === remoteExp.id)) return prev;
+            const next = [remoteExp, ...prev];
+            OfflineStorage.saveExpenses(next);
+            return next;
+          });
+        } else if (payload.type === 'EXPENSE_DELETED') {
+          const deletedId = payload.data?.id;
+          setExpenses(prev => {
+            if (!deletedId || !prev.some(e => e.id === deletedId)) return prev;
+            const next = prev.filter(e => e.id !== deletedId);
+            OfflineStorage.saveExpenses(next);
+            return next;
+          });
         } else if (payload.type === 'USER_UPSERT') {
           const remoteUser = payload.data as User;
           if (!remoteUser) return;
@@ -866,6 +893,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               setPurchaseReturns(mergedPurchaseReturns);
               OfflineStorage.savePurchaseReturns(mergedPurchaseReturns);
             }
+            if (Array.isArray(requesterData.expenses)) {
+              const mergedExpenses = mergeById(requesterData.expenses, expensesRef.current);
+              setExpenses(mergedExpenses);
+              OfflineStorage.saveExpenses(mergedExpenses);
+            }
             if (Array.isArray(requesterData.users)) {
               mergedUsers = mergeById(requesterData.users, usersRef.current);
               setUsers(mergedUsers);
@@ -890,6 +922,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             customers: mergedCustomers,
             purchases: mergedPurchases,
             purchaseReturns: mergedPurchaseReturns,
+            expenses: expensesRef.current,
             users: mergedUsers,
             settings: pickSharedSettings(settingsRef.current),
             activeSessions: activeSessionsRef.current,
@@ -937,6 +970,13 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             return next;
           });
         }
+        if (Array.isArray(snapshotData?.expenses)) {
+          setExpenses(prev => {
+            const next = mergeById(prev, snapshotData.expenses);
+            OfflineStorage.saveExpenses(next);
+            return next;
+          });
+        }
         if (Array.isArray(snapshotData?.users)) {
           setUsers(prev => {
             const next = mergeById(prev, snapshotData.users);
@@ -979,6 +1019,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         customers: customersRef.current,
         purchases: purchasesRef.current,
         purchaseReturns: purchaseReturnsRef.current,
+        expenses: expensesRef.current,
         users: usersRef.current,
         notifications: notificationsRef.current,
         logs: logsRef.current,
@@ -3867,6 +3908,108 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     return { success: true };
   };
 
+  // Expenses CRUD
+  const recordExpense = (expenseData: Omit<Expense, 'id' | 'timestamp' | 'expenseNumber'> & { expenseNumber?: string }): Expense => {
+    const currentYear = new Date().getFullYear().toString().slice(-2);
+    const yearExpenses = expenses.filter(e => e.id && e.id.startsWith(`EXP-${currentYear}-`));
+    let nextNum = 1;
+    if (yearExpenses.length > 0) {
+      const maxNum = Math.max(...yearExpenses.map(e => parseInt(e.id.split('-')[2], 10) || 0));
+      nextNum = maxNum + 1;
+    }
+    const expenseId = `EXP-${currentYear}-${nextNum}`;
+    const expenseNumber = expenseData.expenseNumber || nextInvoiceNumber(expenses.map(e => ({ invoiceNumber: e.expenseNumber })), 'EXP', expenses.length + 1);
+
+    const fullExpense: Expense = {
+      ...expenseData,
+      id: expenseId,
+      expenseNumber,
+      timestamp: Date.now(),
+    };
+
+    const updatedExpenses = [fullExpense, ...expenses];
+    setExpenses(updatedExpenses);
+    OfflineStorage.saveExpenses(updatedExpenses);
+    try { syncEngine.broadcast('EXPENSE_CREATED', fullExpense); } catch (e) {}
+
+    const amountDisplay = fullExpense.currency === 'USD'
+      ? `$${fullExpense.amountUSD.toFixed(2)}`
+      : fullExpense.currency === 'LBP'
+      ? `${Math.round(fullExpense.amountLBP).toLocaleString()} LBP`
+      : `$${fullExpense.amountUSD.toFixed(2)} + ${Math.round(fullExpense.amountLBP).toLocaleString()} LBP`;
+
+    addNotification(
+      'Expense Recorded',
+      `Expense #${expenseNumber} (${fullExpense.title}) recorded: ${amountDisplay}${fullExpense.paidFromDrawer ? ' [Deducted from Drawer]' : ' [External Funds]'}`,
+      'system',
+      'info'
+    );
+
+    addLog({
+      component: 'Finance / Expenses',
+      action: 'EXPENSE_RECORDED',
+      level: 'info',
+      title: `Expense #${expenseNumber}: ${fullExpense.title}`,
+      description: `Logged operational expense: ${fullExpense.title} (${fullExpense.category}) of ${amountDisplay}. Paid from drawer: ${fullExpense.paidFromDrawer ? 'YES' : 'NO'}. Payee: ${fullExpense.payee || 'N/A'}.`,
+      entityId: expenseId,
+      entityType: 'expense',
+      details: {
+        expenseNumber,
+        category: fullExpense.category,
+        amountUSD: fullExpense.amountUSD,
+        amountLBP: fullExpense.amountLBP,
+        currency: fullExpense.currency,
+        paidFromDrawer: fullExpense.paidFromDrawer,
+        payee: fullExpense.payee,
+        notes: fullExpense.notes,
+      }
+    });
+
+    return fullExpense;
+  };
+
+  const updateExpense = (expenseId: string, updatedData: Partial<Expense>): { success: boolean; error?: string } => {
+    const existing = expenses.find(e => e.id === expenseId);
+    if (!existing) return { success: false, error: 'Expense not found' };
+
+    const merged: Expense = {
+      ...existing,
+      ...updatedData,
+      id: expenseId,
+    };
+
+    const updated = expenses.map(e => e.id === expenseId ? merged : e);
+    setExpenses(updated);
+    OfflineStorage.saveExpenses(updated);
+    try { syncEngine.broadcast('EXPENSE_CREATED', merged); } catch (e) {}
+
+    addNotification('Expense Updated', `Expense #${merged.expenseNumber} was updated`, 'system', 'info');
+    return { success: true };
+  };
+
+  const deleteExpense = (expenseId: string): { success: boolean; error?: string } => {
+    const expenseToDel = expenses.find(e => e.id === expenseId);
+    if (!expenseToDel) return { success: false, error: 'Expense not found' };
+
+    const updated = expenses.filter(e => e.id !== expenseId);
+    setExpenses(updated);
+    OfflineStorage.saveExpenses(updated);
+    try { syncEngine.broadcast('EXPENSE_DELETED', { id: expenseId }); } catch (e) {}
+
+    addNotification('Expense Deleted', `Expense #${expenseToDel.expenseNumber} was removed.`, 'system', 'warning');
+    addLog({
+      component: 'Finance / Expenses',
+      action: 'EXPENSE_DELETED',
+      level: 'warning',
+      title: `Expense Removed #${expenseToDel.expenseNumber}`,
+      description: `Deleted expense record ${expenseToDel.expenseNumber} (${expenseToDel.title})`,
+      entityId: expenseId,
+      entityType: 'expense',
+    });
+
+    return { success: true };
+  };
+
   // Suppliers CRUD
   const addSupplier = (supplierData: Omit<Supplier, 'id'>) => {
     const newSup: Supplier = {
@@ -4111,6 +4254,12 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     deletePurchase,
     recordPurchaseReturn,
     deletePurchaseReturn,
+
+    expenses,
+    recordExpense,
+    updateExpense,
+    deleteExpense,
+
     suppliers,
     addSupplier,
     bulkAddSuppliers,
@@ -4150,7 +4299,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     resetDemoData,
     clearAllData,
   }), [
-    currentUser, users, activeTab, exchangeRate, products, sales, purchases, purchaseReturns, suppliers, customers,
+    currentUser, users, activeTab, exchangeRate, products, sales, purchases, purchaseReturns, expenses, suppliers, customers,
     settings, notifications, syncStatus, activeSessions, logs, isSearchingScientifics,
     login, logout, addUser, updateUser, deleteUser, setActiveTab, setExchangeRate,
     toLBP, toUSD, formatLBP, formatUSD,
@@ -4158,6 +4307,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV,
     searchScientificDataOnline, enrichProductWithOnlineScientifics, enrichAllProductsOnline, standardizeAllScientifics,
     recordSale, updateSale, deleteSale, recordPurchase, updatePurchase, deletePurchase, recordPurchaseReturn, deletePurchaseReturn,
+    recordExpense, updateExpense, deleteExpense,
     addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier, addCustomer, updateCustomer, updateSettings, toggleDarkMode,
     unreadCount, dismissNotification, markAllNotificationsRead, addNotification,
     connectSyncEngine, addLog, deleteLog, clearLogs, exportLogs, exportBackup, restoreBackup, resetDemoData, clearAllData,

@@ -7,6 +7,7 @@ import {
   PurchaseReturn,
   SupplierPayment,
   CustomerPayment,
+  Expense,
   PharmacySettings,
   User,
   AppNotification,
@@ -1133,6 +1134,7 @@ const STORAGE_KEYS = {
   LOGS: 'pharmalebanon_app_logs_v1',
   SUPPLIER_PAYMENTS: 'pharmalebanon_supplier_payments_v1',
   PURCHASE_RETURNS: 'pharmalebanon_purchase_returns_v1',
+  EXPENSES: 'pharmalebanon_expenses_v1',
 };
 
 // Safe setItem that handles browser quota limits without crashing
@@ -1414,6 +1416,19 @@ export class OfflineStorage {
     safeSetItem(STORAGE_KEYS.PURCHASE_RETURNS, JSON.stringify(returns));
   }
 
+  static getExpenses(): Expense[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.EXPENSES);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveExpenses(expenses: Expense[]): void {
+    safeSetItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+  }
+
 
   static getConflicts(): SyncConflictLog[] {
     try {
@@ -1508,6 +1523,7 @@ export class OfflineStorage {
       purchaseReturns: this.getPurchaseReturns(),
       supplierPayments: this.getSupplierPayments(),
       customerPayments: this.getCustomerPayments(),
+      expenses: this.getExpenses(),
       conflicts: this.getConflicts(),
       notifications: this.getNotifications(),
       currentUser: this.getCurrentUser(),
@@ -1540,6 +1556,7 @@ export class OfflineStorage {
       this.savePurchaseReturns(Array.isArray(data.purchaseReturns) ? data.purchaseReturns : []);
       this.saveSupplierPayments(Array.isArray(data.supplierPayments) ? data.supplierPayments : []);
       this.saveCustomerPayments(Array.isArray(data.customerPayments) ? data.customerPayments : []);
+      this.saveExpenses(Array.isArray(data.expenses) ? data.expenses : []);
       this.saveConflicts(Array.isArray(data.conflicts) ? data.conflicts : []);
       this.saveNotifications(Array.isArray(data.notifications) ? data.notifications : []);
       this.saveCurrentUser(data.currentUser || null);
@@ -1561,6 +1578,7 @@ export class OfflineStorage {
     this.saveCustomers(INITIAL_CUSTOMERS);
     this.saveSales(INITIAL_SALES);
     this.savePurchases(INITIAL_PURCHASES);
+    this.saveExpenses([]);
     this.saveConflicts([]);
     this.saveLogs(INITIAL_LOGS);
   }
@@ -1572,6 +1590,7 @@ export class OfflineStorage {
     this.saveCustomers([]);
     this.saveSales([]);
     this.savePurchases([]);
+    this.saveExpenses([]);
     this.saveConflicts([]);
     this.saveLogs([]);
   }

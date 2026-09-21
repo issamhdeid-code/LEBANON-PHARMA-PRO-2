@@ -13,6 +13,7 @@ export type CashDrawerCategory =
   | 'generator_fuel'
   | 'delivery_fee'
   | 'staff_advance'
+  | 'operational_expense'
   | 'other_inflow'
   | 'other_outflow';
 
@@ -75,7 +76,7 @@ export interface UnifiedCashDrawerEntry {
   amountLBP: number;
   performedBy: string;
   notes: string;
-  source: 'pos_sale' | 'customer_payment' | 'supplier_payment' | 'manual';
+  source: 'pos_sale' | 'customer_payment' | 'supplier_payment' | 'manual' | 'expense';
   manualTxId?: string;
   runningBalanceUSD?: number;
   runningBalanceLBP?: number;

@@ -89,6 +89,29 @@ This log tracks all architectural decisions, feature implementations, and module
     - Verified legacy payment fallback (defaults to 'drawer'), 0 drawer deduction for outside payments, and mixed split computations across USD and LBP currencies.
     - All 107 unit tests passing.
 
+#### 7. Finance Module — Operational Expenses Tab & Cash Drawer Flow Separation
+- **Requirement**: Add an 'Expenses' tab under Finance to log pharmacy operational costs (rent, electricity/EDL, generator & fuel, salaries, maintenance, taxes, etc.) separated from the main cash drawer flow, with the option to deduct from the cash drawer ledger if paid from drawer funds.
+- **Implementation**:
+  - **Data Models & State Management** (`src/types/pharmacy.ts`, `src/services/storage.ts`, `src/context/PharmacyContext.tsx`):
+    - Defined `Expense` interface and `ExpenseCategory` enum supporting dual-currency (USD, LBP, MIXED), category tagging, payee, paidBy, receipt references, notes, and the `paidFromDrawer` boolean flag.
+    - Integrated with local storage (`OfflineStorage.getExpenses()`, `OfflineStorage.saveExpenses()`).
+    - Added `expenses` state and operations (`recordExpense`, `updateExpense`, `deleteExpense`) to `PharmacyContext`.
+    - Fully integrated with multi-terminal sync engine (`syncEngine.broadcast('EXPENSE_CREATED')`, `'EXPENSE_DELETED'`, snapshot request/response sync between Main and Secondary PCs).
+  - **UI & Expense Management View** (`src/components/finance/ExpensesView.tsx`):
+    - Built comprehensive operational cost management dashboard.
+    - KPI cards: Total Operational Costs, Deducted from Drawer, Outside Funds, and Current Month Costs.
+    - Filters: Time periods (All Time, Today, This Month, This Year), Category dropdown, and Funding Source filter (Drawer Only vs Outside Only).
+    - Search bar: Full-text search across titles, payees, reference numbers, and notes.
+    - Modal dialog: Record operational expenses with category selection, date, payee, USD/LBP amounts, and an explicit toggle for deducting from the cash drawer register vs logging as external funds.
+    - Export to CSV and printable report functions.
+  - **Cash Drawer & Financial Ledger Integration** (`src/components/finance/CashDrawerView.tsx`):
+    - Expenses with `paidFromDrawer === true` are integrated directly into the physical cash drawer journal as cash outflows (`OUT`), automatically decrementing the running cash drawer balance.
+    - Expenses with `paidFromDrawer === false` are included for audit transparency with $0 drawer deduction, ensuring total drawer accuracy.
+    - Added dedicated "Operational Expenses Only" filter and custom category badges with icons in the cash drawer journal.
+  - **Financial Dashboard Overview** (`src/components/finance/FinanceView.tsx`):
+    - Added the "Operational Expenses" tab to the top navigation.
+    - Enhanced performance overview cards to reflect Net Operating Profit (`Gross Profit - Operational Expenses`), Operational Expenses breakdown (Drawer vs Outside), and added a Recent Operational Expenses table with direct navigation.
+
 ---
 
 ## Ongoing Backlog & Next Steps

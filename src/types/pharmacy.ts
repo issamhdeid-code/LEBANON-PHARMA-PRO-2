@@ -304,6 +304,7 @@ export type LogComponent =
   | 'POS / Sale'
   | 'Inventory / Stock'
   | 'Purchases'
+  | 'Finance / Expenses'
   | 'Sync / Network'
   | 'Auth / Security'
   | 'Scientifics'
@@ -328,7 +329,7 @@ export interface AppLogEntry {
   };
   device?: string;
   entityId?: string;
-  entityType?: 'product' | 'sale' | 'purchase' | 'supplier' | 'customer' | 'user' | 'system' | 'sync';
+  entityType?: 'product' | 'sale' | 'purchase' | 'supplier' | 'customer' | 'user' | 'system' | 'sync' | 'expense';
   details?: Record<string, any>;
 }
 
@@ -429,6 +430,41 @@ export interface PurchaseReturn {
   cashReceivedUSD?: number;
   cashReceivedLBP?: number;
   reason?: string;
+  notes?: string;
+  timestamp: number;
+  synced?: boolean;
+}
+
+export type ExpenseCategory =
+  | 'rent'
+  | 'electricity'
+  | 'salaries'
+  | 'generator_fuel'
+  | 'maintenance'
+  | 'cleaning_supplies'
+  | 'taxes_government'
+  | 'internet_telecom'
+  | 'transport_delivery'
+  | 'marketing_promo'
+  | 'professional_services'
+  | 'other';
+
+export interface Expense {
+  id: string;
+  expenseNumber: string; // e.g. EXP-26-001
+  date: string;          // ISO string
+  title: string;         // Brief descriptive name
+  category: ExpenseCategory;
+  categoryLabel?: string;
+  payee?: string;        // Landlord, Électricité du Liban, Employee Name, etc.
+  amount: number;
+  currency: 'USD' | 'LBP' | 'MIXED';
+  amountUSD: number;
+  amountLBP: number;
+  exchangeRate: number;
+  paidFromDrawer: boolean; // If true, deducted from Cash Drawer Ledger
+  paidBy?: string;       // Cashier or Pharmacist who authorized / disbursed
+  receiptRef?: string;   // Receipt/Invoice number from the payee
   notes?: string;
   timestamp: number;
   synced?: boolean;

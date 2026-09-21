@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { usePharmacy } from '../../context/PharmacyContext';
-import { DollarSign, Percent, TrendingUp, TrendingDown, Wallet, ArrowRightLeft, FileSpreadsheet, Building2, Calculator, Settings, Receipt, Banknote } from 'lucide-react';
+import { DollarSign, Percent, TrendingUp, TrendingDown, Wallet, ArrowRightLeft, FileSpreadsheet, Building2, Calculator, Settings, Receipt, Banknote, Briefcase } from 'lucide-react';
 import { ProductCategory } from '../../types/pharmacy';
 import { CashDrawerView } from './CashDrawerView';
+import { ExpensesView } from './ExpensesView';
 
 export const FinanceView: React.FC = () => {
-  const { sales, purchases, settings, updateSettings, formatUSD, formatLBP } = usePharmacy();
-  const [activeTab, setActiveTab] = useState<'overview' | 'cash_drawer' | 'vat'>('overview');
+  const { sales, purchases, expenses, settings, updateSettings, formatUSD, formatLBP, exchangeRate } = usePharmacy();
+  const [activeTab, setActiveTab] = useState<'overview' | 'cash_drawer' | 'expenses' | 'vat'>('overview');
 
   const vatRates = settings.vatRates || { drug: 0, vitamins: 11, cosmetics: 11, para: 11 };
 
@@ -14,7 +15,7 @@ export const FinanceView: React.FC = () => {
   const financials = useMemo(() => {
     let totalRevenueUSD = 0;
     let totalCostUSD = 0;
-    let totalProfitUSD = 0;
+    let totalGrossProfitUSD = 0;
     
     // Add vat tracking
     let totalVATCollectedUSD = 0;
@@ -27,7 +28,7 @@ export const FinanceView: React.FC = () => {
       s.items.forEach(item => {
         const cost = item.costPriceUSD * item.quantity;
         totalCostUSD += cost;
-        totalProfitUSD += (item.totalUSD - cost);
+        totalGrossProfitUSD += (item.totalUSD - cost);
         
         // Calculate VAT if applicable — on the sale total (pre-VAT), not the cost.
         const rate = vatRates[item.category] || 0;
@@ -47,15 +48,41 @@ export const FinanceView: React.FC = () => {
       }
     });
 
+    // Calculate Operational Expenses
+    let totalExpensesUSD = 0;
+    let totalExpensesLBP = 0;
+    let totalDrawerExpensesUSD = 0;
+    let totalOutsideExpensesUSD = 0;
+
+    expenses.forEach(e => {
+      totalExpensesUSD += e.amountUSD;
+      totalExpensesLBP += e.amountLBP;
+      const eqUSD = e.amountUSD + (e.amountLBP > 0 ? e.amountLBP / exchangeRate : 0);
+      if (e.paidFromDrawer) {
+        totalDrawerExpensesUSD += eqUSD;
+      } else {
+        totalOutsideExpensesUSD += eqUSD;
+      }
+    });
+
+    const totalExpensesEqUSD = totalExpensesUSD + (totalExpensesLBP > 0 ? totalExpensesLBP / exchangeRate : 0);
+    const netOperatingProfitUSD = totalGrossProfitUSD - totalExpensesEqUSD;
+
     return {
       totalRevenueUSD,
       totalCostUSD,
-      totalProfitUSD,
+      totalGrossProfitUSD,
+      totalProfitUSD: totalGrossProfitUSD, // backward compatibility
+      netOperatingProfitUSD,
       totalPurchasesUSD,
       pendingPurchasesUSD,
-      totalVATCollectedUSD
+      totalVATCollectedUSD,
+      totalExpensesEqUSD,
+      totalDrawerExpensesUSD,
+      totalOutsideExpensesUSD,
+      expenseCount: expenses.length,
     };
-  }, [sales, purchases, vatRates]);
+  }, [sales, purchases, expenses, vatRates, exchangeRate]);
 
   const handleUpdateVat = (category: ProductCategory, rateStr: string) => {
     const rate = parseFloat(rateStr) || 0;
@@ -117,6 +144,19 @@ export const FinanceView: React.FC = () => {
           </div>
         </button>
         <button
+          onClick={() => setActiveTab('expenses')}
+          className={`px-4 py-3 text-sm font-bold border-b-2 whitespace-nowrap transition-colors ${
+            activeTab === 'expenses'
+              ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Briefcase className="h-4 w-4" />
+            <span>Operational Expenses</span>
+          </div>
+        </button>
+        <button
           onClick={() => setActiveTab('vat')}
           className={`px-4 py-3 text-sm font-bold border-b-2 whitespace-nowrap transition-colors ${
             activeTab === 'vat'
@@ -132,6 +172,8 @@ export const FinanceView: React.FC = () => {
       </div>
 
       {activeTab === 'cash_drawer' && <CashDrawerView />}
+
+      {activeTab === 'expenses' && <ExpensesView />}
 
       {activeTab === 'overview' && (
         <div className="space-y-6">
@@ -151,42 +193,46 @@ export const FinanceView: React.FC = () => {
 
             <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between">
               <div className="flex items-start justify-between mb-2">
-                <span className="text-slate-500 dark:text-slate-400 font-semibold text-xs tracking-wider uppercase">Net Profit (Est.)</span>
+                <span className="text-slate-500 dark:text-slate-400 font-semibold text-xs tracking-wider uppercase">Net Operating Profit</span>
                 <div className="p-2 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 rounded-lg">
                   <TrendingUp className="h-5 w-5" />
                 </div>
               </div>
               <div>
-                <div className="text-2xl font-black text-slate-800 dark:text-slate-100">{formatUSD(financials.totalProfitUSD)}</div>
-                <div className="text-xs text-emerald-500 font-bold mt-1">
-                  Margin: {financials.totalRevenueUSD > 0 ? ((financials.totalProfitUSD / financials.totalRevenueUSD) * 100).toFixed(1) : '0.0'}%
+                <div className={`text-2xl font-black ${financials.netOperatingProfitUSD >= 0 ? 'text-slate-800 dark:text-slate-100' : 'text-rose-600 dark:text-rose-400'}`}>
+                  {formatUSD(financials.netOperatingProfitUSD)}
+                </div>
+                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mt-1">
+                  Gross: {formatUSD(financials.totalGrossProfitUSD)} | Less Exp: {formatUSD(financials.totalExpensesEqUSD)}
                 </div>
               </div>
             </div>
 
             <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between">
               <div className="flex items-start justify-between mb-2">
-                <span className="text-slate-500 dark:text-slate-400 font-semibold text-xs tracking-wider uppercase">Total Purchases (COGS)</span>
-                <div className="p-2 bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 rounded-lg">
-                  <ArrowRightLeft className="h-5 w-5" />
+                <span className="text-slate-500 dark:text-slate-400 font-semibold text-xs tracking-wider uppercase">Operational Expenses</span>
+                <div className="p-2 bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 rounded-lg">
+                  <Briefcase className="h-5 w-5" />
                 </div>
               </div>
               <div>
-                <div className="text-2xl font-black text-slate-800 dark:text-slate-100">{formatUSD(financials.totalPurchasesUSD)}</div>
-                <div className="text-xs text-slate-400 font-medium mt-1">Total supplier invoices</div>
+                <div className="text-2xl font-black text-rose-600 dark:text-rose-400 font-mono">{formatUSD(financials.totalExpensesEqUSD)}</div>
+                <div className="text-xs text-slate-400 font-medium mt-1">
+                  Drawer: {formatUSD(financials.totalDrawerExpensesUSD)} | Outside: {formatUSD(financials.totalOutsideExpensesUSD)}
+                </div>
               </div>
             </div>
 
             <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between">
               <div className="flex items-start justify-between mb-2">
                 <span className="text-slate-500 dark:text-slate-400 font-semibold text-xs tracking-wider uppercase">Pending Supplier Payables</span>
-                <div className="p-2 bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 rounded-lg">
+                <div className="p-2 bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 rounded-lg">
                   <TrendingDown className="h-5 w-5" />
                 </div>
               </div>
               <div>
                 <div className="text-2xl font-black text-slate-800 dark:text-slate-100">{formatUSD(financials.pendingPurchasesUSD)}</div>
-                <div className="text-xs text-rose-500 font-medium mt-1">Unpaid invoices</div>
+                <div className="text-xs text-amber-600 dark:text-amber-400 font-medium mt-1">Unpaid distributor invoices</div>
               </div>
             </div>
           </div>
@@ -263,6 +309,69 @@ export const FinanceView: React.FC = () => {
                     {purchases.length === 0 && (
                       <tr>
                         <td colSpan={4} className="px-4 py-8 text-center text-slate-400">No purchases recorded yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Recent Operational Expenses */}
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden flex flex-col lg:col-span-2">
+              <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 flex justify-between items-center">
+                <h2 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <Briefcase className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                  Recent Operational Expenses
+                </h2>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-500">{expenses.length} Total</span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('expenses')}
+                    className="text-xs font-bold text-teal-600 hover:text-teal-700 dark:text-teal-400 cursor-pointer"
+                  >
+                    View All Expenses →
+                  </button>
+                </div>
+              </div>
+              <div className="p-0 overflow-x-auto max-h-64 overflow-y-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-2 font-semibold">Expense #</th>
+                      <th className="px-4 py-2 font-semibold">Title</th>
+                      <th className="px-4 py-2 font-semibold">Category</th>
+                      <th className="px-4 py-2 font-semibold">Funding Source</th>
+                      <th className="px-4 py-2 font-semibold text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {expenses.slice().sort((a,b) => b.timestamp - a.timestamp).slice(0, 10).map(exp => (
+                      <tr key={exp.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <td className="px-4 py-2.5 font-mono font-bold">{exp.expenseNumber}</td>
+                        <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">{exp.title}</td>
+                        <td className="px-4 py-2.5 text-slate-500 capitalize">{exp.categoryLabel || exp.category}</td>
+                        <td className="px-4 py-2.5">
+                          {exp.paidFromDrawer ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                              Cash Drawer
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                              External Fund
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono font-bold text-rose-600 dark:text-rose-400">
+                          {exp.amountUSD > 0 ? `$${exp.amountUSD.toFixed(2)}` : ''}
+                          {exp.amountUSD > 0 && exp.amountLBP > 0 ? ' + ' : ''}
+                          {exp.amountLBP > 0 ? `${formatLBP(exp.amountLBP)}` : ''}
+                        </td>
+                      </tr>
+                    ))}
+                    {expenses.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-8 text-center text-slate-400">No operational expenses recorded yet.</td>
                       </tr>
                     )}
                   </tbody>

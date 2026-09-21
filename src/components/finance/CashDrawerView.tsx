@@ -24,7 +24,8 @@ import {
   Sparkles,
   Calculator,
   Lock,
-  ClipboardList
+  ClipboardList,
+  Briefcase
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { formatLBPValue } from '../../utils/priceUtils';
@@ -48,6 +49,7 @@ export const CashDrawerView: React.FC = () => {
     sales,
     customerPayments,
     supplierPayments,
+    expenses,
     currentUser,
     exchangeRate,
     settings,
@@ -98,7 +100,7 @@ export const CashDrawerView: React.FC = () => {
 
   // Filters
   const [datePeriod, setDatePeriod] = useState<'today' | 'yesterday' | 'week' | 'month' | 'all'>('today');
-  const [filterType, setFilterType] = useState<'all' | 'in' | 'out' | 'manual'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'in' | 'out' | 'manual' | 'expense'>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
   // 1. Build Unified Ledger from all sources
@@ -303,7 +305,51 @@ export const CashDrawerView: React.FC = () => {
       }
     });
 
-    // D. Manual Drawer Additions & Deductions
+    // D. Operational Expenses (if paid from drawer, deducts ledger; if outside, 0 deduction but logged)
+    expenses.forEach((exp) => {
+      const isDrawer = exp.paidFromDrawer;
+      const usd = isDrawer ? exp.amountUSD : 0;
+      const lbp = isDrawer ? exp.amountLBP : 0;
+
+      const categoryLabel = exp.categoryLabel || (
+        exp.category === 'rent' ? 'Operational Expense: Rent'
+        : exp.category === 'electricity' ? 'Operational Expense: Electricity'
+        : exp.category === 'salaries' ? 'Operational Expense: Salary'
+        : exp.category === 'generator_fuel' ? 'Operational Expense: Generator / Fuel'
+        : exp.category === 'maintenance' ? 'Operational Expense: Maintenance'
+        : exp.category === 'cleaning_supplies' ? 'Operational Expense: Cleaning'
+        : exp.category === 'taxes_government' ? 'Operational Expense: Taxes / Gov'
+        : exp.category === 'internet_telecom' ? 'Operational Expense: Internet / Phone'
+        : exp.category === 'transport_delivery' ? 'Operational Expense: Transport'
+        : exp.category === 'marketing_promo' ? 'Operational Expense: Marketing'
+        : exp.category === 'professional_services' ? 'Operational Expense: Professional'
+        : 'Operational Expense'
+      );
+
+      const noteDesc = `${exp.title}${exp.payee ? ` • Payee: ${exp.payee}` : ''}${
+        isDrawer
+          ? ' [Deducted from Cash Drawer]'
+          : ` [Paid Outside Drawer: $${exp.amountUSD.toFixed(2)}${exp.amountLBP > 0 ? ` + ${formatLBPValue(exp.amountLBP)} LBP` : ''}]`
+      }${exp.notes ? ` • ${exp.notes}` : ''}`;
+
+      entries.push({
+        id: `expense-${exp.id}`,
+        timestamp: exp.timestamp || new Date(exp.date).getTime(),
+        date: exp.date || new Date(exp.timestamp).toISOString(),
+        type: 'OUT',
+        categoryLabel: isDrawer ? categoryLabel : `${categoryLabel} (External)`,
+        categoryKey: 'operational_expense',
+        referenceNumber: exp.expenseNumber,
+        partyName: exp.payee || 'Operational Expense',
+        amountUSD: usd,
+        amountLBP: lbp,
+        performedBy: exp.paidBy || 'Pharmacist / Admin',
+        notes: noteDesc,
+        source: 'expense',
+      });
+    });
+
+    // E. Manual Drawer Additions & Deductions
     manualTransactions.forEach((mt) => {
       let categoryLabel = 'Manual Fund Adjustment';
       if (mt.category === 'starting_float') categoryLabel = 'Starting Cash Float';
@@ -359,7 +405,7 @@ export const CashDrawerView: React.FC = () => {
 
     // Return newest first for display
     return entries.reverse();
-  }, [sales, customerPayments, supplierPayments, manualTransactions]);
+  }, [sales, customerPayments, supplierPayments, expenses, manualTransactions]);
 
   // Total Lifetime & Current Drawer Balances
   const drawerSummary = useMemo(() => {
@@ -434,6 +480,7 @@ export const CashDrawerView: React.FC = () => {
       if (filterType === 'in' && item.type !== 'IN') return false;
       if (filterType === 'out' && item.type !== 'OUT') return false;
       if (filterType === 'manual' && item.source !== 'manual') return false;
+      if (filterType === 'expense' && item.source !== 'expense') return false;
 
       // Search term
       if (searchTerm.trim()) {
@@ -754,6 +801,7 @@ export const CashDrawerView: React.FC = () => {
             <option value="all">All Operations</option>
             <option value="in">Cash Inflows Only (+)</option>
             <option value="out">Cash Outflows Only (-)</option>
+            <option value="expense">Operational Expenses Only</option>
             <option value="manual">Manual Adjustments Only</option>
           </select>
         </div>
@@ -871,6 +919,7 @@ export const CashDrawerView: React.FC = () => {
                           {e.source === 'pos_sale' && <Receipt className="h-3 w-3 text-teal-600" />}
                           {e.source === 'customer_payment' && <Users className="h-3 w-3 text-blue-600" />}
                           {e.source === 'supplier_payment' && <Building2 className="h-3 w-3 text-amber-600" />}
+                          {e.source === 'expense' && <Briefcase className="h-3 w-3 text-rose-600" />}
                           {e.source === 'manual' && <Sparkles className="h-3 w-3 text-purple-600" />}
                           <span>{e.categoryLabel}</span>
                         </div>
