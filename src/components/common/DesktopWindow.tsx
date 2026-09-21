@@ -14,6 +14,8 @@ interface DesktopWindowProps {
   height?: string;
   minWidth?: number;
   minHeight?: number;
+  maxWidth?: number;
+  maxHeight?: number;
   extraHeader?: React.ReactNode;
   section?: string;
   startMaximized?: boolean;
@@ -79,7 +81,7 @@ function parseInitialDimension(val: string | undefined, basis: number, fallback:
   return !isNaN(num) ? num : fallback;
 }
 
-type ResizeDirection = 'se' | 'e' | 's' | 'w' | 'sw';
+type ResizeDirection = 'se' | 'e' | 's' | 'w' | 'sw' | 'n' | 'ne' | 'nw';
 
 export const DesktopWindow: React.FC<DesktopWindowProps> = ({
   id: propId,
@@ -89,8 +91,10 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
   children,
   width = '800px',
   height = '600px',
-  minWidth = 340,
-  minHeight = 220,
+  minWidth = 320,
+  minHeight = 180,
+  maxWidth,
+  maxHeight,
   extraHeader,
   section,
   startMaximized = false,
@@ -134,19 +138,22 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
   const getInitialDimensions = useCallback(() => {
     const rawW = parseInitialDimension(width, window.innerWidth, 800);
     const rawH = height === 'auto'
-      ? Math.min(580, Math.max(360, Math.round(window.innerHeight * 0.72)))
+      ? Math.min(720, Math.max(380, Math.round(window.innerHeight * 0.82)))
       : parseInitialDimension(height, window.innerHeight, 580);
 
-    const clampedW = Math.min(Math.max(minWidth, rawW), Math.max(minWidth, window.innerWidth - 32));
-    const clampedH = Math.min(Math.max(minHeight, rawH), Math.max(minHeight, window.innerHeight - 32));
+    const effMaxW = maxWidth || Math.max(minWidth, window.innerWidth - 24);
+    const effMaxH = maxHeight || Math.max(minHeight, window.innerHeight - 24);
+
+    const clampedW = Math.min(Math.max(minWidth, rawW), effMaxW);
+    const clampedH = Math.min(Math.max(minHeight, rawH), effMaxH);
     return { width: clampedW, height: clampedH };
-  }, [width, height, minWidth, minHeight]);
+  }, [width, height, minWidth, minHeight, maxWidth, maxHeight]);
 
   const [size, setSize] = useState<{ width: number; height: number }>(() => {
     const saved = getSavedWindowPref(id);
     if (saved && typeof saved.width === 'number' && typeof saved.height === 'number') {
-      const clampedW = Math.min(Math.max(minWidth, saved.width), Math.max(minWidth, window.innerWidth - 32));
-      const clampedH = Math.min(Math.max(minHeight, saved.height), Math.max(minHeight, window.innerHeight - 32));
+      const clampedW = Math.min(Math.max(minWidth, saved.width), Math.max(minWidth, window.innerWidth - 24));
+      const clampedH = Math.min(Math.max(minHeight, saved.height), Math.max(minHeight, window.innerHeight - 24));
       return { width: clampedW, height: clampedH };
     }
     return windowState?.size || getInitialDimensions();
@@ -154,19 +161,20 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
 
   const [position, setPosition] = useState<{ x: number; y: number }>(() => {
     const saved = getSavedWindowPref(id);
+    const initialDims = getInitialDimensions();
+    const currentW = (saved && typeof saved.width === 'number') ? saved.width : initialDims.width;
+    const currentH = (saved && typeof saved.height === 'number') ? saved.height : initialDims.height;
+    
     if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
-      const currentW = (saved.width && typeof saved.width === 'number') ? saved.width : getInitialDimensions().width;
-      const minX = Math.min(0, window.innerWidth - currentW);
-      const maxX = Math.max(0, window.innerWidth - 80);
-      const maxY = Math.max(0, window.innerHeight - 50);
-      const clampedX = Math.max(10, Math.min(maxX, saved.x));
-      const clampedY = Math.max(10, Math.min(maxY, saved.y));
+      const maxX = Math.max(12, window.innerWidth - currentW - 12);
+      const maxY = Math.max(12, window.innerHeight - currentH - 12);
+      const clampedX = Math.max(12, Math.min(maxX, saved.x));
+      const clampedY = Math.max(12, Math.min(maxY, saved.y));
       return { x: clampedX, y: clampedY };
     }
     if (windowState?.position) return windowState.position;
-    const initialDims = getInitialDimensions();
-    const initX = Math.max(16, Math.round((window.innerWidth - initialDims.width) / 2));
-    const initY = Math.max(16, Math.round((window.innerHeight - initialDims.height) / 2));
+    const initX = Math.max(12, Math.round((window.innerWidth - initialDims.width) / 2));
+    const initY = Math.max(12, Math.min(Math.max(12, window.innerHeight - initialDims.height - 16), Math.round((window.innerHeight - initialDims.height) / 2)));
     return { x: initX, y: initY };
   });
 
@@ -182,25 +190,33 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
     if (isOpen) {
       const saved = getSavedWindowPref(id);
       if (saved) {
+        let currentW = sizeRef.current.width;
+        let currentH = sizeRef.current.height;
         if (typeof saved.width === 'number' && typeof saved.height === 'number') {
-          const clampedW = Math.min(Math.max(minWidth, saved.width), Math.max(minWidth, window.innerWidth - 32));
-          const clampedH = Math.min(Math.max(minHeight, saved.height), Math.max(minHeight, window.innerHeight - 32));
-          setSize({ width: clampedW, height: clampedH });
-          updateWindowSize(id, clampedW, clampedH);
+          currentW = Math.min(Math.max(minWidth, saved.width), Math.max(minWidth, window.innerWidth - 24));
+          currentH = Math.min(Math.max(minHeight, saved.height), Math.max(minHeight, window.innerHeight - 24));
+          setSize({ width: currentW, height: currentH });
+          updateWindowSize(id, currentW, currentH);
         }
         if (typeof saved.x === 'number' && typeof saved.y === 'number') {
-          const currentW = saved.width || sizeRef.current.width;
-          const minX = Math.min(0, window.innerWidth - currentW);
-          const maxX = Math.max(0, window.innerWidth - 80);
-          const maxY = Math.max(0, window.innerHeight - 50);
-          const clampedX = Math.max(10, Math.min(maxX, saved.x));
-          const clampedY = Math.max(10, Math.min(maxY, saved.y));
+          const maxX = Math.max(12, window.innerWidth - currentW - 12);
+          const maxY = Math.max(12, window.innerHeight - currentH - 12);
+          const clampedX = Math.max(12, Math.min(maxX, saved.x));
+          const clampedY = Math.max(12, Math.min(maxY, saved.y));
           setPosition({ x: clampedX, y: clampedY });
           updateWindowPosition(id, clampedX, clampedY);
         }
+      } else {
+        // Enforce visible bottom edge on first open
+        const initDims = getInitialDimensions();
+        const maxX = Math.max(12, window.innerWidth - initDims.width - 12);
+        const maxY = Math.max(12, window.innerHeight - initDims.height - 12);
+        const initX = Math.max(12, Math.min(maxX, Math.round((window.innerWidth - initDims.width) / 2)));
+        const initY = Math.max(12, Math.min(maxY, Math.round((window.innerHeight - initDims.height) / 2)));
+        setPosition({ x: initX, y: initY });
       }
     }
-  }, [isOpen, id, minWidth, minHeight, updateWindowPosition, updateWindowSize]);
+  }, [isOpen, id, minWidth, minHeight, updateWindowPosition, updateWindowSize, getInitialDimensions]);
 
   // Sync with context if available
   useEffect(() => {
@@ -293,13 +309,12 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
       const deltaX = moveEvent.clientX - startPointerX;
       const deltaY = moveEvent.clientY - startPointerY;
 
-      // Keep window within reachable bounds
-      const minX = Math.min(0, window.innerWidth - sizeRef.current.width);
-      const maxX = Math.max(0, window.innerWidth - 80);
-      const maxY = Math.max(0, window.innerHeight - 50);
+      // Keep entire window within viewport bounds
+      const maxX = Math.max(12, window.innerWidth - sizeRef.current.width - 12);
+      const maxY = Math.max(12, window.innerHeight - sizeRef.current.height - 12);
 
-      currentX = Math.max(minX, Math.min(maxX, startPosX + deltaX));
-      currentY = Math.max(0, Math.min(maxY, startPosY + deltaY));
+      currentX = Math.max(12, Math.min(maxX, startPosX + deltaX));
+      currentY = Math.max(12, Math.min(maxY, startPosY + deltaY));
 
       setPosition({ x: currentX, y: currentY });
     };
@@ -325,12 +340,17 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
     window.addEventListener('pointercancel', onPointerUp);
   };
 
-  // Resize handler supporting corner and edges
+  // Resize handler supporting all corners and edges
   const handleResizeStart = (e: React.PointerEvent, direction: ResizeDirection) => {
     if (isMaximized) return;
     e.preventDefault();
     e.stopPropagation();
     bringToFront(id);
+
+    const handleEl = e.currentTarget as HTMLElement;
+    try {
+      handleEl.setPointerCapture(e.pointerId);
+    } catch (_) {}
 
     const startPointerX = e.clientX;
     const startPointerY = e.clientY;
@@ -340,7 +360,17 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
     const startPosY = positionRef.current.y;
 
     const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
     document.body.style.userSelect = 'none';
+
+    const resizeCursor =
+      direction === 'se' ? 'se-resize'
+      : direction === 'sw' ? 'sw-resize'
+      : direction === 'ne' ? 'ne-resize'
+      : direction === 'nw' ? 'nw-resize'
+      : direction === 'e' || direction === 'w' ? 'ew-resize'
+      : 'ns-resize';
+    document.body.style.cursor = resizeCursor;
 
     let currentW = startWidth;
     let currentH = startHeight;
@@ -353,32 +383,51 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
 
       const effectiveMinWidth = Math.min(minWidth, window.innerWidth - 32);
       const effectiveMinHeight = Math.min(minHeight, window.innerHeight - 32);
+      const maxPossibleWidth = maxWidth || Math.max(2400, window.innerWidth * 2);
+      const maxPossibleHeight = maxHeight || Math.max(2400, window.innerHeight * 2);
 
       // Horizontal resize
       if (direction.includes('e')) {
-        const maxWidth = window.innerWidth - startPosX - 12;
-        currentW = Math.max(effectiveMinWidth, Math.min(maxWidth, startWidth + deltaX));
+        const proposedW = startWidth + deltaX;
+        currentW = Math.max(effectiveMinWidth, Math.min(maxPossibleWidth, proposedW));
+        if (startPosX + currentW > window.innerWidth - 12) {
+          currentX = Math.max(12, window.innerWidth - 12 - currentW);
+        } else {
+          currentX = startPosX;
+        }
       } else if (direction.includes('w')) {
         const maxLeftExpansion = startPosX + startWidth - 12;
         const proposedW = startWidth - deltaX;
-        currentW = Math.max(effectiveMinWidth, Math.min(maxLeftExpansion, proposedW));
+        currentW = Math.max(effectiveMinWidth, Math.min(maxLeftExpansion, Math.min(maxPossibleWidth, proposedW)));
         currentX = startPosX + (startWidth - currentW);
       }
 
       // Vertical resize
       if (direction.includes('s')) {
-        const maxHeight = window.innerHeight - startPosY - 12;
-        currentH = Math.max(effectiveMinHeight, Math.min(maxHeight, startHeight + deltaY));
+        const proposedH = startHeight + deltaY;
+        currentH = Math.max(effectiveMinHeight, Math.min(maxPossibleHeight, proposedH));
+        if (startPosY + currentH > window.innerHeight - 12) {
+          currentY = Math.max(12, window.innerHeight - 12 - currentH);
+        } else {
+          currentY = startPosY;
+        }
+      } else if (direction.includes('n')) {
+        const maxTopExpansion = startPosY + startHeight - 12;
+        const proposedH = startHeight - deltaY;
+        currentH = Math.max(effectiveMinHeight, Math.min(maxTopExpansion, Math.min(maxPossibleHeight, proposedH)));
+        currentY = startPosY + (startHeight - currentH);
       }
 
       setSize({ width: currentW, height: currentH });
-      if (currentX !== positionRef.current.x || currentY !== positionRef.current.y) {
-        setPosition({ x: currentX, y: currentY });
-      }
+      setPosition({ x: currentX, y: currentY });
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (upEvent: PointerEvent) => {
       document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+      try {
+        handleEl.releasePointerCapture(upEvent.pointerId);
+      } catch (_) {}
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
@@ -517,49 +566,71 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
               {/* Right Edge Handle */}
               <div
                 onPointerDown={(e) => handleResizeStart(e, 'e')}
-                className="absolute top-0 right-0 w-2.5 h-full cursor-e-resize z-20 hover:bg-teal-500/20 active:bg-teal-500/30 transition-colors touch-none select-none"
+                className="absolute top-6 bottom-6 -right-1 w-3.5 cursor-e-resize z-20 hover:bg-teal-500/20 active:bg-teal-500/30 transition-colors touch-none select-none"
                 title="Resize width"
               />
 
               {/* Bottom Edge Handle */}
               <div
                 onPointerDown={(e) => handleResizeStart(e, 's')}
-                className="absolute bottom-0 left-0 h-2.5 w-full cursor-s-resize z-20 hover:bg-teal-500/20 active:bg-teal-500/30 transition-colors touch-none select-none"
+                className="absolute -bottom-1 left-6 right-6 h-3.5 cursor-s-resize z-20 hover:bg-teal-500/20 active:bg-teal-500/30 transition-colors touch-none select-none"
                 title="Resize height"
               />
 
               {/* Left Edge Handle */}
               <div
                 onPointerDown={(e) => handleResizeStart(e, 'w')}
-                className="absolute top-0 left-0 w-2.5 h-full cursor-w-resize z-20 hover:bg-teal-500/20 active:bg-teal-500/30 transition-colors touch-none select-none"
+                className="absolute top-6 bottom-6 -left-1 w-3.5 cursor-w-resize z-20 hover:bg-teal-500/20 active:bg-teal-500/30 transition-colors touch-none select-none"
                 title="Resize width"
               />
 
               {/* Bottom-Left Corner Handle */}
               <div
                 onPointerDown={(e) => handleResizeStart(e, 'sw')}
-                className="absolute bottom-0 left-0 w-5 h-5 cursor-sw-resize z-30 touch-none select-none"
+                className="absolute bottom-0 left-0 w-7 h-7 cursor-sw-resize z-30 touch-none select-none hover:bg-teal-500/10 active:bg-teal-500/20 rounded-bl-xl transition-colors"
+                title="Drag to resize"
               />
 
-              {/* Bottom-Right Corner Grip Handle */}
+              {/* Bottom-Right Corner Grip Handle (nth-of-type 7) */}
               <div
                 onPointerDown={(e) => handleResizeStart(e, 'se')}
-                className="absolute bottom-0 right-0 w-6 h-6 z-30 cursor-se-resize flex items-end justify-end p-1 select-none touch-none group/resize"
+                className="absolute bottom-0 right-0 w-7 h-7 z-30 cursor-se-resize flex items-end justify-end p-1.5 select-none touch-none group/resize hover:bg-teal-500/10 active:bg-teal-500/20 rounded-br-xl transition-colors"
                 title="Drag to resize window"
               >
                 <svg
-                  className="w-3.5 h-3.5 text-slate-400 group-hover/resize:text-teal-600 dark:text-slate-500 dark:group-hover/resize:text-teal-400 transition-colors pointer-events-none"
+                  className="w-4 h-4 text-slate-400 group-hover/resize:text-teal-600 dark:text-slate-500 dark:group-hover/resize:text-teal-400 transition-colors pointer-events-none"
                   viewBox="0 0 12 12"
                   fill="none"
                 >
                   <path
-                    d="M10 3L3 10M10 6.5L6.5 10M10 10L10 10"
+                    d="M10 2L2 10M10 5.5L5.5 10M10 9L9 10"
                     stroke="currentColor"
-                    strokeWidth="1.5"
+                    strokeWidth="1.75"
                     strokeLinecap="round"
                   />
                 </svg>
               </div>
+
+              {/* Top Edge Handle */}
+              <div
+                onPointerDown={(e) => handleResizeStart(e, 'n')}
+                className="absolute -top-1 left-6 right-6 h-3 cursor-n-resize z-20 hover:bg-teal-500/20 active:bg-teal-500/30 transition-colors touch-none select-none"
+                title="Resize height"
+              />
+
+              {/* Top-Right Corner Handle */}
+              <div
+                onPointerDown={(e) => handleResizeStart(e, 'ne')}
+                className="absolute top-0 right-0 w-7 h-7 cursor-ne-resize z-30 touch-none select-none hover:bg-teal-500/10 active:bg-teal-500/20 rounded-tr-xl transition-colors"
+                title="Drag to resize"
+              />
+
+              {/* Top-Left Corner Handle */}
+              <div
+                onPointerDown={(e) => handleResizeStart(e, 'nw')}
+                className="absolute top-0 left-0 w-7 h-7 cursor-nw-resize z-30 touch-none select-none hover:bg-teal-500/10 active:bg-teal-500/20 rounded-tl-xl transition-colors"
+                title="Drag to resize"
+              />
             </>
           )}
         </motion.div>

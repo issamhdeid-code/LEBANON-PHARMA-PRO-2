@@ -60,7 +60,18 @@ This log tracks all architectural decisions, feature implementations, and module
 - Added `OrderPreparationReport.tsx`, `VatSalesValueReport.tsx`, and `ChartsReportsView.tsx`.
 - Updated `DailyCashierSummaryReport.tsx`, `DailySalesItemsReport.tsx`, and `CategoryProfitMarginReport.tsx`.
 
-#### 5. Scientifics & Generic Alternatives
+#### 5. Window Resizing & Desktop UI Enhancements
+- **Supplier Payment Window Resizing Fix**:
+  - Resolved root cause where window `y` position clamping (`window.innerHeight - 50`) previously allowed window bottom edges to extend off-screen below the viewport, rendering bottom resize handles unreachable.
+  - Added support for `maxHeight` and `maxWidth` props in `DesktopWindow.tsx` and removed hard-coded `window.innerHeight - 24` height cap during drag resizing.
+  - Increased `SupplierPaymentModal.tsx` vertical resizing limit (`maxHeight={2000}`, `minHeight={180}`), allowing completely unconstrained vertical expansion up to full screen and beyond.
+  - Enforced strict viewport position clamping (`maxY = window.innerHeight - size.height - 12`) during initial state, modal open, viewport resize, and titlebar dragging.
+  - Guaranteed bottom handles and corner grips remain 100% visible and accessible inside the viewport.
+  - Expanded unpaid invoices list container in `SupplierPaymentModal.tsx` (`max-h-72`) to smoothly adapt as the modal is resized downward.
+- **Bulk Inventory CSV Import Cleanup**:
+  - Hidden top instructions banner, quick actions sidebar card, and raw CSV preview textarea in `CSVImportModal.tsx` for a clean import flow.
+
+#### 6. Scientifics & Generic Alternatives
 - Enhanced scientific monographs, ATC categorization, and ingredient lookup in `ScientificsView.tsx` and `scientificDataService.ts`.
 - Added unit tests in `src/services/scientificDataService.test.ts`.
 
@@ -111,6 +122,28 @@ This log tracks all architectural decisions, feature implementations, and module
   - **Financial Dashboard Overview** (`src/components/finance/FinanceView.tsx`):
     - Added the "Operational Expenses" tab to the top navigation.
     - Enhanced performance overview cards to reflect Net Operating Profit (`Gross Profit - Operational Expenses`), Operational Expenses breakdown (Drawer vs Outside), and added a Recent Operational Expenses table with direct navigation.
+
+#### 8. Customer Module — "Return On Sale" Subtab & Inventory/Cash Drawer Reconciliation
+- **Requirement**: In the Customer tab, add a subtab called "Return On Sale" with a form to return goods from customers, adjusting warehouse stock quantities and the cash drawer accordingly.
+- **Implementation**:
+  - **Data Model & Synchronization** (`src/types/pharmacy.ts`, `src/services/storage.ts`, `src/context/PharmacyContext.tsx`):
+    - Defined `SaleReturn` and `SaleReturnItem` models supporting dual currencies (USD and LBP), original sale linking, customer linking, refund execution methods (`cash_drawer` vs `customer_credit`), item condition, batch number, and expiry date.
+    - Added storage methods (`OfflineStorage.getSaleReturns()`, `OfflineStorage.saveSaleReturns()`).
+    - Added state and action handlers (`recordSaleReturn`, `deleteSaleReturn`) to `PharmacyContext` with multi-terminal sync engine broadcasting (`SALE_RETURN_CREATED`, `SALE_RETURN_DELETED`) and snapshot payload support.
+    - **Stock Quantity Adjustment**: Automatically increments product inventory on return (converting piece quantities to boxes when `isPiece === true`), adding returned items back to their matching batch/expiry or oldest batch, and broadcasting stock mutations.
+    - **Cash Drawer & Debt Balance Adjustment**:
+      - `cash_drawer`: Automatically registers cash outflow (`OUT`) in the unified Cash Drawer journal (`src/components/finance/CashDrawerView.tsx`), immediately deducting the refund amount from the physical drawer balance.
+      - `customer_credit`: Automatically decrements the patient's outstanding credit debt balance in `customers` state and syncs the update.
+  - **User Interface Components**:
+    - **Return On Sale Subtab** (`src/components/customer/ReturnOnSaleTab.tsx`): Added subtab to `CustomerView.tsx` with summary cards (Total Returns, Cash Drawer Refunded, Customer Account Credit), search/filter by method or patient, table of returned vouchers, view details modal, and delete voucher action with full inventory reversal.
+    - **New Customer Return Form Modal** (`src/components/customer/NewCustomerReturnModal.tsx`): Desktop window form to select or search customer/walk-in patient, refund method (Cash Drawer vs Customer Credit), optional original sale invoice lookup to autofill sold items, search and add products/drugs with batch selection, calculate USD & LBP refund totals, and confirm restock.
+
+#### 9. Stock Module — Bulk Inventory CSV Import UI Cleanup
+- **Requirement**: Hide the selected elements from the "Bulk Inventory CSV Import" popup window.
+- **Implementation**:
+  - Hid the top requirements instruction banner (`CSS selector 1`).
+  - Hid the "Quick Actions & Template" side card (`CSS selector 2`).
+  - Hid the raw CSV preview and manual paste textarea block (`CSS selector 3`).
 
 ---
 

@@ -5,6 +5,7 @@ import {
   Supplier,
   Customer,
   SaleTransaction,
+  SaleReturn,
   PurchaseInvoice,
   PurchaseReturn,
   SupplierPayment,
@@ -273,9 +274,12 @@ interface PharmacyContextType {
   // Customers
   customers: Customer[];
   customerPayments: CustomerPayment[];
+  saleReturns: SaleReturn[];
   recordCustomerPayment: (payment: Omit<CustomerPayment, 'id' | 'timestamp'>) => { success: boolean; error?: string };
   updateCustomerPayment: (paymentId: string, updatedData: Partial<CustomerPayment>) => { success: boolean; error?: string };
   deleteCustomerPayment: (paymentId: string) => { success: boolean; error?: string };
+  recordSaleReturn: (returnData: Omit<SaleReturn, 'id' | 'timestamp' | 'returnNumber'> & { returnNumber?: string }) => SaleReturn;
+  deleteSaleReturn: (returnId: string) => { success: boolean; error?: string };
 
   addCustomer: (customer: Omit<Customer, 'id'>) => void;
   updateCustomer: (id: string, updates: Partial<Customer>) => void;
@@ -422,6 +426,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [sales, setSales] = useState<SaleTransaction[]>(() => OfflineStorage.getSales());
   const [purchases, setPurchases] = useState<PurchaseInvoice[]>(() => OfflineStorage.getPurchases());
   const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>(() => OfflineStorage.getPurchaseReturns());
+  const [saleReturns, setSaleReturns] = useState<SaleReturn[]>(() => OfflineStorage.getSaleReturns());
   const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>(() => OfflineStorage.getSupplierPayments());
   const [expenses, setExpenses] = useState<Expense[]>(() => OfflineStorage.getExpenses());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => OfflineStorage.getNotifications());
@@ -576,6 +581,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const customersRef = useRef(customers);
   const purchasesRef = useRef(purchases);
   const purchaseReturnsRef = useRef(purchaseReturns);
+  const saleReturnsRef = useRef(saleReturns);
   const expensesRef = useRef(expenses);
   const usersRef = useRef(users);
   const settingsRef = useRef(settings);
@@ -590,6 +596,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => { customersRef.current = customers; }, [customers]);
   useEffect(() => { purchasesRef.current = purchases; }, [purchases]);
   useEffect(() => { purchaseReturnsRef.current = purchaseReturns; }, [purchaseReturns]);
+  useEffect(() => { saleReturnsRef.current = saleReturns; }, [saleReturns]);
   useEffect(() => { expensesRef.current = expenses; }, [expenses]);
   useEffect(() => { usersRef.current = users; }, [users]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
@@ -787,6 +794,22 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             OfflineStorage.savePurchaseReturns(next);
             return next;
           });
+        } else if (payload.type === 'SALE_RETURN_CREATED') {
+          const remoteReturn = payload.data as SaleReturn;
+          setSaleReturns(prev => {
+            if (!remoteReturn || prev.some(r => r.id === remoteReturn.id)) return prev;
+            const next = [remoteReturn, ...prev];
+            OfflineStorage.saveSaleReturns(next);
+            return next;
+          });
+        } else if (payload.type === 'SALE_RETURN_DELETED') {
+          const deletedId = payload.data?.id;
+          setSaleReturns(prev => {
+            if (!deletedId || !prev.some(r => r.id === deletedId)) return prev;
+            const next = prev.filter(r => r.id !== deletedId);
+            OfflineStorage.saveSaleReturns(next);
+            return next;
+          });
         } else if (payload.type === 'EXPENSE_CREATED') {
           const remoteExp = payload.data as Expense;
           setExpenses(prev => {
@@ -893,6 +916,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               setPurchaseReturns(mergedPurchaseReturns);
               OfflineStorage.savePurchaseReturns(mergedPurchaseReturns);
             }
+            if (Array.isArray(requesterData.saleReturns)) {
+              const mergedSaleReturns = mergeById(requesterData.saleReturns, saleReturnsRef.current);
+              setSaleReturns(mergedSaleReturns);
+              OfflineStorage.saveSaleReturns(mergedSaleReturns);
+            }
             if (Array.isArray(requesterData.expenses)) {
               const mergedExpenses = mergeById(requesterData.expenses, expensesRef.current);
               setExpenses(mergedExpenses);
@@ -922,6 +950,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             customers: mergedCustomers,
             purchases: mergedPurchases,
             purchaseReturns: mergedPurchaseReturns,
+            saleReturns: saleReturnsRef.current,
             expenses: expensesRef.current,
             users: mergedUsers,
             settings: pickSharedSettings(settingsRef.current),
@@ -967,6 +996,13 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setPurchaseReturns(prev => {
             const next = mergeById(prev, snapshotData.purchaseReturns);
             OfflineStorage.savePurchaseReturns(next);
+            return next;
+          });
+        }
+        if (Array.isArray(snapshotData?.saleReturns)) {
+          setSaleReturns(prev => {
+            const next = mergeById(prev, snapshotData.saleReturns);
+            OfflineStorage.saveSaleReturns(next);
             return next;
           });
         }
@@ -1019,6 +1055,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         customers: customersRef.current,
         purchases: purchasesRef.current,
         purchaseReturns: purchaseReturnsRef.current,
+        saleReturns: saleReturnsRef.current,
         expenses: expensesRef.current,
         users: usersRef.current,
         notifications: notificationsRef.current,
@@ -3908,6 +3945,235 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     return { success: true };
   };
 
+  // Sale Returns (Customer Returns)
+  const recordSaleReturn = (returnData: Omit<SaleReturn, 'id' | 'timestamp' | 'returnNumber'> & { returnNumber?: string }): SaleReturn => {
+    const currentYear = new Date().getFullYear().toString().slice(-2);
+    const yearReturns = saleReturns.filter(r => r.id && r.id.startsWith(`SRET-${currentYear}-`));
+    let nextNum = 1;
+    if (yearReturns.length > 0) {
+      const maxNum = Math.max(...yearReturns.map(r => parseInt(r.id.split('-')[2], 10) || 0));
+      nextNum = maxNum + 1;
+    }
+    const returnId = `SRET-${currentYear}-${nextNum}`;
+    const returnNumber = returnData.returnNumber || nextInvoiceNumber(saleReturns.map(r => ({ invoiceNumber: r.returnNumber })), 'SRET', saleReturns.length + 100);
+
+    const fullReturn: SaleReturn = {
+      ...returnData,
+      id: returnId,
+      returnNumber,
+      timestamp: Date.now(),
+    };
+
+    // 1. Add to saleReturns list & save & sync
+    const updatedReturns = [fullReturn, ...saleReturns];
+    setSaleReturns(updatedReturns);
+    OfflineStorage.saveSaleReturns(updatedReturns);
+    try { syncEngine.broadcast('SALE_RETURN_CREATED', fullReturn); } catch (e) {}
+
+    // 2. Adjust Product Stock (Restock returned items)
+    setProducts(prevProducts => {
+      const mutatedProds: Product[] = [];
+      const updatedProds = prevProducts.map(prod => {
+        const matchingItems = (fullReturn.items || []).filter(
+          i => i.productId === prod.id || (i.productCode && i.productCode === prod.code) || (i.barcode && i.barcode === prod.barcode)
+        );
+        if (matchingItems.length === 0) return prod;
+
+        let nextStock = prod.stockQuantity;
+        let nextBatches = [...(prod.batches || [])].map(b => ({ ...b }));
+
+        for (const item of matchingItems) {
+          const qtyToRestock = item.isPiece && prod.piecesPerBox && prod.piecesPerBox > 1
+            ? item.quantity / prod.piecesPerBox
+            : item.quantity;
+
+          nextStock += qtyToRestock;
+
+          if (item.batchNumber && item.expiryDate) {
+            const batchIdx = nextBatches.findIndex(b => b.batchNumber === item.batchNumber && b.expiryDate === item.expiryDate);
+            if (batchIdx >= 0) {
+              nextBatches[batchIdx].quantity = (nextBatches[batchIdx].quantity || 0) + qtyToRestock;
+            } else {
+              nextBatches.push({
+                batchNumber: item.batchNumber,
+                expiryDate: item.expiryDate,
+                quantity: qtyToRestock,
+              });
+            }
+          } else {
+            // Restore to oldest batch or default batch
+            if (nextBatches.length > 0) {
+              nextBatches.sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
+              nextBatches[0].quantity = (nextBatches[0].quantity || 0) + qtyToRestock;
+            } else {
+              nextBatches.push({
+                batchNumber: prod.batchNumber || 'RESTOCKED-RETURN',
+                expiryDate: prod.expiryDate || '',
+                quantity: qtyToRestock,
+              });
+            }
+          }
+        }
+
+        const nextProd: Product = {
+          ...prod,
+          stockQuantity: nextStock,
+          batches: nextBatches,
+          updatedAt: Date.now(),
+          version: (prod.version || 1) + 1,
+        };
+        mutatedProds.push(nextProd);
+        return nextProd;
+      });
+
+      OfflineStorage.saveProducts(updatedProds);
+      if (mutatedProds.length > 0) {
+        try { syncEngine.broadcast('STOCK_MUTATION', mutatedProds); } catch (e) {}
+      }
+      return updatedProds;
+    });
+
+    // 3. If refundMethod is customer_credit and customer is linked, reduce patient's debt balance
+    if (fullReturn.refundMethod === 'customer_credit' && fullReturn.customerId) {
+      setCustomers(prevCusts => {
+        const updatedCusts = prevCusts.map(c => {
+          if (c.id === fullReturn.customerId) {
+            const deductUSD = fullReturn.totalRefundUSD || 0;
+            const deductLBP = fullReturn.totalRefundLBP || 0;
+            return {
+              ...c,
+              balanceUSD: Math.max(0, Number(((c.balanceUSD || 0) - deductUSD).toFixed(2))),
+              balanceLBP: Math.max(0, Math.round((c.balanceLBP || 0) - deductLBP)),
+            };
+          }
+          return c;
+        });
+        OfflineStorage.saveCustomers(updatedCusts);
+        try {
+          const updatedCust = updatedCusts.find(c => c.id === fullReturn.customerId);
+          if (updatedCust) syncEngine.broadcast('CUSTOMER_UPSERT', updatedCust);
+        } catch (e) {}
+        return updatedCusts;
+      });
+    }
+
+    const totalVal = fullReturn.totalRefundUSD > 0
+      ? `$${fullReturn.totalRefundUSD.toFixed(2)}`
+      : `${fullReturn.totalRefundLBP.toLocaleString()} L.L.`;
+    const refundLabel = fullReturn.refundMethod === 'customer_credit' ? 'Customer Account Credit' : 'Cash Drawer Refund';
+
+    addNotification(
+      'Sale Return Recorded',
+      `Return #${returnNumber} recorded for ${fullReturn.customerName} (${refundLabel} - ${totalVal})`,
+      'sale',
+      'info'
+    );
+
+    addLog({
+      component: 'Customers / Patients',
+      action: 'SALE_RETURN_CREATED',
+      level: 'info',
+      title: `Return On Sale #${returnNumber}`,
+      description: `Returned ${fullReturn.items.length} item(s) from ${fullReturn.customerName} via ${refundLabel}. Refund: ${totalVal}. Reason: ${fullReturn.reason || 'Not specified'}. Stock and cash drawer adjusted.`,
+      entityId: returnId,
+      entityType: 'sale',
+      details: {
+        returnNumber,
+        originalSaleInvoiceNumber: fullReturn.originalSaleInvoiceNumber,
+        customerName: fullReturn.customerName,
+        refundMethod: fullReturn.refundMethod,
+        itemsCount: fullReturn.items.length,
+        totalRefundUSD: fullReturn.totalRefundUSD,
+        totalRefundLBP: fullReturn.totalRefundLBP,
+        reason: fullReturn.reason,
+        items: fullReturn.items,
+      }
+    });
+
+    return fullReturn;
+  };
+
+  const deleteSaleReturn = (returnId: string): { success: boolean; error?: string } => {
+    const returnToDel = saleReturns.find(r => r.id === returnId);
+    if (!returnToDel) return { success: false, error: 'Sale return not found' };
+
+    const updatedReturns = saleReturns.filter(r => r.id !== returnId);
+    setSaleReturns(updatedReturns);
+    OfflineStorage.saveSaleReturns(updatedReturns);
+    try { syncEngine.broadcast('SALE_RETURN_DELETED', { id: returnId }); } catch (e) {}
+
+    // Revert stock changes (deduct the restocked quantities)
+    setProducts(prevProducts => {
+      const mutatedProds: Product[] = [];
+      const updatedProds = prevProducts.map(prod => {
+        const matchingItems = (returnToDel.items || []).filter(
+          i => i.productId === prod.id || (i.productCode && i.productCode === prod.code)
+        );
+        if (matchingItems.length === 0) return prod;
+
+        let nextStock = prod.stockQuantity;
+        let nextBatches = [...(prod.batches || [])].map(b => ({ ...b }));
+
+        for (const item of matchingItems) {
+          const qtyToDeduct = item.isPiece && prod.piecesPerBox && prod.piecesPerBox > 1
+            ? item.quantity / prod.piecesPerBox
+            : item.quantity;
+
+          nextStock = Math.max(0, nextStock - qtyToDeduct);
+
+          // Deduct from batch
+          if (item.batchNumber) {
+            const bIdx = nextBatches.findIndex(b => b.batchNumber === item.batchNumber);
+            if (bIdx >= 0) {
+              nextBatches[bIdx].quantity = Math.max(0, (nextBatches[bIdx].quantity || 0) - qtyToDeduct);
+            }
+          }
+        }
+
+        const nextProd = {
+          ...prod,
+          stockQuantity: nextStock,
+          batches: nextBatches.filter(b => (b.quantity || 0) > 0),
+          updatedAt: Date.now(),
+          version: (prod.version || 1) + 1,
+        };
+        mutatedProds.push(nextProd);
+        return nextProd;
+      });
+
+      OfflineStorage.saveProducts(updatedProds);
+      if (mutatedProds.length > 0) {
+        try { syncEngine.broadcast('STOCK_MUTATION', mutatedProds); } catch (e) {}
+      }
+      return updatedProds;
+    });
+
+    // If refund was credit, restore customer debt balance
+    if (returnToDel.refundMethod === 'customer_credit' && returnToDel.customerId) {
+      setCustomers(prevCusts => {
+        const updated = prevCusts.map(c => {
+          if (c.id === returnToDel.customerId) {
+            return {
+              ...c,
+              balanceUSD: Number(((c.balanceUSD || 0) + (returnToDel.totalRefundUSD || 0)).toFixed(2)),
+              balanceLBP: Math.round((c.balanceLBP || 0) + (returnToDel.totalRefundLBP || 0)),
+            };
+          }
+          return c;
+        });
+        OfflineStorage.saveCustomers(updated);
+        try {
+          const updatedCust = updated.find(c => c.id === returnToDel.customerId);
+          if (updatedCust) syncEngine.broadcast('CUSTOMER_UPSERT', updatedCust);
+        } catch (e) {}
+        return updated;
+      });
+    }
+
+    addNotification('Sale Return Deleted', `Sale return #${returnToDel.returnNumber} was removed.`, 'sale', 'warning');
+    return { success: true };
+  };
+
   // Expenses CRUD
   const recordExpense = (expenseData: Omit<Expense, 'id' | 'timestamp' | 'expenseNumber'> & { expenseNumber?: string }): Expense => {
     const currentYear = new Date().getFullYear().toString().slice(-2);
@@ -4274,6 +4540,9 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     recordCustomerPayment,
     updateCustomerPayment,
     deleteCustomerPayment,
+    saleReturns,
+    recordSaleReturn,
+    deleteSaleReturn,
 
     settings,
     updateSettings,
@@ -4299,7 +4568,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     resetDemoData,
     clearAllData,
   }), [
-    currentUser, users, activeTab, exchangeRate, products, sales, purchases, purchaseReturns, expenses, suppliers, customers,
+    currentUser, users, activeTab, exchangeRate, products, sales, purchases, purchaseReturns, saleReturns, expenses, suppliers, customers, customerPayments,
     settings, notifications, syncStatus, activeSessions, logs, isSearchingScientifics,
     login, logout, addUser, updateUser, deleteUser, setActiveTab, setExchangeRate,
     toLBP, toUSD, formatLBP, formatUSD,
@@ -4307,8 +4576,10 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV,
     searchScientificDataOnline, enrichProductWithOnlineScientifics, enrichAllProductsOnline, standardizeAllScientifics,
     recordSale, updateSale, deleteSale, recordPurchase, updatePurchase, deletePurchase, recordPurchaseReturn, deletePurchaseReturn,
+    recordSaleReturn, deleteSaleReturn,
+    recordCustomerPayment, updateCustomerPayment, deleteCustomerPayment,
     recordExpense, updateExpense, deleteExpense,
-    addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier, addCustomer, updateCustomer, updateSettings, toggleDarkMode,
+    addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier, addCustomer, updateCustomer, deleteCustomer, updateSettings, toggleDarkMode,
     unreadCount, dismissNotification, markAllNotificationsRead, addNotification,
     connectSyncEngine, addLog, deleteLog, clearLogs, exportLogs, exportBackup, restoreBackup, resetDemoData, clearAllData,
   ]);

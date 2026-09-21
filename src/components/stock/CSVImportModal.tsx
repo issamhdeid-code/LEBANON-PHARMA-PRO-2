@@ -116,7 +116,10 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
         {/* Content */}
         <div className="p-6 space-y-4 text-xs flex-1 flex flex-col justify-between">
           {/* Headline Requirements Banner (Requirement 19) */}
-          <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3.5 text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
+          <div
+            style={{ display: 'none' }}
+            className="hidden rounded-xl border border-blue-200 bg-blue-50/50 p-3.5 text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200"
+          >
             <span className="font-bold block mb-1">
               Required CSV Header Format (Requirement 19):
             </span>
@@ -182,7 +185,10 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
               />
             </label>
 
-            <div className="flex flex-col justify-center space-y-2 rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-800/30">
+            <div
+              style={{ display: 'none' }}
+              className="hidden flex flex-col justify-center space-y-2 rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-800/30"
+            >
               <span className="font-semibold text-slate-700 dark:text-slate-300">
                 Quick Actions & Template
               </span>
@@ -206,7 +212,7 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
           </div>
 
           {/* Raw CSV Text Preview / Editor */}
-          <div>
+          <div className="hidden" style={{ display: 'none' }}>
             <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
               CSV Content Preview / Manual Paste
             </label>
@@ -215,7 +221,8 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
               onChange={(e) => setCsvContent(e.target.value)}
               placeholder="Paste comma-separated rows here..."
               rows={7}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-[11px] text-slate-800 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              style={{ display: 'none' }}
+              className="hidden w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-[11px] text-slate-800 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             />
           </div>
 

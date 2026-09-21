@@ -25,7 +25,8 @@ import {
   Calculator,
   Lock,
   ClipboardList,
-  Briefcase
+  Briefcase,
+  RotateCcw
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { formatLBPValue } from '../../utils/priceUtils';
@@ -49,6 +50,7 @@ export const CashDrawerView: React.FC = () => {
     sales,
     customerPayments,
     supplierPayments,
+    saleReturns,
     expenses,
     currentUser,
     exchangeRate,
@@ -385,6 +387,32 @@ export const CashDrawerView: React.FC = () => {
       });
     });
 
+    // F. Cash movements from Customer Returns (Sale Returns)
+    saleReturns.forEach((sr) => {
+      if (sr.refundMethod === 'cash_drawer') {
+        const usd = sr.totalRefundUSD || 0;
+        const lbp = sr.totalRefundLBP || 0;
+
+        if (usd > 0 || lbp > 0) {
+          entries.push({
+            id: `saleret-${sr.id}`,
+            timestamp: sr.timestamp || new Date(sr.date).getTime(),
+            date: sr.date || new Date(sr.timestamp).toISOString(),
+            type: 'OUT',
+            categoryLabel: 'Customer Return (Cash Refund)',
+            categoryKey: 'sale_return',
+            referenceNumber: sr.returnNumber || `SRET-${sr.id.substring(0, 6)}`,
+            partyName: sr.customerName || 'Walk-in Patient',
+            amountUSD: usd,
+            amountLBP: lbp,
+            performedBy: sr.receivedBy || 'Cashier',
+            notes: `Refund for return on sale #${sr.originalSaleInvoiceNumber ? sr.originalSaleInvoiceNumber : sr.returnNumber}${sr.reason ? ` • ${sr.reason}` : ''}`,
+            source: 'sale_return',
+          });
+        }
+      }
+    });
+
     // Sort chronologically (oldest first) to compute running balances
     entries.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -405,7 +433,7 @@ export const CashDrawerView: React.FC = () => {
 
     // Return newest first for display
     return entries.reverse();
-  }, [sales, customerPayments, supplierPayments, expenses, manualTransactions]);
+  }, [sales, customerPayments, supplierPayments, saleReturns, expenses, manualTransactions]);
 
   // Total Lifetime & Current Drawer Balances
   const drawerSummary = useMemo(() => {
@@ -918,6 +946,7 @@ export const CashDrawerView: React.FC = () => {
                         <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                           {e.source === 'pos_sale' && <Receipt className="h-3 w-3 text-teal-600" />}
                           {e.source === 'customer_payment' && <Users className="h-3 w-3 text-blue-600" />}
+                          {e.source === 'sale_return' && <RotateCcw className="h-3 w-3 text-orange-600" />}
                           {e.source === 'supplier_payment' && <Building2 className="h-3 w-3 text-amber-600" />}
                           {e.source === 'expense' && <Briefcase className="h-3 w-3 text-rose-600" />}
                           {e.source === 'manual' && <Sparkles className="h-3 w-3 text-purple-600" />}

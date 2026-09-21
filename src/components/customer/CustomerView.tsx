@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
-import { Users, Plus, Phone, MapPin, HeartPulse, AlertCircle, Edit, Star, Search, Check, X, DollarSign, CreditCard, Trash2, Calendar, Banknote } from 'lucide-react';
+import { Users, Plus, Phone, MapPin, HeartPulse, AlertCircle, Edit, Star, Search, Check, X, DollarSign, CreditCard, Trash2, Calendar, Banknote, RotateCcw } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { Customer } from '../../types/pharmacy';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { useWindowContext } from '../../context/WindowContext';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { ReturnOnSaleTab } from './ReturnOnSaleTab';
 
 const formatDateDDMMYYYY = (dateInput: string | Date | number): string => {
   if (!dateInput) return '';
@@ -23,7 +24,7 @@ export const CustomerView: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'directory' | 'payments'>('directory');
+  const [activeTab, setActiveTab] = useState<'directory' | 'payments' | 'return_on_sale'>('directory');
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentCustomerId, setPaymentCustomerId] = useState<string | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
@@ -528,6 +529,17 @@ export const CustomerView: React.FC = () => {
           >
             Payments
           </button>
+          <button
+            onClick={() => setActiveTab('return_on_sale')}
+            className={`pb-2 text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 ${
+              activeTab === 'return_on_sale'
+                ? 'border-b-2 border-teal-500 text-teal-600 dark:text-teal-400'
+                : 'text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200'
+            }`}
+          >
+            <RotateCcw className="h-3 w-3" />
+            <span>Return On Sale</span>
+          </button>
         </div>
       </div>
 
@@ -887,6 +899,12 @@ export const CustomerView: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'return_on_sale' && (
+        <div className="flex-1 overflow-hidden">
+          <ReturnOnSaleTab />
         </div>
       )}
 

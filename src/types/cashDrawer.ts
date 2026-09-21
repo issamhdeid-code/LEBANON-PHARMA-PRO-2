@@ -3,6 +3,7 @@ export type CashDrawerOpType = 'IN' | 'OUT';
 export type CashDrawerCategory =
   | 'pos_sale'
   | 'customer_debt_payment'
+  | 'sale_return'
   | 'starting_float'
   | 'cash_replenishment'
   | 'owner_deposit'
@@ -76,7 +77,7 @@ export interface UnifiedCashDrawerEntry {
   amountLBP: number;
   performedBy: string;
   notes: string;
-  source: 'pos_sale' | 'customer_payment' | 'supplier_payment' | 'manual' | 'expense';
+  source: 'pos_sale' | 'customer_payment' | 'supplier_payment' | 'manual' | 'expense' | 'sale_return';
   manualTxId?: string;
   runningBalanceUSD?: number;
   runningBalanceLBP?: number;

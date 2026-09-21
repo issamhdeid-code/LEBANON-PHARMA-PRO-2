@@ -462,12 +462,13 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
       isOpen={isOpen}
       onClose={onClose}
       section="purchase"
-      width="680px"
+      width="700px"
       height="auto"
-      minWidth={460}
-      minHeight={420}
+      minWidth={360}
+      minHeight={180}
+      maxHeight={2000}
     >
-      <div className="w-full flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className="w-full h-full flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5">
           <form id="payment-form" onSubmit={handleSave} className="space-y-5 text-sm">
@@ -654,7 +655,7 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
                     </div>
                   )}
                 </div>
-                <div className="max-h-40 overflow-y-auto p-2 space-y-1 bg-white dark:bg-slate-900">
+                <div className="max-h-72 overflow-y-auto p-2 space-y-1 bg-white dark:bg-slate-900">
                   {supplierInvoices.length === 0 ? (
                     <div className="text-xs text-slate-400 text-center py-4">No unpaid invoices found for this supplier.</div>
                   ) : (
@@ -1114,7 +1115,7 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ isOp
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3 shrink-0">
+        <div className="px-5 pr-8 py-3.5 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3 shrink-0">
           <button
             type="button"
             onClick={onClose}

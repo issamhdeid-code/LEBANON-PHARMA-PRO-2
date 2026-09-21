@@ -304,6 +304,7 @@ export type LogComponent =
   | 'POS / Sale'
   | 'Inventory / Stock'
   | 'Purchases'
+  | 'Customers / Patients'
   | 'Finance / Expenses'
   | 'Sync / Network'
   | 'Auth / Security'
@@ -469,3 +470,55 @@ export interface Expense {
   timestamp: number;
   synced?: boolean;
 }
+
+export type SaleRefundMethod = 'cash_drawer' | 'customer_credit' | 'no_refund';
+
+export interface SaleReturnItem {
+  productId: string;
+  productCode: string;
+  productName: string;
+  category?: ProductCategory;
+  barcode?: string;
+  quantity: number; // units/boxes returned
+  isPiece?: boolean;
+  unitPriceUSD: number;
+  unitPriceLBP: number;
+  totalUSD: number;
+  totalLBP: number;
+  selectedBatchNumber?: string;
+  selectedExpiryDate?: string;
+  batchNumber?: string;
+  expiryDate?: string;
+  totalRefundUSD?: number;
+  totalRefundLBP?: number;
+  condition?: 'good' | 'damaged' | 'expired';
+  reason?: string;
+}
+
+export interface SaleReturn {
+  id: string;
+  returnNumber: string; // e.g. SRET-2026-0001
+  date: string;         // ISO date string
+  timestamp: number;
+  originalSaleId?: string;
+  originalInvoiceNumber?: string;
+  originalSaleInvoiceNumber?: string;
+  customerId?: string;
+  customerName?: string;
+  items: SaleReturnItem[];
+  totalRefundUSD: number;
+  totalRefundLBP: number;
+  refundCurrency?: 'USD' | 'LBP' | 'MIXED';
+  currency?: 'USD' | 'LBP' | 'MIXED';
+  refundMethod: SaleRefundMethod; // cash_drawer (deducted from drawer), customer_credit (credit customer debt balance), no_refund
+  refundedUSD?: number; // actual cash refunded in USD from drawer
+  refundedLBP?: number; // actual cash refunded in LBP from drawer
+  creditAmountUSD?: number; // amount applied to reduce customer balance
+  creditAmountLBP?: number;
+  reason?: string;
+  notes?: string;
+  cashierName?: string;
+  receivedBy?: string;
+  synced?: boolean;
+}
+
