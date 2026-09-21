@@ -56,81 +56,165 @@ export function extractCleanMolecules(ingredients: string): string[] {
 }
 
 /**
- * Common international (INN) <-> USAN (FDA) synonym mapping.
- * Ensures international drug names match official FDA labels.
+ * Common international (INN) <-> USAN (FDA) synonym mapping and trade-to-molecule normalization.
+ * Ensures international drug names match official pharmaceutical standards.
  */
-export const DRUG_SYNONYMS: Record<string, string> = {
-  paracetamol: 'acetaminophen',
+export const INN_SYNONYMS: Record<string, string> = {
+  // USAN <-> INN
   acetaminophen: 'paracetamol',
-  salbutamol: 'albuterol',
+  paracetamol: 'paracetamol',
   albuterol: 'salbutamol',
-  glibenclamide: 'glyburide',
+  salbutamol: 'salbutamol',
   glyburide: 'glibenclamide',
-  furosemide: 'frusemide',
+  glibenclamide: 'glibenclamide',
   frusemide: 'furosemide',
-  torasemide: 'torsemide',
+  furosemide: 'furosemide',
   torsemide: 'torasemide',
-  rifampicin: 'rifampin',
+  torasemide: 'torasemide',
   rifampin: 'rifampicin',
-  pethidine: 'meperidine',
+  rifampicin: 'rifampicin',
   meperidine: 'pethidine',
-  'acetylsalicylic acid': 'aspirin',
+  pethidine: 'pethidine',
   aspirin: 'acetylsalicylic acid',
-  cholecalciferol: 'vitamin d3',
-  'vitamin d3': 'cholecalciferol',
-  'ascorbic acid': 'vitamin c',
-  'vitamin c': 'ascorbic acid',
-  amoxicilline: 'amoxicillin',
+  'acetylsalicylic acid': 'acetylsalicylic acid',
   clavulanate: 'clavulanic acid',
-  'clavulanic acid': 'clavulanate',
-  esomeprazole: 'nexium',
-  omeprazole: 'losec',
-  atorvastatin: 'lipitor',
-  rosuvastatin: 'crestor',
-  bisoprolol: 'concor',
-  ciprofloxacin: 'cipro',
-  azithromycin: 'zithromax',
-  clarithromycin: 'klacid',
-  levothyroxine: 'synthroid',
-  clopidogrel: 'plavix',
-  montelukast: 'singulair',
+  'clavulanic acid': 'clavulanic acid',
+  'clavulanate potassium': 'clavulanic acid',
+  'potassium clavulanate': 'clavulanic acid',
+  'vitamin d': 'cholecalciferol',
+  'vitamin d3': 'cholecalciferol',
+  cholecalciferol: 'cholecalciferol',
+  'vitamin c': 'ascorbic acid',
+  'ascorbic acid': 'ascorbic acid',
+  'vitamin b1': 'thiamine',
+  thiamine: 'thiamine',
+  'vitamin b6': 'pyridoxine',
+  pyridoxine: 'pyridoxine',
+  'vitamin b12': 'cyanocobalamin',
+  cyanocobalamin: 'cyanocobalamin',
+  'vitamin b9': 'folic acid',
+  'folic acid': 'folic acid',
+
+  // Trade/Brand name normalization to INN molecule
+  nexium: 'esomeprazole',
+  losec: 'omeprazole',
+  lipitor: 'atorvastatin',
+  crestor: 'rosuvastatin',
+  concor: 'bisoprolol',
+  cipro: 'ciprofloxacin',
+  zithromax: 'azithromycin',
+  klacid: 'clarithromycin',
+  synthroid: 'levothyroxine',
+  plavix: 'clopidogrel',
+  singulair: 'montelukast',
+  panadol: 'paracetamol',
+  tylenol: 'paracetamol',
+  amoxil: 'amoxicillin',
+  flagyl: 'metronidazole',
+  voltaren: 'diclofenac',
+  cataflam: 'diclofenac',
+  advil: 'ibuprofen',
+  motrin: 'ibuprofen',
+  brufen: 'ibuprofen',
+  lasix: 'furosemide',
+  aldactone: 'spironolactone',
+  zantac: 'ranitidine',
+  pepcid: 'famotidine',
+  glucophage: 'metformin',
+  januvia: 'sitagliptin',
+  jardiance: 'empagliflozin',
+  forxiga: 'dapagliflozin',
+  norvasc: 'amlodipine',
 };
 
+export const DRUG_SYNONYMS = INN_SYNONYMS;
+
 /**
- * Checks if two drug products share the same active molecule / active ingredients.
+ * Normalizes a single molecule string into canonical pharmaceutical format.
+ * Strips salts, esters, dosage units, and punctuation.
+ */
+export function normalizeSingleMolecule(name: string): string {
+  if (!name) return '';
+  const str = name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // remove diacritics
+    .replace(/\s*\([^)]*\)/g, ' ') // remove parentheticals
+    .replace(/\b\d+([.,]\d+)?\s*(mg|g|mcg|iu|ml|l|%|ug|ui)\b/gi, ' ') // remove dosages
+    .replace(/\b\d+\b/g, ' ') // remove isolated numbers
+    .replace(/[\/\\,;:_+&-]/g, ' ') // remove punctuation
+    .trim();
+
+  // Strip salts, esters, and hydrates as standalone words
+  const saltRegex = /\b(trihydrate|monohydrate|dihydrate|hemihydrate|sesquihydrate|anhydrous|hydrate|potassium|sodium|calcium|magnesium|fumarate|sulfate|sulphate|hydrochloride|hcl|dihydrochloride|hydrobromide|hbr|besylate|maleate|tartrate|bitartrate|mesylate|valerate|dipropionate|succinate|phosphate|gluconate|citrate|lactate|acetate|propionate|bromide|chloride|iodide|carbonate|nitrate|axetil|cilexetil|medoxomil)\b/gi;
+
+  const stripped = str.replace(saltRegex, ' ').replace(/\s+/g, ' ').trim();
+  const base = stripped.length >= 2 ? stripped : str;
+
+  const lowerBase = base.toLowerCase();
+  if (INN_SYNONYMS[lowerBase]) {
+    return INN_SYNONYMS[lowerBase];
+  }
+  const noTrailingE = lowerBase.replace(/e$/, '');
+  if (INN_SYNONYMS[noTrailingE]) {
+    return INN_SYNONYMS[noTrailingE];
+  }
+
+  return lowerBase;
+}
+
+/**
+ * Checks whether two molecule names are pharmaceutically equivalent.
+ * Uses exact normalized match, trailing 'e' normalization, and INN synonym resolution.
+ * Strictly prevents substring false positives (e.g. Iron vs Spironolactone, Ascorbic Acid vs Folic Acid).
+ */
+export function areMoleculesEquivalent(molA: string, molB: string): boolean {
+  if (!molA || !molB) return false;
+  const nA = normalizeSingleMolecule(molA);
+  const nB = normalizeSingleMolecule(molB);
+  if (!nA || !nB) return false;
+
+  // 1. Direct normalized match
+  if (nA === nB) return true;
+
+  // 2. Trailing 'e' variations (e.g. amoxicilline vs amoxicillin, ibuprofene vs ibuprofen)
+  if (nA.replace(/e$/, '') === nB.replace(/e$/, '')) return true;
+
+  // 3. Check INN / USAN mapping
+  if (INN_SYNONYMS[nA] === nB || INN_SYNONYMS[nB] === nA) return true;
+  if (INN_SYNONYMS[nA] && INN_SYNONYMS[nB] && INN_SYNONYMS[nA] === INN_SYNONYMS[nB]) return true;
+
+  return false;
+}
+
+/**
+ * Checks if two drug products share at least one active pharmaceutical molecule.
+ * Strictly checks exact molecule equivalence (or official pharmacological synonym).
+ * Never does partial substring matching which causes false positives between
+ * distinct medications.
  */
 export function hasMatchingActiveMolecule(
-  prodA: { ingredients: string; name?: string },
-  prodB: { ingredients: string; name?: string }
+  prodA: { ingredients: string; name?: string; molecules?: MoleculeStrength[] },
+  prodB: { ingredients: string; name?: string; molecules?: MoleculeStrength[] }
 ): boolean {
   if (!prodA.ingredients || !prodB.ingredients) return false;
 
-  const moleculesA = extractCleanMolecules(prodA.ingredients).map((m) => m.toLowerCase());
-  const moleculesB = extractCleanMolecules(prodB.ingredients).map((m) => m.toLowerCase());
+  const rawMolsA = prodA.molecules && prodA.molecules.length > 0
+    ? prodA.molecules.map((m) => m.name)
+    : extractCleanMolecules(prodA.ingredients);
 
-  // Check if any primary molecule matches
-  for (const molA of moleculesA) {
-    if (molA.length < 3) continue;
-    const synA = (DRUG_SYNONYMS[molA] || '').toLowerCase();
-    for (const molB of moleculesB) {
-      if (molB.length < 3) continue;
-      if (molA === molB || molA.includes(molB) || molB.includes(molA)) {
-        return true;
-      }
-      if (synA && (synA === molB || synA.includes(molB) || molB.includes(synA))) {
+  const rawMolsB = prodB.molecules && prodB.molecules.length > 0
+    ? prodB.molecules.map((m) => m.name)
+    : extractCleanMolecules(prodB.ingredients);
+
+  if (rawMolsA.length === 0 || rawMolsB.length === 0) return false;
+
+  for (const molA of rawMolsA) {
+    for (const molB of rawMolsB) {
+      if (areMoleculesEquivalent(molA, molB)) {
         return true;
       }
     }
-  }
-
-  // Also check direct ingredient inclusion
-  const strA = prodA.ingredients.toLowerCase();
-  const strB = prodB.ingredients.toLowerCase();
-  for (const molA of moleculesA) {
-    if (molA.length >= 4 && strB.includes(molA)) return true;
-  }
-  for (const molB of moleculesB) {
-    if (molB.length >= 4 && strA.includes(molB)) return true;
   }
 
   return false;
@@ -174,6 +258,80 @@ export function findOutOfStockGenericAlternatives(
     if (p.stockQuantity > 0) return false;
     return hasMatchingActiveMolecule(targetProduct, p);
   });
+}
+
+export interface CategorizedAlternatives {
+  singleIngredient: Product[];
+  multiIngredient: Product[];
+  allSorted: Product[];
+  inStockCount: number;
+  totalCount: number;
+}
+
+/**
+ * Finds all generic alternatives categorized into:
+ * 1. Single active ingredient alternatives sharing the product's active ingredient (In-Stock first, then Out-of-Stock)
+ * 2. Multi-ingredient / combination alternatives containing that active ingredient (In-Stock first, then Out-of-Stock)
+ */
+export function findCategorizedGenericAlternatives(
+  targetProduct: { id?: string; code?: string; ingredients: string; name?: string; molecules?: MoleculeStrength[] },
+  allProducts: Product[]
+): CategorizedAlternatives {
+  if (!targetProduct || !targetProduct.ingredients || !targetProduct.ingredients.trim()) {
+    return { singleIngredient: [], multiIngredient: [], allSorted: [], inStockCount: 0, totalCount: 0 };
+  }
+
+  const allMatching = allProducts.filter((p) => {
+    if (p.category !== 'drug') return false;
+    if (targetProduct.id && p.id === targetProduct.id) return false;
+    if (targetProduct.code && p.code && p.code.toUpperCase() === targetProduct.code.toUpperCase()) return false;
+    return hasMatchingActiveMolecule(targetProduct, p);
+  });
+
+  const singleIngredient: Product[] = [];
+  const multiIngredient: Product[] = [];
+
+  for (const prod of allMatching) {
+    const mols = (prod.molecules && prod.molecules.length > 0)
+      ? prod.molecules
+      : extractCleanMolecules(prod.ingredients || '');
+    
+    // Check if single or multi
+    const hasCombinationDelimiters = /[\+\/;]|(\s+and\s+)/i.test(prod.ingredients || '');
+    const isSingle = mols.length <= 1 && !hasCombinationDelimiters;
+
+    if (isSingle) {
+      singleIngredient.push(prod);
+    } else {
+      multiIngredient.push(prod);
+    }
+  }
+
+  // Sort helper: in-stock first (stockQuantity > 0), then higher stock or name
+  const sortComparator = (a: Product, b: Product) => {
+    const aInStock = a.stockQuantity > 0;
+    const bInStock = b.stockQuantity > 0;
+    if (aInStock && !bInStock) return -1;
+    if (!aInStock && bInStock) return 1;
+    if (aInStock && bInStock) {
+      return (b.stockQuantity || 0) - (a.stockQuantity || 0) || (a.name || '').localeCompare(b.name || '');
+    }
+    return (a.name || '').localeCompare(b.name || '');
+  };
+
+  singleIngredient.sort(sortComparator);
+  multiIngredient.sort(sortComparator);
+
+  const allSorted = [...singleIngredient, ...multiIngredient];
+  const inStockCount = allSorted.filter((p) => p.stockQuantity > 0).length;
+
+  return {
+    singleIngredient,
+    multiIngredient,
+    allSorted,
+    inStockCount,
+    totalCount: allSorted.length,
+  };
 }
 
 /**

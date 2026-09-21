@@ -17,17 +17,19 @@ import { SaleTransaction, ProductCategory } from '../../types/pharmacy';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { CollectReportsView } from './CollectReportsView';
+import { ChartsReportsView } from './ChartsReportsView';
 
 export const ReportsView: React.FC = () => {
   const { sales, products, exchangeRate, formatLBP, formatUSD } = usePharmacy();
 
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'collect'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'collect' | 'charts'>('overview');
   const [dateFilter, setDateFilter] = useState<'today' | 'week' | 'month' | 'all'>('month');
 
-  // Filter sales according to date range
+  // Filter sales according to date range (excluding unreal/fictitious invoices)
   const filteredSales = useMemo(() => {
     const now = new Date();
     return sales.filter((s) => {
+      if (s.isUnreal) return false;
       const saleDate = new Date(s.timestamp);
       if (dateFilter === 'today') {
         return saleDate.toDateString() === now.toDateString();
@@ -169,6 +171,20 @@ export const ReportsView: React.FC = () => {
             Financial & Sales Overview
           </button>
           <button
+            onClick={() => setActiveSubTab('charts')}
+            className={`pb-2 text-xs font-bold cursor-pointer transition-colors flex items-center space-x-1.5 ${
+              activeSubTab === 'charts'
+                ? 'border-b-2 border-teal-500 text-teal-600 dark:text-teal-400'
+                : 'text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200'
+            }`}
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            <span>Charts</span>
+            <span className="rounded bg-teal-50 px-1.5 py-0.2 text-[9px] font-bold text-teal-700 border border-teal-200 dark:bg-teal-950/40 dark:text-teal-300">
+              New
+            </span>
+          </button>
+          <button
             onClick={() => setActiveSubTab('collect')}
             className={`pb-2 text-xs font-bold cursor-pointer transition-colors flex items-center space-x-1.5 ${
               activeSubTab === 'collect'
@@ -177,14 +193,13 @@ export const ReportsView: React.FC = () => {
             }`}
           >
             <span>Collect Reports</span>
-            <span className="rounded bg-teal-50 px-1.5 py-0.2 text-[9px] font-bold text-teal-700 border border-teal-200 dark:bg-teal-950/40 dark:text-teal-300">
-              New
-            </span>
           </button>
         </div>
       </div>
 
-      {activeSubTab === 'collect' ? (
+      {activeSubTab === 'charts' ? (
+        <ChartsReportsView />
+      ) : activeSubTab === 'collect' ? (
         <CollectReportsView />
       ) : (
         <>

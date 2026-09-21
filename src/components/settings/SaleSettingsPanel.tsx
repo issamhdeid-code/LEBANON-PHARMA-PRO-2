@@ -2,42 +2,81 @@ import React, { useState, useEffect } from 'react';
 import { ShoppingCart, Printer, Save, CheckCircle2 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 
+const BLANK_TEMPLATE = {
+  enabled: false,
+  headerEnglish: {
+    pharmacyName: '',
+    pharmacistName: '',
+    amendedDegreeNo: '',
+    orderRegNo: '',
+    cnssNo: '',
+    address: '',
+    tel: '',
+  },
+  headerArabic: {
+    pharmacyName: '',
+    pharmacistName: '',
+    amendedDegreeNo: '',
+    orderRegNo: '',
+    cnssNo: '',
+    address: '',
+    tel: '',
+  },
+  centerInfo: {
+    vatNo: '',
+    no: '',
+  },
+};
+
 export const SaleSettingsPanel: React.FC = () => {
   const { settings, updateSettings, addNotification } = usePharmacy();
   const [isSaving, setIsSaving] = useState(false);
 
-  const [invoiceTemplate, setInvoiceTemplate] = useState(
-    settings.invoiceTemplate || {
-      enabled: false,
+  const getCleanTemplate = () => {
+    const tpl = settings.invoiceTemplate;
+    if (!tpl || tpl.headerEnglish?.pharmacyName === 'Pharmacie Al-Arz') {
+      return { ...BLANK_TEMPLATE };
+    }
+    return {
+      enabled: Boolean(tpl.enabled),
       headerEnglish: {
-        pharmacyName: '',
-        pharmacistName: '',
-        amendedDegreeNo: '',
-        orderRegNo: '',
-        cnssNo: '',
-        address: '',
-        tel: '',
+        pharmacyName: tpl.headerEnglish?.pharmacyName || '',
+        pharmacistName: tpl.headerEnglish?.pharmacistName || '',
+        amendedDegreeNo: tpl.headerEnglish?.amendedDegreeNo || '',
+        orderRegNo: tpl.headerEnglish?.orderRegNo || '',
+        cnssNo: tpl.headerEnglish?.cnssNo || '',
+        address: tpl.headerEnglish?.address || '',
+        tel: tpl.headerEnglish?.tel || '',
       },
       headerArabic: {
-        pharmacyName: '',
-        pharmacistName: '',
-        amendedDegreeNo: '',
-        orderRegNo: '',
-        address: '',
-        tel: '',
+        pharmacyName: tpl.headerArabic?.pharmacyName || '',
+        pharmacistName: tpl.headerArabic?.pharmacistName || '',
+        amendedDegreeNo: tpl.headerArabic?.amendedDegreeNo || '',
+        orderRegNo: tpl.headerArabic?.orderRegNo || '',
+        cnssNo: tpl.headerArabic?.cnssNo || '',
+        address: tpl.headerArabic?.address || '',
+        tel: tpl.headerArabic?.tel || '',
       },
       centerInfo: {
-        vatNo: '',
-        no: '',
+        vatNo: tpl.centerInfo?.vatNo || '',
+        no: tpl.centerInfo?.no || '',
       },
-    }
-  );
+    };
+  };
+
+  const [invoiceTemplate, setInvoiceTemplate] = useState(getCleanTemplate);
 
   useEffect(() => {
-    if (settings.invoiceTemplate) {
-      setInvoiceTemplate(settings.invoiceTemplate);
-    }
+    setInvoiceTemplate(getCleanTemplate());
   }, [settings.invoiceTemplate]);
+
+  const handleClearAllInputs = () => {
+    setInvoiceTemplate((prev) => ({
+      ...BLANK_TEMPLATE,
+      enabled: prev.enabled,
+    }));
+    addNotification('Official invoice print template fields cleared', 'info');
+  };
 
   const handleChangeEnglish = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -97,9 +136,19 @@ export const SaleSettingsPanel: React.FC = () => {
       
       <div className="p-5 space-y-6">
         <div>
-          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-2">
-            <Printer className="h-4 w-4 text-slate-500" /> Official Invoice Print Template
-          </h3>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+              <Printer className="h-4 w-4 text-teal-600 dark:text-teal-400" /> Official Invoice Print Template
+            </h3>
+            <button
+              type="button"
+              onClick={handleClearAllInputs}
+              className="px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 cursor-pointer shadow-2xs transition"
+            >
+              Clear All Fields (Keep Blank)
+            </button>
+          </div>
+          
           <div className="flex items-center space-x-3 mb-4">
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -115,80 +164,81 @@ export const SaleSettingsPanel: React.FC = () => {
             </label>
           </div>
           
-          <div className={`grid grid-cols-1 md:grid-cols-3 gap-6 p-5 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50/50 dark:bg-slate-900/50 transition-opacity ${!invoiceTemplate.enabled ? 'opacity-50 pointer-events-none' : ''}`}>
+          <div className={`grid grid-cols-1 md:grid-cols-3 gap-6 p-5 border border-teal-200/80 dark:border-teal-900/50 rounded-xl bg-slate-50/70 dark:bg-slate-900/60 shadow-2xs transition-all duration-200 ${!invoiceTemplate.enabled ? 'opacity-50 pointer-events-none' : ''}`}>
             
             {/* English Header */}
             <div className="space-y-3">
-              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">English Info (Left)</h4>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Pharmacy Name</label>
-                <input type="text" name="pharmacyName" value={invoiceTemplate.headerEnglish.pharmacyName} onChange={handleChangeEnglish} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" placeholder="e.g. Amar Pharmacy" />
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Pharmacy Name</label>
+                <input type="text" name="pharmacyName" value={invoiceTemplate.headerEnglish.pharmacyName || ''} onChange={handleChangeEnglish} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Pharmacist</label>
-                <input type="text" name="pharmacistName" value={invoiceTemplate.headerEnglish.pharmacistName} onChange={handleChangeEnglish} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" placeholder="Pharmacist Name" />
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Pharmacist</label>
+                <input type="text" name="pharmacistName" value={invoiceTemplate.headerEnglish.pharmacistName || ''} onChange={handleChangeEnglish} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Amended Degree No</label>
-                <input type="text" name="amendedDegreeNo" value={invoiceTemplate.headerEnglish.amendedDegreeNo} onChange={handleChangeEnglish} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Amended Degree No</label>
+                <input type="text" name="amendedDegreeNo" value={invoiceTemplate.headerEnglish.amendedDegreeNo || ''} onChange={handleChangeEnglish} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Order Reg No</label>
-                <input type="text" name="orderRegNo" value={invoiceTemplate.headerEnglish.orderRegNo} onChange={handleChangeEnglish} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Order Reg No</label>
+                <input type="text" name="orderRegNo" value={invoiceTemplate.headerEnglish.orderRegNo || ''} onChange={handleChangeEnglish} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">CNSS no.</label>
-                <input type="text" name="cnssNo" value={invoiceTemplate.headerEnglish.cnssNo} onChange={handleChangeEnglish} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">CNSS no.</label>
+                <input type="text" name="cnssNo" value={invoiceTemplate.headerEnglish.cnssNo || ''} onChange={handleChangeEnglish} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Address</label>
-                <input type="text" name="address" value={invoiceTemplate.headerEnglish.address} onChange={handleChangeEnglish} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Address</label>
+                <input type="text" name="address" value={invoiceTemplate.headerEnglish.address || ''} onChange={handleChangeEnglish} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Tel</label>
-                <input type="text" name="tel" value={invoiceTemplate.headerEnglish.tel} onChange={handleChangeEnglish} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Tel</label>
+                <input type="text" name="tel" value={invoiceTemplate.headerEnglish.tel || ''} onChange={handleChangeEnglish} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
             </div>
 
             {/* Center Info */}
             <div className="space-y-3">
-              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Center Info</h4>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Vat#</label>
-                <input type="text" name="vatNo" value={invoiceTemplate.centerInfo.vatNo} onChange={handleChangeCenter} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Vat#</label>
+                <input type="text" name="vatNo" value={invoiceTemplate.centerInfo.vatNo || ''} onChange={handleChangeCenter} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">No</label>
-                <input type="text" name="no" value={invoiceTemplate.centerInfo.no} onChange={handleChangeCenter} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">No</label>
+                <input type="text" name="no" value={invoiceTemplate.centerInfo.no || ''} onChange={handleChangeCenter} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
             </div>
 
             {/* Arabic Header */}
             <div className="space-y-3" dir="rtl">
-              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2" dir="ltr">Arabic Info (Right)</h4>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Pharmacy Name (صيدلية)</label>
-                <input type="text" name="pharmacyName" value={invoiceTemplate.headerArabic.pharmacyName} onChange={handleChangeArabic} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">صيدلية</label>
+                <input type="text" name="pharmacyName" value={invoiceTemplate.headerArabic.pharmacyName || ''} onChange={handleChangeArabic} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Pharmacist (الصيدلي)</label>
-                <input type="text" name="pharmacistName" value={invoiceTemplate.headerArabic.pharmacistName} onChange={handleChangeArabic} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">الصيدلي</label>
+                <input type="text" name="pharmacistName" value={invoiceTemplate.headerArabic.pharmacistName || ''} onChange={handleChangeArabic} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Degree No (إجازة رقم)</label>
-                <input type="text" name="amendedDegreeNo" value={invoiceTemplate.headerArabic.amendedDegreeNo} onChange={handleChangeArabic} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">إجازة رقم</label>
+                <input type="text" name="amendedDegreeNo" value={invoiceTemplate.headerArabic.amendedDegreeNo || ''} onChange={handleChangeArabic} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Reg No (رقم التسجيل)</label>
-                <input type="text" name="orderRegNo" value={invoiceTemplate.headerArabic.orderRegNo} onChange={handleChangeArabic} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">رقم التسجيل</label>
+                <input type="text" name="orderRegNo" value={invoiceTemplate.headerArabic.orderRegNo || ''} onChange={handleChangeArabic} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Address (العنوان)</label>
-                <input type="text" name="address" value={invoiceTemplate.headerArabic.address} onChange={handleChangeArabic} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">رقم الضمان</label>
+                <input type="text" name="cnssNo" value={invoiceTemplate.headerArabic.cnssNo || ''} onChange={handleChangeArabic} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Tel (تلفون)</label>
-                <input type="text" name="tel" value={invoiceTemplate.headerArabic.tel} onChange={handleChangeArabic} className="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-500 focus:ring-teal-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">العنوان</label>
+                <input type="text" name="address" value={invoiceTemplate.headerArabic.address || ''} onChange={handleChangeArabic} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">تلفون</label>
+                <input type="text" name="tel" value={invoiceTemplate.headerArabic.tel || ''} onChange={handleChangeArabic} className="w-full rounded-lg border border-slate-300/90 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-2xs focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 transition-all" />
               </div>
             </div>
 

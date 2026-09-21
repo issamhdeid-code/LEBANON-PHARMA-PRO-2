@@ -22,10 +22,18 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public static getDerivedStateFromError(error: Error): State {
+    const msg = error?.message || '';
+    if (msg.includes('ResizeObserver') || msg.includes('undelivered notifications')) {
+      return { hasError: false, error: null, errorInfo: null };
+    }
     return { hasError: true, error, errorInfo: null };
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    const msg = error?.message || '';
+    if (msg.includes('ResizeObserver') || msg.includes('undelivered notifications')) {
+      return;
+    }
     console.error('Uncaught error in component tree:', error, errorInfo);
     this.setState({ error, errorInfo });
   }

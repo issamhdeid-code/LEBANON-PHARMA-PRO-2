@@ -7,7 +7,6 @@ import {
   Minus,
   Trash2,
   Eye,
-  Pencil,
   History,
   TrendingUp,
   TrendingDown,
@@ -19,17 +18,17 @@ import {
   Filter,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   FileText,
   RotateCcw,
   Sparkles,
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { Product, ProductBatch, AppLogEntry } from '../../types/pharmacy';
-import { formatStockDisplay } from '../../utils/stockUtils';
+import { formatStockDisplay, resolveProductBatches, ResolvedBatch } from '../../utils/stockUtils';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { ViewAdjustmentLogModal } from './ViewAdjustmentLogModal';
-import { EditAdjustmentLogModal } from './EditAdjustmentLogModal';
 import { OfflineStorage } from '../../services/storage';
 import { calculateBatchDiffs, extractBatchDiffsFromLog } from '../../utils/batchAdjustmentUtils';
 
@@ -42,7 +41,7 @@ const QUICK_REASONS = [
 ];
 
 export const QuantityAdjustmentsView: React.FC = () => {
-  const { products, updateProduct, deleteProduct, currentUser, addLog, logs, addNotification, exchangeRate } = usePharmacy();
+  const { products, purchases, updateProduct, deleteProduct, currentUser, addLog, deleteLog, logs, addNotification, exchangeRate } = usePharmacy();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
@@ -66,12 +65,21 @@ export const QuantityAdjustmentsView: React.FC = () => {
   const [logSearchQuery, setLogSearchQuery] = useState('');
   const [logDeltaFilter, setLogDeltaFilter] = useState<'all' | 'increase' | 'decrease'>('all');
   const [viewingLog, setViewingLog] = useState<AppLogEntry | null>(null);
-  const [editingLog, setEditingLog] = useState<AppLogEntry | null>(null);
+  const [logToDelete, setLogToDelete] = useState<AppLogEntry | null>(null);
 
   // Local overrides & seed storage
   const [localLogsOverride, setLocalLogsOverride] = useState<AppLogEntry[]>(() => {
     try {
       const data = localStorage.getItem('lebanon_pharma_qty_adjustments_local_cache');
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [deletedLogIds, setDeletedLogIds] = useState<string[]>(() => {
+    try {
+      const data = localStorage.getItem('lebanon_pharma_deleted_qty_adj_log_ids');
       return data ? JSON.parse(data) : [];
     } catch {
       return [];
@@ -103,23 +111,26 @@ export const QuantityAdjustmentsView: React.FC = () => {
   // Merge logs from context with local overrides and seed realistic initial activities if empty
   const allAdjustmentActivities = useMemo(() => {
     const map = new Map<string, AppLogEntry>();
+    const deletedSet = new Set(deletedLogIds);
 
     // 1. Gather all logs from PharmacyContext that match QTY_ADJUSTMENT or are in Inventory / Stock with adjustment keywords
     const ctxAdjustments = (logs || []).filter(
-      l => l.action === 'QTY_ADJUSTMENT' || 
+      l => (l.action === 'QTY_ADJUSTMENT' || 
            l.action === 'QTY_ADJUSTMENT_LOG_EDITED' ||
-           (l.component === 'Inventory / Stock' && (l.title?.toLowerCase().includes('adjustment') || l.description?.toLowerCase().includes('stock adjusted')))
+           (l.component === 'Inventory / Stock' && (l.title?.toLowerCase().includes('adjustment') || l.description?.toLowerCase().includes('stock adjusted')))) &&
+           !deletedSet.has(l.id)
     );
 
     // If both context and local override are empty, create initial sample activities
-    if (ctxAdjustments.length === 0 && localLogsOverride.length === 0) {
+    const activeLocalOverrides = localLogsOverride.filter(l => !deletedSet.has(l.id));
+    if (ctxAdjustments.length === 0 && activeLocalOverrides.length === 0) {
       const sampleLogs: AppLogEntry[] = [
         {
           id: 'adj-seed-1',
           timestamp: Date.now() - 1000 * 60 * 25, // 25 min ago
-          component: 'Inventory / Stock',
+          component: 'Inventory / Stock' as const,
           action: 'QTY_ADJUSTMENT',
-          level: 'info',
+          level: 'info' as const,
           title: `Quantity Adjustment: ${products[0]?.name || 'Panadol Extra 500mg'}`,
           description: `Stock adjusted from 45 to 50 (+5) - Batch BT-9824: 25 → 30 (+5) (Routine Count Audit)`,
           user: {
@@ -128,7 +139,7 @@ export const QuantityAdjustmentsView: React.FC = () => {
           },
           device: 'Counter 1 (Main POS)',
           entityId: products[0]?.id || 'prod-panadol',
-          entityType: 'product',
+          entityType: 'product' as const,
           details: {
             productId: products[0]?.id || 'prod-panadol',
             productCode: products[0]?.code || 'MED-001',
@@ -158,9 +169,9 @@ export const QuantityAdjustmentsView: React.FC = () => {
         {
           id: 'adj-seed-2',
           timestamp: Date.now() - 1000 * 60 * 110, // ~2 hours ago
-          component: 'Inventory / Stock',
+          component: 'Inventory / Stock' as const,
           action: 'QTY_ADJUSTMENT',
-          level: 'warning',
+          level: 'warning' as const,
           title: `Quantity Adjustment: ${products[1]?.name || 'Augmentin 1g Tablets'}`,
           description: `Stock adjusted from 22 to 20 (-2) - Batch AUG-2025B: 22 → 20 (-2) (Damaged Carton Removed)`,
           user: {
@@ -169,7 +180,7 @@ export const QuantityAdjustmentsView: React.FC = () => {
           },
           device: 'Counter 2 (Dispensing)',
           entityId: products[1]?.id || 'prod-augmentin',
-          entityType: 'product',
+          entityType: 'product' as const,
           details: {
             productId: products[1]?.id || 'prod-augmentin',
             productCode: products[1]?.code || 'MED-002',
@@ -196,9 +207,9 @@ export const QuantityAdjustmentsView: React.FC = () => {
         {
           id: 'adj-seed-3',
           timestamp: Date.now() - 1000 * 60 * 60 * 20, // 20 hours ago
-          component: 'Inventory / Stock',
+          component: 'Inventory / Stock' as const,
           action: 'QTY_ADJUSTMENT',
-          level: 'info',
+          level: 'info' as const,
           title: `Quantity Adjustment: ${products[2]?.name || 'Cataflam 50mg Tablets'}`,
           description: `Stock adjusted from 30 to 32 (+2) - Batch CAT-5510: 30 → 32 (+2) (Supplier Bonus Overdelivery)`,
           user: {
@@ -207,7 +218,7 @@ export const QuantityAdjustmentsView: React.FC = () => {
           },
           device: 'Counter 1 (Main POS)',
           entityId: products[2]?.id || 'prod-cataflam',
-          entityType: 'product',
+          entityType: 'product' as const,
           details: {
             productId: products[2]?.id || 'prod-cataflam',
             productCode: products[2]?.code || 'MED-003',
@@ -231,15 +242,19 @@ export const QuantityAdjustmentsView: React.FC = () => {
             ],
           },
         },
-      ];
+      ].filter(l => !deletedSet.has(l.id));
       sampleLogs.forEach(l => map.set(l.id, l));
     }
 
-    ctxAdjustments.forEach(l => map.set(l.id, l));
-    localLogsOverride.forEach(l => map.set(l.id, l));
+    ctxAdjustments.forEach(l => {
+      if (!deletedSet.has(l.id)) map.set(l.id, l);
+    });
+    activeLocalOverrides.forEach(l => {
+      if (!deletedSet.has(l.id)) map.set(l.id, l);
+    });
 
     return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
-  }, [logs, localLogsOverride, products, currentUser]);
+  }, [logs, localLogsOverride, deletedLogIds, products, currentUser]);
 
   // Filter activities based on search text and delta filter
   const filteredActivities = useMemo(() => {
@@ -297,31 +312,60 @@ export const QuantityAdjustmentsView: React.FC = () => {
     if (prod.batches && prod.batches.length > 0) {
       let bts = prod.batches.map(b => ({
         ...b,
-        quantity: b.quantity ?? 0
+        quantity: Math.max(0, b.quantity ?? 0)
       }));
       
       const sum = bts.reduce((s, b) => s + b.quantity, 0);
-      if (sum !== prod.stockQuantity) {
+      if (Math.abs(sum - prod.stockQuantity) > 0.001) {
         const delta = prod.stockQuantity - sum;
         bts[0].quantity = Math.max(0, bts[0].quantity + delta);
       }
       setFormBatches(bts);
       setBatchQuantityDrafts(bts.map(b => getBatchQuantityDraft(b.quantity || 0, prod.piecesPerBox || 1)));
     } else {
-      const batch = {
-        batchNumber: prod.batchNumber || '',
-        expiryDate: prod.expiryDate || '',
-        quantity: prod.stockQuantity || 0
-      };
-      setFormBatches([batch]);
-      setBatchQuantityDrafts([getBatchQuantityDraft(batch.quantity, prod.piecesPerBox || 1)]);
+      const resolved = resolveProductBatches(prod, purchases || []);
+      if (resolved && resolved.length > 0 && resolved.some((b: ResolvedBatch) => (b.quantity || 0) > 0 || (b.batchNumber && b.batchNumber !== 'N/A') || b.expiryDate)) {
+        const bts = resolved.map((b: ResolvedBatch) => ({
+          batchNumber: b.batchNumber === 'N/A' ? (prod.batchNumber || '') : b.batchNumber,
+          expiryDate: b.expiryDate || prod.expiryDate || '',
+          quantity: Math.max(0, b.quantity || 0)
+        }));
+        setFormBatches(bts);
+        setBatchQuantityDrafts(bts.map(b => getBatchQuantityDraft(b.quantity || 0, prod.piecesPerBox || 1)));
+      } else {
+        const batch = {
+          batchNumber: prod.batchNumber || '',
+          expiryDate: prod.expiryDate || '',
+          quantity: Math.max(0, prod.stockQuantity || 0)
+        };
+        setFormBatches([batch]);
+        setBatchQuantityDrafts([getBatchQuantityDraft(batch.quantity, prod.piecesPerBox || 1)]);
+      }
     }
   };
 
   const handleUpdateBatchQuantity = (index: number, qtyString: string) => {
     const newBatches = [...formBatches];
-    newBatches[index].quantity = parseFloat(qtyString) || 0;
-    setFormBatches(newBatches);
+    if (newBatches[index]) {
+      const parsed = parseFloat(qtyString);
+      newBatches[index] = {
+        ...newBatches[index],
+        quantity: isNaN(parsed) ? 0 : Math.max(0, parsed)
+      };
+      setFormBatches(newBatches);
+    }
+  };
+
+  const handleAdjustBatchQuantity = (index: number, delta: number) => {
+    const batch = formBatches[index];
+    if (!batch) return;
+    const currentQty = batch.quantity || 0;
+    const newQty = Math.max(0, Number((currentQty + delta).toFixed(4)));
+    handleUpdateBatchQuantity(index, newQty.toString());
+    const piecesPerBox = Number(formPiecesPerBox) || 1;
+    const drafts = [...batchQuantityDrafts];
+    drafts[index] = getBatchQuantityDraft(newQty, piecesPerBox);
+    setBatchQuantityDrafts(drafts);
   };
 
   const handleAddBatch = () => {
@@ -342,9 +386,16 @@ export const QuantityAdjustmentsView: React.FC = () => {
     setBatchQuantityDrafts(drafts);
 
     const piecesPerBox = Number(formPiecesPerBox) || 1;
-    const boxes = parseInt(draft.boxes, 10) || 0;
-    const pieces = parseInt(draft.pieces, 10) || 0;
+    const boxes = Math.max(0, parseInt(draft.boxes, 10) || 0);
+    const pieces = Math.max(0, parseInt(draft.pieces, 10) || 0);
     handleUpdateBatchQuantity(index, (boxes + pieces / piecesPerBox).toString());
+  };
+
+  const handleAdjustBatchPart = (index: number, part: 'boxes' | 'pieces', delta: number) => {
+    const draft = batchQuantityDrafts[index] || { boxes: '0', pieces: '0' };
+    const currentVal = parseInt(draft[part], 10) || 0;
+    const newVal = Math.max(0, currentVal + delta).toString();
+    handleUpdateBatchPart(index, part, newVal);
   };
 
   const handleNormalizeBatchPart = (index: number) => {
@@ -369,9 +420,16 @@ export const QuantityAdjustmentsView: React.FC = () => {
   const handleSave = () => {
     if (!selectedProduct) return;
     
-    const totalQuantity = formBatches.reduce((sum, b) => sum + (b.quantity || 0), 0);
-    const mainBatch = formBatches.length > 0 ? formBatches[0].batchNumber : '';
-    const mainExpiry = formBatches.length > 0 ? formBatches[0].expiryDate : '';
+    const cleanedBatches = formBatches.map(b => ({
+      batchNumber: (b.batchNumber || '').trim(),
+      expiryDate: (b.expiryDate || '').trim(),
+      quantity: Math.max(0, Number((b.quantity || 0).toFixed(4)))
+    }));
+
+    const totalQuantity = Math.max(0, Number(cleanedBatches.reduce((sum, b) => sum + (b.quantity || 0), 0).toFixed(4)));
+    const activeFirst = cleanedBatches.find(b => b.quantity > 0) || cleanedBatches[0];
+    const mainBatch = activeFirst ? activeFirst.batchNumber : (selectedProduct.batchNumber || '');
+    const mainExpiry = activeFirst ? activeFirst.expiryDate : (selectedProduct.expiryDate || '');
 
     const resolvedPiecePriceUSD = formIsDivisible
       ? (formPiecePriceUSD ? Number(parseFloat(formPiecePriceUSD).toFixed(2)) : (formPiecePriceLBP ? Number((parseFloat(formPiecePriceLBP.replace(/[^\d.]/g, '')) / exchangeRate).toFixed(2)) : undefined))
@@ -386,7 +444,7 @@ export const QuantityAdjustmentsView: React.FC = () => {
       stockQuantity: totalQuantity,
       batchNumber: mainBatch,
       expiryDate: mainExpiry,
-      batches: formBatches,
+      batches: cleanedBatches,
       isDivisible: formIsDivisible,
       piecesPerBox: formIsDivisible ? Number(formPiecesPerBox) || undefined : undefined,
       pieceName: formIsDivisible ? formPieceName : undefined,
@@ -403,9 +461,9 @@ export const QuantityAdjustmentsView: React.FC = () => {
           quantity: selectedProduct.stockQuantity || 0
         }];
 
-    const { batchDiffs, editedBatches, summaryText } = calculateBatchDiffs(prevBatchesForDiff, formBatches);
+    const { batchDiffs, editedBatches, summaryText } = calculateBatchDiffs(prevBatchesForDiff, cleanedBatches);
 
-    const delta = totalQuantity - selectedProduct.stockQuantity;
+    const delta = Number((totalQuantity - selectedProduct.stockQuantity).toFixed(4));
     const reasonText = formReason.trim() || 'Inventory Audit / Physical Count';
     const notesText = formNotes.trim();
 
@@ -428,7 +486,7 @@ export const QuantityAdjustmentsView: React.FC = () => {
           reason: reasonText,
           notes: notesText,
           previousBatches: prevBatchesForDiff,
-          batches: formBatches,
+          batches: cleanedBatches,
           batchDiffs,
           editedBatches,
         }
@@ -450,75 +508,55 @@ export const QuantityAdjustmentsView: React.FC = () => {
     setFormNotes('');
   };
 
-  const handleSaveEditedLog = (updatedLog: AppLogEntry, shouldSyncProductStock: boolean) => {
-    // 1. Update local cache
-    setLocalLogsOverride(prev => {
-      const filtered = prev.filter(l => l.id !== updatedLog.id);
-      const next = [updatedLog, ...filtered];
+  const handleDeleteActivityLog = (log: AppLogEntry) => {
+    const logId = log.id;
+
+    // 1. Add to deleted log ids set and persist
+    setDeletedLogIds(prev => {
+      const next = Array.from(new Set([...prev, logId]));
       try {
-        localStorage.setItem('lebanon_pharma_qty_adjustments_local_cache', JSON.stringify(next));
+        localStorage.setItem('lebanon_pharma_deleted_qty_adj_log_ids', JSON.stringify(next));
       } catch (e) {
-        console.warn('Failed to cache edited log locally', e);
+        console.warn('Failed to cache deleted log ID', e);
       }
       return next;
     });
 
-    // 2. Persist to system logs via OfflineStorage
-    try {
-      const systemLogs = OfflineStorage.getLogs();
-      const updatedSystemLogs = systemLogs.map(l => l.id === updatedLog.id ? updatedLog : l);
-      if (!systemLogs.some(l => l.id === updatedLog.id)) {
-        updatedSystemLogs.unshift(updatedLog);
+    // 2. Remove from local overrides
+    setLocalLogsOverride(prev => {
+      const next = prev.filter(l => l.id !== logId);
+      try {
+        localStorage.setItem('lebanon_pharma_qty_adjustments_local_cache', JSON.stringify(next));
+      } catch (e) {
+        console.warn('Failed to update local adjustments cache', e);
       }
-      OfflineStorage.saveLogs(updatedSystemLogs);
-    } catch (e) {
-      console.warn('Failed to save to OfflineStorage', e);
+      return next;
+    });
+
+    // 3. Remove from PharmacyContext logs & OfflineStorage
+    if (deleteLog) {
+      deleteLog(logId);
+    } else {
+      const systemLogs = OfflineStorage.getLogs().filter(l => l.id !== logId);
+      OfflineStorage.saveLogs(systemLogs);
     }
 
-    // 3. If live product stock sync is requested
-    if (shouldSyncProductStock) {
-      const prodId = updatedLog.details?.productId || updatedLog.entityId;
-      const targetProd = products.find(p => p.id === prodId || p.code === updatedLog.details?.productCode);
-      if (targetProd) {
-        const newStockVal = Number(updatedLog.details?.newStock) || 0;
-        const newBatchesVal = Array.isArray(updatedLog.details?.batches) && updatedLog.details.batches.length > 0
-          ? updatedLog.details.batches
-          : targetProd.batches;
-        updateProduct(targetProd.id, {
-          ...targetProd,
-          stockQuantity: newStockVal,
-          batches: newBatchesVal,
-        });
-      }
+    // 4. Close any open modals
+    setLogToDelete(null);
+    if (viewingLog?.id === logId) {
+      setViewingLog(null);
     }
 
-    // 4. Record audit log for the edit
-    if (addLog) {
-      addLog({
-        component: 'Inventory / Stock',
-        action: 'QTY_ADJUSTMENT_LOG_EDITED',
-        level: 'info',
-        title: `Edited Adjustment Log: ${updatedLog.details?.productName || updatedLog.title}`,
-        description: `Updated reason/count for activity record #${updatedLog.id}`,
-        entityId: updatedLog.id,
-        entityType: 'product',
-        details: {
-          originalLogId: updatedLog.id,
-          reason: updatedLog.details?.reason,
-          newStock: updatedLog.details?.newStock,
-          syncedProductStock: shouldSyncProductStock,
-        },
-      });
-    }
-
+    // 5. Notify user
     if (addNotification) {
-      addNotification('Activity Log Updated', 'The quantity adjustment record was successfully updated.', 'inventory', 'success');
+      const prodName = log.details?.productName || log.title.replace(/^Quantity Adjustment:\s*/i, '');
+      addNotification('Activity Log Deleted', `Adjustment activity record for ${prodName} was removed.`, 'inventory', 'info');
     }
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#f8fafc] dark:bg-slate-950 p-6 overflow-y-auto">
-      <div className="max-w-4xl mx-auto w-full space-y-6">
+    <div className="flex flex-col h-full w-full bg-[#f8fafc] dark:bg-slate-950 p-6 overflow-y-auto">
+      <div className="w-full space-y-6">
         
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -617,11 +655,39 @@ export const QuantityAdjustmentsView: React.FC = () => {
                   <span>Category: <span className="capitalize text-slate-700 dark:text-slate-300">{selectedProduct.category}</span></span>
                 </div>
               </div>
-              <div className="text-right">
-                <div className="text-sm text-gray-500 dark:text-gray-400">Total Calculated Stock</div>
-                <div className="text-2xl font-bold text-teal-600 dark:text-teal-400">
-                  {formatStockDisplay(formBatches.reduce((sum, b) => sum + (b.quantity || 0), 0), selectedProduct.isDivisible, Number(formPiecesPerBox), formPieceName)}
+              <div className="text-right flex flex-col items-end gap-1">
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  Current Stock: <span className="font-semibold text-slate-700 dark:text-slate-200">{formatStockDisplay(selectedProduct.stockQuantity, selectedProduct.isDivisible, Number(formPiecesPerBox), formPieceName)}</span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">New Total:</span>
+                  <div className="text-2xl font-bold text-teal-600 dark:text-teal-400">
+                    {formatStockDisplay(formBatches.reduce((sum, b) => sum + (b.quantity || 0), 0), selectedProduct.isDivisible, Number(formPiecesPerBox), formPieceName)}
+                  </div>
+                </div>
+                {(() => {
+                  const currentTotal = formBatches.reduce((sum, b) => sum + (b.quantity || 0), 0);
+                  const delta = Number((currentTotal - selectedProduct.stockQuantity).toFixed(4));
+                  if (delta > 0) {
+                    return (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
+                        <TrendingUp className="h-3 w-3" /> +{formatStockDisplay(delta, selectedProduct.isDivisible, Number(formPiecesPerBox), formPieceName)}
+                      </span>
+                    );
+                  }
+                  if (delta < 0) {
+                    return (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-100 dark:bg-rose-950/60 px-2 py-0.5 rounded-full border border-rose-300 dark:border-rose-800">
+                        <TrendingDown className="h-3 w-3" /> {formatStockDisplay(delta, selectedProduct.isDivisible, Number(formPiecesPerBox), formPieceName)}
+                      </span>
+                    );
+                  }
+                  return (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
+                      No Change
+                    </span>
+                  );
+                })()}
               </div>
             </div>
 
@@ -798,50 +864,132 @@ export const QuantityAdjustmentsView: React.FC = () => {
                         />
                       </div>
                       {formIsDivisible ? (
-                        <div className="flex gap-2">
-                          <div className="w-24">
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div>
                             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Boxes</label>
-                            <input
-                              type="number"
-                              value={batchQuantityDrafts[idx]?.boxes ?? '0'}
-                              onChange={(e) => {
-                                handleUpdateBatchPart(idx, 'boxes', e.target.value);
-                              }}
-                              onBlur={() => handleNormalizeBatchPart(idx)}
-                              min="0"
-                              placeholder="0"
-                              className="w-full text-center font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 focus:outline-hidden focus:border-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            />
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleAdjustBatchPart(idx, 'boxes', -1)}
+                                disabled={(parseInt(batchQuantityDrafts[idx]?.boxes || '0', 10) || 0) <= 0}
+                                className="h-[38px] w-[30px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                                title="Deduct 1 Box"
+                              >
+                                <Minus className="h-3.5 w-3.5" />
+                              </button>
+                              <input
+                                type="number"
+                                value={batchQuantityDrafts[idx]?.boxes ?? '0'}
+                                onChange={(e) => {
+                                  handleUpdateBatchPart(idx, 'boxes', e.target.value);
+                                }}
+                                onBlur={() => handleNormalizeBatchPart(idx)}
+                                min="0"
+                                placeholder="0"
+                                className="w-16 h-[38px] text-center font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 text-sm focus:outline-hidden focus:border-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleAdjustBatchPart(idx, 'boxes', 1)}
+                                className="h-[38px] w-[30px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                                title="Add 1 Box"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
-                          <div className="w-24">
+                          <div>
                             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1" title={formPieceName || 'Pieces'}>
                               {formPieceName || 'Pieces'}
                             </label>
-                            <input
-                              type="number"
-                              value={batchQuantityDrafts[idx]?.pieces ?? '0'}
-                              onChange={(e) => {
-                                handleUpdateBatchPart(idx, 'pieces', e.target.value);
-                              }}
-                              onBlur={() => handleNormalizeBatchPart(idx)}
-                              min="0"
-                              placeholder="0"
-                              className="w-full text-center font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 focus:outline-hidden focus:border-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            />
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleAdjustBatchPart(idx, 'pieces', -1)}
+                                disabled={(parseInt(batchQuantityDrafts[idx]?.pieces || '0', 10) || 0) <= 0}
+                                className="h-[38px] w-[30px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                                title="Deduct 1 Piece"
+                              >
+                                <Minus className="h-3.5 w-3.5" />
+                              </button>
+                              <input
+                                type="number"
+                                value={batchQuantityDrafts[idx]?.pieces ?? '0'}
+                                onChange={(e) => {
+                                  handleUpdateBatchPart(idx, 'pieces', e.target.value);
+                                }}
+                                onBlur={() => handleNormalizeBatchPart(idx)}
+                                min="0"
+                                placeholder="0"
+                                className="w-16 h-[38px] text-center font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 text-sm focus:outline-hidden focus:border-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleAdjustBatchPart(idx, 'pieces', 1)}
+                                className="h-[38px] w-[30px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                                title="Add 1 Piece"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ) : (
-                        <div className="w-32">
-                          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Quantity</label>
-                          <div className="flex items-center">
+                        <div className="flex flex-col gap-1">
+                          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400">Quantity</label>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleAdjustBatchQuantity(idx, -1)}
+                              disabled={(batch.quantity || 0) <= 0}
+                              className="h-[38px] w-[32px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                              title="Deduct 1"
+                            >
+                              <Minus className="h-3.5 w-3.5" />
+                            </button>
                             <input
                               type="number"
                               value={batch.quantity === 0 ? '' : batch.quantity}
                               onChange={(e) => handleUpdateBatchQuantity(idx, e.target.value)}
                               min="0"
                               placeholder="0"
-                              className="w-full text-center font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 focus:outline-hidden focus:border-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              className="w-20 h-[38px] text-center font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 text-sm focus:outline-hidden focus:border-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
+                            <button
+                              type="button"
+                              onClick={() => handleAdjustBatchQuantity(idx, 1)}
+                              className="h-[38px] w-[32px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                              title="Add 1"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <button
+                              type="button"
+                              onClick={() => handleAdjustBatchQuantity(idx, -5)}
+                              disabled={(batch.quantity || 0) < 5}
+                              className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-200/70 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                              title="Deduct 5"
+                            >
+                              -5
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleAdjustBatchQuantity(idx, 5)}
+                              className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-200/70 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 cursor-pointer"
+                              title="Add 5"
+                            >
+                              +5
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleAdjustBatchQuantity(idx, 10)}
+                              className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-200/70 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 cursor-pointer"
+                              title="Add 10"
+                            >
+                              +10
+                            </button>
                           </div>
                         </div>
                       )}
@@ -1195,7 +1343,7 @@ export const QuantityAdjustmentsView: React.FC = () => {
                         {/* Batches Affected & Specific Changes */}
                         <td className="py-3 px-4">
                           {editedBatches.length > 0 ? (
-                            <div className="space-y-1 max-w-sm">
+                            <div className="space-y-1">
                               {editedBatches.map((b, bIdx) => (
                                 <div
                                   key={bIdx}
@@ -1222,7 +1370,7 @@ export const QuantityAdjustmentsView: React.FC = () => {
                               )}
                             </div>
                           ) : batches.length > 0 ? (
-                            <div className="space-y-0.5 max-w-xs">
+                            <div className="space-y-0.5">
                               {batches.slice(0, 2).map((b: any, bIdx: number) => (
                                 <div key={bIdx} className="text-[11px] text-slate-600 dark:text-slate-300 font-mono">
                                   <span className="font-semibold text-slate-800 dark:text-slate-200">{b.batchNumber || '—'}</span>
@@ -1240,18 +1388,17 @@ export const QuantityAdjustmentsView: React.FC = () => {
                         </td>
 
                         {/* Reason & Notes */}
-                        <td className="py-3 px-4 max-w-xs">
-                          <div className="font-medium text-slate-800 dark:text-slate-200 truncate" title={reason}>
+                        <td className="py-3 px-4">
+                          <div className="font-medium text-slate-800 dark:text-slate-200" title={reason}>
                             {reason}
                           </div>
                           {details.notes && details.notes !== reason && (
-                            <div className="text-[11px] text-slate-400 truncate mt-0.5" title={details.notes}>
+                            <div className="text-[11px] text-slate-400 mt-0.5" title={details.notes}>
                               {details.notes}
                             </div>
                           )}
                           {details.lastEditedAt && (
                             <div className="text-[10px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1 mt-0.5">
-                              <Pencil className="h-2.5 w-2.5" />
                               Edited
                             </div>
                           )}
@@ -1270,11 +1417,11 @@ export const QuantityAdjustmentsView: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setEditingLog(activity)}
-                              className="p-1.5 rounded-lg text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors cursor-pointer"
-                              title="Edit Activity Log"
+                              onClick={() => setLogToDelete(activity)}
+                              className="p-1.5 rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                              title="Delete Activity Record"
                             >
-                              <Pencil className="h-4 w-4" />
+                              <Trash2 className="h-4 w-4" />
                             </button>
                           </div>
                         </td>
@@ -1291,19 +1438,59 @@ export const QuantityAdjustmentsView: React.FC = () => {
         <ViewAdjustmentLogModal
           log={viewingLog}
           onClose={() => setViewingLog(null)}
-          onEdit={(log) => {
+          onDelete={(log) => {
             setViewingLog(null);
-            setEditingLog(log);
+            setLogToDelete(log);
           }}
         />
 
-        {/* Edit Modal */}
-        <EditAdjustmentLogModal
-          log={editingLog}
-          products={products}
-          onClose={() => setEditingLog(null)}
-          onSave={handleSaveEditedLog}
-        />
+        {/* Delete Confirmation Modal */}
+        {logToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 rounded-xl shrink-0">
+                  <AlertTriangle className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">
+                    Delete Activity Record?
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    ID: <span className="font-mono">{logToDelete.id}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/50 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700/60 space-y-1">
+                <p>
+                  Are you sure you want to permanently delete this quantity adjustment activity record for <strong className="text-slate-800 dark:text-slate-100">{logToDelete.details?.productName || logToDelete.title}</strong>?
+                </p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
+                  This action removes the entry from the activity log history.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setLogToDelete(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteActivityLog(logToDelete)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors cursor-pointer"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete Record
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

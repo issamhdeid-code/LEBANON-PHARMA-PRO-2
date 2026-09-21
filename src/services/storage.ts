@@ -4,6 +4,7 @@ import {
   Customer,
   SaleTransaction,
   PurchaseInvoice,
+  PurchaseReturn,
   SupplierPayment,
   CustomerPayment,
   PharmacySettings,
@@ -55,25 +56,26 @@ export const INITIAL_SETTINGS: PharmacySettings = {
   invoiceTemplate: {
     enabled: false,
     headerEnglish: {
-      pharmacyName: 'Pharmacie Al-Arz',
-      pharmacistName: 'Dr. John Doe',
-      amendedDegreeNo: '1234',
-      orderRegNo: '5678',
-      cnssNo: '9012',
-      address: 'Hamra Main Street, Beirut',
-      tel: '+961 1 740 000',
+      pharmacyName: '',
+      pharmacistName: '',
+      amendedDegreeNo: '',
+      orderRegNo: '',
+      cnssNo: '',
+      address: '',
+      tel: '',
     },
     headerArabic: {
-      pharmacyName: 'صيدلية الأرز',
-      pharmacistName: 'د. فلان',
-      amendedDegreeNo: '١٢٣٤',
-      orderRegNo: '٥٦٧٨',
-      address: 'الحمراء، بيروت',
-      tel: '٠١ ٧٤٠ ٠٠٠',
+      pharmacyName: '',
+      pharmacistName: '',
+      amendedDegreeNo: '',
+      orderRegNo: '',
+      cnssNo: '',
+      address: '',
+      tel: '',
     },
     centerInfo: {
-      vatNo: '12345678-000',
-      no: '0001',
+      vatNo: '',
+      no: '',
     },
   },
 };
@@ -1130,6 +1132,7 @@ const STORAGE_KEYS = {
   CURRENT_USER: 'pharmalebanon_current_user_v1',
   LOGS: 'pharmalebanon_app_logs_v1',
   SUPPLIER_PAYMENTS: 'pharmalebanon_supplier_payments_v1',
+  PURCHASE_RETURNS: 'pharmalebanon_purchase_returns_v1',
 };
 
 // Safe setItem that handles browser quota limits without crashing
@@ -1188,7 +1191,14 @@ export class OfflineStorage {
   static getSettings(): PharmacySettings {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-      return data ? { ...INITIAL_SETTINGS, ...JSON.parse(data) } : INITIAL_SETTINGS;
+      if (!data) return INITIAL_SETTINGS;
+      const parsed = JSON.parse(data);
+      const settings = { ...INITIAL_SETTINGS, ...parsed };
+      // If template contains legacy mock info ('Pharmacie Al-Arz'), reset it to blank strings
+      if (settings.invoiceTemplate?.headerEnglish?.pharmacyName === 'Pharmacie Al-Arz') {
+        settings.invoiceTemplate = INITIAL_SETTINGS.invoiceTemplate;
+      }
+      return settings;
     } catch {
       return INITIAL_SETTINGS;
     }
@@ -1391,6 +1401,19 @@ export class OfflineStorage {
     safeSetItem(STORAGE_KEYS.SUPPLIER_PAYMENTS, JSON.stringify(payments));
   }
 
+  static getPurchaseReturns(): PurchaseReturn[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.PURCHASE_RETURNS);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static savePurchaseReturns(returns: PurchaseReturn[]): void {
+    safeSetItem(STORAGE_KEYS.PURCHASE_RETURNS, JSON.stringify(returns));
+  }
+
 
   static getConflicts(): SyncConflictLog[] {
     try {
@@ -1482,6 +1505,7 @@ export class OfflineStorage {
       customers: this.getCustomers(),
       sales: this.getSales(),
       purchases: this.getPurchases(),
+      purchaseReturns: this.getPurchaseReturns(),
       supplierPayments: this.getSupplierPayments(),
       customerPayments: this.getCustomerPayments(),
       conflicts: this.getConflicts(),
@@ -1496,22 +1520,30 @@ export class OfflineStorage {
   static async restoreFullBackup(jsonString: string): Promise<boolean> {
     try {
       const data = JSON.parse(jsonString);
-      const requiredArrays = ['users', 'products', 'suppliers', 'customers', 'sales', 'purchases', 'logs'];
-      const isSupportedVersion = data.schemaVersion === 2 || data.version === '1.0.0';
-      if (!isSupportedVersion || !data.settings || requiredArrays.some((key) => !Array.isArray(data[key]))) {
+      const isSupportedVersion =
+        data.schemaVersion === 2 ||
+        data.schemaVersion === 1 ||
+        data.version === '2.0.0' ||
+        data.version === '1.0.0' ||
+        data.app === 'PharmaLeb Management System' ||
+        (Array.isArray(data.products) && data.settings);
+      if (!isSupportedVersion || !data.settings || !Array.isArray(data.products)) {
         throw new Error('Invalid or incomplete backup format');
       }
       this.saveSettings(data.settings);
-      this.saveUsers(data.users);
+      this.saveUsers(Array.isArray(data.users) ? data.users : this.getUsers());
       this.saveProducts(data.products);
-      this.saveSuppliers(data.suppliers);
-      this.saveCustomers(data.customers);
-      this.saveSales(data.sales);
-      this.savePurchases(data.purchases);
+      this.saveSuppliers(Array.isArray(data.suppliers) ? data.suppliers : []);
+      this.saveCustomers(Array.isArray(data.customers) ? data.customers : []);
+      this.saveSales(Array.isArray(data.sales) ? data.sales : []);
+      this.savePurchases(Array.isArray(data.purchases) ? data.purchases : []);
+      this.savePurchaseReturns(Array.isArray(data.purchaseReturns) ? data.purchaseReturns : []);
+      this.saveSupplierPayments(Array.isArray(data.supplierPayments) ? data.supplierPayments : []);
+      this.saveCustomerPayments(Array.isArray(data.customerPayments) ? data.customerPayments : []);
       this.saveConflicts(Array.isArray(data.conflicts) ? data.conflicts : []);
       this.saveNotifications(Array.isArray(data.notifications) ? data.notifications : []);
       this.saveCurrentUser(data.currentUser || null);
-      this.saveLogs(data.logs);
+      this.saveLogs(Array.isArray(data.logs) ? data.logs : []);
       await idbStorage.saveProducts(data.products);
       return true;
     } catch (e) {

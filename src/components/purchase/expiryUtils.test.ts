@@ -5,9 +5,98 @@ import {
   formatExpiryInput,
   formatExpiryDate,
   getExpiryCursorPosition,
+  isProductExpired,
+  isFullExpiryInput,
+  isExpiryDenied,
 } from './PurchaseView';
 
 describe('PurchaseView expiry utilities', () => {
+  describe('isFullExpiryInput', () => {
+    it('returns false for partial typing', () => {
+      expect(isFullExpiryInput('')).toBe(false);
+      expect(isFullExpiryInput('0')).toBe(false);
+      expect(isFullExpiryInput('05')).toBe(false);
+      expect(isFullExpiryInput('05/')).toBe(false);
+      expect(isFullExpiryInput('05/2')).toBe(false);
+      expect(isFullExpiryInput('05/20')).toBe(false);
+      expect(isFullExpiryInput('05/202')).toBe(false);
+    });
+
+    it('returns true for completed full inputs', () => {
+      expect(isFullExpiryInput('05/2026')).toBe(true);
+      expect(isFullExpiryInput('5/2026')).toBe(true);
+      expect(isFullExpiryInput('2026-05-31')).toBe(true);
+      expect(isFullExpiryInput('052026')).toBe(true);
+    });
+  });
+
+  describe('isExpiryDenied (non-blocking while typing, denies upon full input)', () => {
+    const refDate = new Date(2025, 2, 15, 12, 0, 0); // March 15, 2025
+
+    it('does not deny while typing partial input', () => {
+      expect(isExpiryDenied('05', '', false, refDate)).toBe(false);
+      expect(isExpiryDenied('05/', '', false, refDate)).toBe(false);
+      expect(isExpiryDenied('05/20', '', false, refDate)).toBe(false);
+      expect(isExpiryDenied('05/202', '', false, refDate)).toBe(false);
+    });
+
+    it('denies when full input is expired', () => {
+      expect(isExpiryDenied('05/2020', '', false, refDate)).toBe(true);
+      expect(isExpiryDenied('01/2025', '', false, refDate)).toBe(true);
+    });
+
+    it('accepts when full input is valid future', () => {
+      expect(isExpiryDenied('05/2026', '', false, refDate)).toBe(false);
+      expect(isExpiryDenied('03/2025', '', false, refDate)).toBe(false);
+      expect(isExpiryDenied('12/2028', '', false, refDate)).toBe(false);
+    });
+
+    it('evaluates 2-digit years on finish (blur / enter)', () => {
+      expect(isExpiryDenied('05/24', '2024-05-31', true, refDate)).toBe(true);
+      expect(isExpiryDenied('05/28', '2028-05-31', true, refDate)).toBe(false);
+    });
+  });
+
+  describe('isProductExpired (expired product validation)', () => {
+    // Reference date: March 15, 2025
+    const refDate = new Date(2025, 2, 15, 12, 0, 0);
+
+    it('returns false for empty, undefined, or dash', () => {
+      expect(isProductExpired(undefined, refDate)).toBe(false);
+      expect(isProductExpired('', refDate)).toBe(false);
+      expect(isProductExpired('-', refDate)).toBe(false);
+      expect(isProductExpired('   ', refDate)).toBe(false);
+    });
+
+    it('returns true for past years (MM/YYYY)', () => {
+      expect(isProductExpired('05/2020', refDate)).toBe(true);
+      expect(isProductExpired('12/2024', refDate)).toBe(true);
+      expect(isProductExpired('01/2025', refDate)).toBe(true);
+      expect(isProductExpired('02/2025', refDate)).toBe(true);
+    });
+
+    it('returns false for current month or future dates (MM/YYYY)', () => {
+      // In pharmacy practice, 03/2025 expires at end of March 2025, so on March 15 it is still valid
+      expect(isProductExpired('03/2025', refDate)).toBe(false);
+      expect(isProductExpired('04/2025', refDate)).toBe(false);
+      expect(isProductExpired('12/2026', refDate)).toBe(false);
+      expect(isProductExpired('05/2028', refDate)).toBe(false);
+    });
+
+    it('handles 2-digit years MM/YY correctly', () => {
+      expect(isProductExpired('05/20', refDate)).toBe(true);
+      expect(isProductExpired('01/25', refDate)).toBe(true);
+      expect(isProductExpired('03/25', refDate)).toBe(false);
+      expect(isProductExpired('06/28', refDate)).toBe(false);
+    });
+
+    it('handles ISO dates YYYY-MM-DD correctly', () => {
+      expect(isProductExpired('2024-12-31', refDate)).toBe(true);
+      expect(isProductExpired('2025-03-01', refDate)).toBe(true);
+      expect(isProductExpired('2025-03-20', refDate)).toBe(false);
+      expect(isProductExpired('2028-05-31', refDate)).toBe(false);
+    });
+  });
   describe('formatExpiryInput (automatic slash insertion)', () => {
     it('appends slash when typing 2-digit month 01-12', () => {
       expect(formatExpiryInput('05', '0')).toBe('05/');

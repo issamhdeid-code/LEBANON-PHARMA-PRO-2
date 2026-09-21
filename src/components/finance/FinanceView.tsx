@@ -20,6 +20,7 @@ export const FinanceView: React.FC = () => {
     let totalVATCollectedUSD = 0;
 
     sales.forEach(s => {
+      if (s.isUnreal) return;
       // Basic revenue
       totalRevenueUSD += s.totalUSD;
       // Detailed profit & VAT

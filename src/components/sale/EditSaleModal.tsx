@@ -44,7 +44,7 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
       
       const newQtyEquivalent = item.isPiece && prod?.piecesPerBox ? newQty / prod.piecesPerBox : newQty;
 
-      if (newQtyEquivalent > currentAvailableEquivalent) {
+      if (!sale.isUnreal && newQtyEquivalent > currentAvailableEquivalent) {
         const maxAllowed = item.isPiece && prod?.piecesPerBox ? Math.floor(currentAvailableEquivalent * prod.piecesPerBox) : currentAvailableEquivalent;
         setError(`Only ${maxAllowed} units available in total for "${item.productName}".`);
         return prev;
@@ -75,7 +75,7 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
     const prod = products.find((p) => p.id === selectedAddProductId);
     if (!prod) return;
 
-    if (prod.stockQuantity <= 0) {
+    if (!sale.isUnreal && prod.stockQuantity <= 0) {
       setError(`"${prod.name}" is currently out of stock.`);
       return;
     }
@@ -118,7 +118,7 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
 
     const updatedData: Partial<SaleTransaction> = {
       customerId: selectedCust?.id,
-      customerName: selectedCust?.name,
+      customerName: selectedCust?.name || (sale.isUnreal ? 'Unreal Invoice' : 'Cash Client'),
       paymentMethod,
       items,
       totalUSD: Number(totalUSD.toFixed(2)),
@@ -138,9 +138,24 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
   };
 
   return (
-    <DesktopWindow id="edit-sale-modal" section="sale" title={`Edit Completed Sale Transaction: ${sale.invoiceNumber}`} isOpen={true} onClose={onClose} width="700px" height="80vh">
+    <DesktopWindow
+      id="edit-sale-modal"
+      section="sale"
+      title={sale.isUnreal ? `Edit Unreal Invoice: ${sale.invoiceNumber}` : `Edit Completed Sale Transaction: ${sale.invoiceNumber}`}
+      isOpen={true}
+      onClose={onClose}
+      width="700px"
+      height="80vh"
+    >
       <div className="w-full flex-1 flex flex-col min-h-0">
         <form onSubmit={handleSave} className="p-4 space-y-3.5 text-xs flex-1 flex flex-col justify-between overflow-y-auto min-h-0">
+          {sale.isUnreal && (
+            <div className="flex items-center justify-between rounded bg-amber-50 border border-amber-300 dark:border-amber-700/60 dark:bg-amber-950/40 p-2 text-amber-900 dark:text-amber-200">
+              <span className="font-bold">Unreal / Fictitious Invoice</span>
+              <span className="text-[10px]">Quantities & out-of-stock items can be edited freely with zero real stock deduction.</span>
+            </div>
+          )}
+
           {error && (
             <div className="flex items-start rounded border border-rose-200 bg-rose-50 p-2 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
               <AlertTriangle className="mr-1.5 h-3.5 w-3.5 shrink-0 text-rose-600 mt-0.5" />
@@ -159,7 +174,7 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
                 onChange={(e) => setCustomerId(e.target.value)}
                 className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-slate-800 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
-                <option value="">Cash Client</option>
+                <option value="">{sale.isUnreal ? 'Unreal Invoice' : 'Cash Client'}</option>
                 {customers.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}

@@ -1,4 +1,5 @@
 import { SupplierPaymentModal } from './SupplierPaymentModal';
+import { PurchaseReturnTab } from './PurchaseReturnTab';
 import { motion } from "motion/react";
 import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect, useImperativeHandle } from 'react';
 import {
@@ -391,6 +392,93 @@ export const parseExpiryDate = (input: string): { mm: string; yyyy: string; full
   return null;
 };
 
+/**
+ * Checks whether an expiry string (e.g. MM/YYYY, MM/YY, YYYY-MM-DD, or raw date string)
+ * is expired relative to the given reference date (defaults to current local date).
+ * In pharmacy practice, a medicine with MM/YYYY expires at the end of that month.
+ */
+export const isProductExpired = (
+  expiryInputOrDate?: string,
+  referenceDate: Date = new Date()
+): boolean => {
+  if (!expiryInputOrDate || !expiryInputOrDate.trim() || expiryInputOrDate === '-') {
+    return false;
+  }
+  const str = expiryInputOrDate.trim();
+
+  // If exact YYYY-MM-DD format, compare full date timestamp against reference date
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(str)) {
+    const [yStr, mStr, dStr] = str.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const d = parseInt(dStr, 10);
+    const endOfDay = new Date(y, m - 1, d, 23, 59, 59, 999);
+    return endOfDay.getTime() < referenceDate.getTime();
+  }
+
+  const parsed = parseExpiryDate(str);
+  if (parsed) {
+    const y = parseInt(parsed.yyyy, 10);
+    const m = parseInt(parsed.mm, 10);
+    const refYear = referenceDate.getFullYear();
+    const refMonth = referenceDate.getMonth() + 1; // 1-indexed (1 to 12)
+    if (y < refYear || (y === refYear && m < refMonth)) {
+      return true;
+    }
+    return false;
+  }
+
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    const endOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    return endOfDay.getTime() < referenceDate.getTime();
+  }
+
+  return false;
+};
+
+/**
+ * Checks whether an expiry string represents a completed full input.
+ * Incomplete inputs (e.g. "05", "05/", "05/2", "05/20", "05/202") are still being typed.
+ */
+export const isFullExpiryInput = (val?: string): boolean => {
+  if (!val) return false;
+  const s = val.trim();
+  // MM/YYYY (e.g. "05/2025" or "5/2025")
+  if (/^\d{1,2}\/\d{4}$/.test(s)) return true;
+  // ISO date YYYY-MM-DD
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(s)) return true;
+  // 6-digit raw (MMYYYY e.g. "052025")
+  if (/^\d{6}$/.test(s)) return true;
+  return false;
+};
+
+/**
+ * Evaluates whether an expiry date is denied/expired.
+ * While the user is actively typing, only evaluates once the full input format is entered.
+ * When finished (onBlur, Enter, Tab, or saved row), evaluates the parsed date.
+ */
+export const isExpiryDenied = (
+  displayVal?: string,
+  isoVal?: string,
+  isFinishedEntering: boolean = false,
+  referenceDate: Date = new Date()
+): boolean => {
+  const display = (displayVal || '').trim();
+  const iso = (isoVal || '').trim();
+  if (!display && !iso) return false;
+
+  if (isFullExpiryInput(display)) {
+    return isProductExpired(display, referenceDate);
+  }
+
+  if (isFinishedEntering) {
+    return isProductExpired(display || iso, referenceDate);
+  }
+
+  return false;
+};
+
 export const formatExpiryInput = (
   rawInput: string,
   prevValue: string = '',
@@ -579,6 +667,8 @@ export interface ExpiryTableInputProps {
   className?: string;
   placeholder?: string;
   disabled?: boolean;
+  isExpired?: boolean;
+  title?: string;
 }
 
 export const ExpiryTableInput = React.forwardRef<HTMLInputElement, ExpiryTableInputProps>(({
@@ -590,6 +680,8 @@ export const ExpiryTableInput = React.forwardRef<HTMLInputElement, ExpiryTableIn
   className,
   placeholder = 'MM/YYYY',
   disabled = false,
+  isExpired = false,
+  title,
 }, forwardedRef) => {
   const innerRef = useRef<HTMLInputElement | null>(null);
   const cursorRef = useRef<number | null>(null);
@@ -651,6 +743,8 @@ export const ExpiryTableInput = React.forwardRef<HTMLInputElement, ExpiryTableIn
     isMouseFocusRef.current = false;
   };
 
+  const computedTitle = title || (isExpired ? 'Expired product! Please enter a valid future expiry date (MM/YYYY).' : undefined);
+
   return (
     <input
       ref={innerRef}
@@ -664,6 +758,8 @@ export const ExpiryTableInput = React.forwardRef<HTMLInputElement, ExpiryTableIn
       onKeyDown={onKeyDown}
       placeholder={placeholder}
       disabled={disabled}
+      title={computedTitle}
+      aria-invalid={isExpired}
       className={className}
     />
   );
@@ -738,7 +834,7 @@ export const PurchaseView: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'invoices' | 'payments'>('invoices');
+  const [activeTab, setActiveTab] = useState<'invoices' | 'payments' | 'returns'>('invoices');
   const [historySearchQuery, setHistorySearchQuery] = useState('');
   const [selectedPaymentSupplierId, setSelectedPaymentSupplierId] = useState<string>('ALL');
   const [initialSupplierIdForModal, setInitialSupplierIdForModal] = useState<string | undefined>(undefined);
@@ -1632,6 +1728,13 @@ export const PurchaseView: React.FC = () => {
       searchInputRef.current?.focus();
       return;
     }
+
+    if (isProductExpired(displayExpiry || itemExpiry)) {
+      expiryInputRef.current?.focus();
+      expiryInputRef.current?.select();
+      return;
+    }
+
     const parsedQty = parseInt(itemQty, 10);
     const qty = isNaN(parsedQty) ? 0 : parsedQty;
     const parsedFree = parseInt(itemFree, 10);
@@ -1768,6 +1871,10 @@ export const PurchaseView: React.FC = () => {
     const match = products.find(p => p.id === item.productId);
     if (!match) return;
 
+    if (isProductExpired(editRowData.displayExpiry || editRowData.expiry)) {
+      return;
+    }
+
     const parsedQty = parseInt(editRowData.qty, 10);
     const qty = isNaN(parsedQty) ? 0 : parsedQty;
     const parsedFree = parseInt(editRowData.free, 10);
@@ -1888,6 +1995,18 @@ export const PurchaseView: React.FC = () => {
   const handleSavePurchase = (e: React.FormEvent) => {
     e.preventDefault();
     if (items.length === 0) return;
+
+    const expiredItem = items.find((it) => isProductExpired(it.expiryDate));
+    if (expiredItem) {
+      showFeedback('error', `Cannot save invoice: Item "${expiredItem.productName}" is expired (${formatExpiryDate(expiredItem.expiryDate)}). Please correct or remove expired items.`);
+      return;
+    }
+
+    if (isPaid && !paymentReceiptNumber.trim()) {
+      showFeedback('error', 'Receipt Number is required when payment status is Settled (Paid).');
+      receiptNumberRef.current?.focus();
+      return;
+    }
 
     const supplier = suppliers.find((s) => s.id === selectedSupplierId);
     let createdPurchase: PurchaseInvoice | undefined;
@@ -2186,21 +2305,35 @@ export const PurchaseView: React.FC = () => {
             >
               Payments
             </button>
+            <button
+              onClick={() => setActiveTab('returns')}
+              className={`px-4 py-2 text-sm font-bold border-b-2 whitespace-nowrap transition-colors ${
+                activeTab === 'returns'
+                  ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              Return On Purchase
+            </button>
           </div>
-          <div className="relative mb-1 shrink-0">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-            <input
-              type="text"
-              value={historySearchQuery}
-              onChange={(e) => setHistorySearchQuery(e.target.value)}
-              placeholder="Search number or supplier..."
-              className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 w-48 sm:w-64"
-            />
-          </div>
+          {activeTab !== 'returns' && (
+            <div className="relative mb-1 shrink-0">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+              <input
+                type="text"
+                value={historySearchQuery}
+                onChange={(e) => setHistorySearchQuery(e.target.value)}
+                placeholder="Search number or supplier..."
+                className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 w-48 sm:w-64"
+              />
+            </div>
+          )}
         </div>
       </div>
 
-      {activeTab === 'payments' ? (
+      {activeTab === 'returns' ? (
+        <PurchaseReturnTab />
+      ) : activeTab === 'payments' ? (
         <div className="flex-1 flex flex-col gap-3 overflow-hidden min-h-0">
           {/* Supplier Filter */}
           <div className="flex items-center gap-2 rounded border border-gray-200 bg-white p-2 shadow-2xs dark:border-slate-800 dark:bg-slate-900 shrink-0">
@@ -2739,12 +2872,13 @@ export const PurchaseView: React.FC = () => {
               {isPaid && (
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Receipt Number
+                    Receipt Number <span className="text-rose-500 font-bold">*</span>
                   </label>
                   <input
                     ref={receiptNumberRef}
                     id="input-payment-receipt-number"
                     type="text"
+                    required={isPaid}
                     value={paymentReceiptNumber}
                     onChange={(e) => setPaymentReceiptNumber(e.target.value)}
                     onKeyDown={(e) => {
@@ -2754,8 +2888,12 @@ export const PurchaseView: React.FC = () => {
                       }
                     }}
                     disabled={isViewMode}
-                    placeholder="e.g. REC-10293"
-                    className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 disabled:opacity-75 disabled:bg-slate-50 dark:disabled:bg-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                    placeholder="e.g. REC-10293 (Required)"
+                    className={`w-full rounded border bg-white px-2 py-1 text-slate-800 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-hidden dark:bg-slate-800 dark:text-slate-100 disabled:opacity-75 disabled:bg-slate-50 dark:disabled:bg-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500 ${
+                      !paymentReceiptNumber.trim()
+                        ? 'border-amber-400 dark:border-amber-600 bg-amber-50/30 dark:bg-amber-950/20'
+                        : 'border-slate-200 dark:border-slate-700'
+                    }`}
                   />
                 </div>
               )}
@@ -3013,41 +3151,63 @@ export const PurchaseView: React.FC = () => {
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                             {isEditing ? (
-                              <ExpiryTableInput
-                                value={editRowData.displayExpiry}
-                                onChange={(formatted, iso) => {
-                                  setEditRowData({
-                                    ...editRowData,
-                                    displayExpiry: formatted,
-                                    expiry: iso
-                                  });
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    if (editRowData.displayExpiry.trim()) {
-                                      const parsed = parseExpiryDate(editRowData.displayExpiry);
-                                      if (parsed) {
+                              <div>
+                                {(() => {
+                                  const isEditExpired = isExpiryDenied(editRowData.displayExpiry, editRowData.expiry, false);
+                                  return (
+                                    <ExpiryTableInput
+                                      value={editRowData.displayExpiry}
+                                      isExpired={isEditExpired}
+                                      onChange={(formatted, iso) => {
                                         setEditRowData({
                                           ...editRowData,
-                                          displayExpiry: `${parsed.mm}/${parsed.yyyy}`,
-                                          expiry: parsed.fullDate
+                                          displayExpiry: formatted,
+                                          expiry: iso
                                         });
-                                      }
-                                    }
-                                    const tr = (e.target as HTMLElement).closest('tr');
-                                    const inputs = tr ? Array.from(tr.querySelectorAll('input')) : [];
-                                    const currentIdx = inputs.indexOf(e.target as HTMLInputElement);
-                                    if (currentIdx >= 0 && inputs[currentIdx + 1]) {
-                                      inputs[currentIdx + 1].focus();
-                                      inputs[currentIdx + 1].select();
-                                    }
-                                  }
-                                }}
-                                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100 text-center font-mono placeholder:text-slate-400 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none transition-colors"
-                              />
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === 'Tab') {
+                                          if (editRowData.displayExpiry.trim()) {
+                                            const parsed = parseExpiryDate(editRowData.displayExpiry);
+                                            if (parsed) {
+                                              setEditRowData({
+                                                ...editRowData,
+                                                displayExpiry: `${parsed.mm}/${parsed.yyyy}`,
+                                                expiry: parsed.fullDate
+                                              });
+                                            }
+                                          }
+                                          if (isExpiryDenied(editRowData.displayExpiry, editRowData.expiry, true)) {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            return;
+                                          }
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            const tr = (e.target as HTMLElement).closest('tr');
+                                            const inputs = tr ? Array.from(tr.querySelectorAll('input')) : [];
+                                            const currentIdx = inputs.indexOf(e.target as HTMLInputElement);
+                                            if (currentIdx >= 0 && inputs[currentIdx + 1]) {
+                                              inputs[currentIdx + 1].focus();
+                                              inputs[currentIdx + 1].select();
+                                            }
+                                          }
+                                        }
+                                      }}
+                                      className={`w-full rounded px-1.5 py-1 text-[11px] font-semibold text-center font-mono placeholder:text-slate-400 outline-none transition-all ${
+                                        isEditExpired
+                                          ? 'bg-rose-50 dark:bg-rose-950/50 border-2 border-rose-500 text-rose-700 dark:text-rose-300 ring-2 ring-rose-500/30 focus:border-rose-600 focus:ring-rose-500 font-bold'
+                                          : 'bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 focus:border-teal-500 focus:ring-1 focus:ring-teal-500'
+                                      }`}
+                                    />
+                                  );
+                                })()}
+                              </div>
                             ) : (
-                              <span className="px-2 text-slate-600 dark:text-slate-300 font-mono">{formatExpiryDate(it.expiryDate)}</span>
+                              <span className={`px-2 font-mono ${isProductExpired(it.expiryDate) ? 'text-rose-600 dark:text-rose-400 font-bold' : 'text-slate-600 dark:text-slate-300'}`}>
+                                {formatExpiryDate(it.expiryDate)}
+                                {isProductExpired(it.expiryDate) && ' (Exp)'}
+                              </span>
                             )}
                           </td>
                           <td className="p-1 border-r border-slate-200 dark:border-slate-700">
@@ -3423,25 +3583,44 @@ export const PurchaseView: React.FC = () => {
                           className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100 uppercase"
                         />
                       </td>
-                      <td className="p-1 border-r border-slate-200 dark:border-slate-700">
-                        <ExpiryTableInput
-                          ref={expiryInputRef}
-                          value={displayExpiry}
-                          onChange={(formatted, iso) => {
-                            setDisplayExpiry(formatted);
-                            setItemExpiry(iso);
-                          }}
-                          onBlur={handleExpiryBlur}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleExpiryBlur();
-                              document.getElementById('input-unit-price')?.focus();
-                            }
-                          }}
-                          placeholder="MM/YYYY"
-                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-[11px] font-semibold text-slate-800 dark:text-slate-100 text-center font-mono placeholder:text-slate-400 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none transition-colors"
-                        />
+                      <td className="p-1 border-r border-slate-200 dark:border-slate-700 relative">
+                        {(() => {
+                          const isExpired = isExpiryDenied(displayExpiry, itemExpiry, false);
+                          return (
+                            <ExpiryTableInput
+                              ref={expiryInputRef}
+                              value={displayExpiry}
+                              isExpired={isExpired}
+                              onChange={(formatted, iso) => {
+                                setDisplayExpiry(formatted);
+                                setItemExpiry(iso);
+                              }}
+                              onBlur={handleExpiryBlur}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === 'Tab') {
+                                  handleExpiryBlur();
+                                  if (isExpiryDenied(displayExpiry, itemExpiry, true)) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    expiryInputRef.current?.focus();
+                                    expiryInputRef.current?.select();
+                                    return;
+                                  }
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    document.getElementById('input-unit-price')?.focus();
+                                  }
+                                }
+                              }}
+                              placeholder="MM/YYYY"
+                              className={`w-full rounded px-1.5 py-1 text-[11px] font-semibold text-center font-mono placeholder:text-slate-400 outline-none transition-all ${
+                                isExpired
+                                  ? 'bg-rose-50 dark:bg-rose-950/50 border-2 border-rose-500 text-rose-700 dark:text-rose-300 ring-2 ring-rose-500/30 focus:border-rose-600 focus:ring-rose-500 font-bold'
+                                  : 'bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 focus:border-teal-500 focus:ring-1 focus:ring-teal-500'
+                              }`}
+                            />
+                          );
+                        })()}
                       </td>
                       <td className="p-1 border-r border-slate-200 dark:border-slate-700">
                         <input
@@ -3627,7 +3806,14 @@ export const PurchaseView: React.FC = () => {
               {!isViewMode && (
               <button
                 type="submit"
-                disabled={items.length === 0}
+                disabled={items.length === 0 || (isPaid && !paymentReceiptNumber.trim())}
+                title={
+                  items.length === 0
+                    ? 'Add at least one item to save purchase'
+                    : isPaid && !paymentReceiptNumber.trim()
+                    ? 'Receipt number is required for Settled (Paid) purchases'
+                    : undefined
+                }
                 className="w-fit flex items-center gap-1.5 rounded-lg bg-teal-600 px-6 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer active:scale-95 shrink-0"
               >
                 <Check className="h-3.5 w-3.5" />

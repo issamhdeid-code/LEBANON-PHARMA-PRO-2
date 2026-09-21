@@ -55,7 +55,7 @@ export const DailySalesItemsReport: React.FC<DailySalesItemsReportProps> = () =>
   const cashiersList = useMemo(() => {
     const set = new Set<string>();
     sales.forEach((s) => {
-      if (s.cashierName) set.add(s.cashierName);
+      if (!s.isUnreal && s.cashierName) set.add(s.cashierName);
     });
     return Array.from(set).sort();
   }, [sales]);
@@ -63,6 +63,7 @@ export const DailySalesItemsReport: React.FC<DailySalesItemsReportProps> = () =>
   // Filtered sales matching date, cashier, and payment method
   const matchingSales = useMemo(() => {
     return sales.filter((s) => {
+      if (s.isUnreal) return false;
       // Date matching (compare YYYY-MM-DD)
       const saleDateStr = new Date(s.timestamp || s.date).toISOString().split('T')[0];
       if (saleDateStr !== selectedDate) return false;

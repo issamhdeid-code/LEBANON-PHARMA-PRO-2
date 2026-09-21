@@ -13,7 +13,6 @@ import {
   ArrowRight,
   Sparkles,
   Tag,
-  FileSpreadsheet,
   Plus,
   Scale,
   Receipt,
@@ -28,14 +27,14 @@ import { SectionRestoreButton } from '../common/SectionRestoreButton';
 interface DashboardViewProps {
   onNavigate: (view: any) => void;
   onOpenPriceUpdater: () => void;
-  onOpenCSVImport: () => void;
+  onOpenCSVImport?: () => void;
   onViewScientific: (prod: Product) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigate,
   onOpenPriceUpdater,
-  onOpenCSVImport,
+  onOpenCSVImport: _onOpenCSVImport,
   onViewScientific,
 }) => {
   const {
@@ -49,11 +48,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     formatUSD,
   } = usePharmacy();
 
+  // Real sales only (unreal / fictitious invoices are excluded from dashboard)
+  const realSales = useMemo(() => sales.filter((s) => !s.isUnreal), [sales]);
+
   // Today's sales
   const todaySales = useMemo(() => {
     const today = new Date().toDateString();
-    return sales.filter((s) => new Date(s.timestamp || s.date).toDateString() === today);
-  }, [sales]);
+    return realSales.filter((s) => new Date(s.timestamp || s.date).toDateString() === today);
+  }, [realSales]);
 
   const todayUSD = todaySales.reduce((acc, s) => acc + s.totalUSD, 0);
   const todayLBP = todaySales.reduce((acc, s) => acc + s.totalLBP, 0);
@@ -61,11 +63,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Written-off differences calculations
   const todayWriteOffs = useMemo(() => {
     const today = new Date().toDateString();
-    return sales.filter((s) => {
+    return realSales.filter((s) => {
       const isToday = new Date(s.timestamp || s.date).toDateString() === today;
       return isToday && ((s.writeOffUSD && s.writeOffUSD > 0.001) || (s.writeOffLBP && s.writeOffLBP > 0));
     });
-  }, [sales]);
+  }, [realSales]);
 
   const todayWriteOffUSD = useMemo(() => {
     return todayWriteOffs.reduce((sum, s) => sum + (s.writeOffUSD || 0), 0);
@@ -76,8 +78,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [todayWriteOffs]);
 
   const allWriteOffSales = useMemo(() => {
-    return sales.filter((s) => (s.writeOffUSD && s.writeOffUSD > 0.001) || (s.writeOffLBP && s.writeOffLBP > 0));
-  }, [sales]);
+    return realSales.filter((s) => (s.writeOffUSD && s.writeOffUSD > 0.001) || (s.writeOffLBP && s.writeOffLBP > 0));
+  }, [realSales]);
 
   const totalWriteOffUSD = useMemo(() => {
     return allWriteOffSales.reduce((sum, s) => sum + (s.writeOffUSD || 0), 0);
@@ -135,14 +137,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           >
             <Tag className="h-3.5 w-3.5 text-teal-600" />
             <span>Update Drug Price</span>
-          </button>
-
-          <button
-            onClick={onOpenCSVImport}
-            className="flex items-center space-x-1 rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 transition-colors cursor-pointer"
-          >
-            <FileSpreadsheet className="h-3.5 w-3.5 text-teal-600" />
-            <span>CSV Import</span>
           </button>
         </div>
       </div>
@@ -327,13 +321,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </button>
             </div>
 
-            {sales.length === 0 ? (
+            {realSales.length === 0 ? (
               <div className="py-8 text-center text-xs text-gray-400">
                 No invoices recorded yet. Start a sale from the ribbon.
               </div>
             ) : (
               <div className="divide-y divide-gray-100 dark:divide-slate-800">
-                {sales.slice(0, 5).map((sale) => (
+                {realSales.slice(0, 5).map((sale) => (
                   <div key={sale.id} className="py-2 flex items-center justify-between text-xs">
                     <div>
                       <div className="font-bold text-slate-900 dark:text-slate-100">

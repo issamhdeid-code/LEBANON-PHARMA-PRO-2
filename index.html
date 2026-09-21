@@ -3,6 +3,39 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function() {
+        var isResizeObserverError = function(msg) {
+          if (!msg) return false;
+          var str = typeof msg === 'string' ? msg : (msg.message || '');
+          return str.indexOf('ResizeObserver') !== -1 || str.indexOf('undelivered notifications') !== -1;
+        };
+        var origOnError = window.onerror;
+        window.onerror = function(message, source, lineno, colno, error) {
+          if (isResizeObserverError(message) || (error && isResizeObserverError(error.message))) {
+            return true;
+          }
+          if (typeof origOnError === 'function') {
+            return origOnError.apply(this, arguments);
+          }
+        };
+        window.addEventListener('error', function(e) {
+          var msg = e.message || (e.error && e.error.message) || '';
+          if (isResizeObserverError(msg)) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function(e) {
+          var reason = e.reason;
+          var msg = typeof reason === 'string' ? reason : (reason && reason.message) || '';
+          if (isResizeObserverError(msg)) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+          }
+        }, true);
+      })();
+    </script>
     <meta name="description" content="A high-performance pharmacy management solution with real-time sync, dual-currency POS, and intelligent inventory tracking." />
     <meta property="og:title" content="Lebanon Pharma Pro" />
     <meta property="og:description" content="A high-performance pharmacy management solution with real-time sync, dual-currency POS, and intelligent inventory tracking." />

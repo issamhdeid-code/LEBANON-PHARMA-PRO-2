@@ -20,7 +20,15 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, settings, onCl
   const isCustomFormat = settings.invoiceTemplate?.enabled;
 
   return (
-    <DesktopWindow id="sale-receipt-modal" section="sale" title="Sale Completed & Receipt" isOpen={true} onClose={onClose} width={isCustomFormat ? "800px" : "450px"} height="85vh">
+    <DesktopWindow
+      id="sale-receipt-modal"
+      section="sale"
+      title={sale.isUnreal ? `Unreal Invoice & Receipt: ${sale.invoiceNumber}` : `Sale Completed & Receipt: ${sale.invoiceNumber}`}
+      isOpen={true}
+      onClose={onClose}
+      width={isCustomFormat ? "800px" : "450px"}
+      height="85vh"
+    >
       <div className="flex flex-col h-full">
         {/* Printable Receipt Area */}
         <div id="printable-receipt" className={`p-6 text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 flex-1 overflow-y-auto ${isCustomFormat ? 'font-sans text-sm' : 'font-mono text-xs'}`}>
@@ -164,10 +172,22 @@ const ThermalReceipt: React.FC<{ sale: SaleTransaction, settings: PharmacySettin
               <span>${sale.changeGivenUSD.toFixed(2)}</span>
             </div>
           )}
-          {sale.writeOffUSD && sale.writeOffUSD > 0.001 ? (
+          {((sale.retainedUSD && sale.retainedUSD >= 0.01) || (sale.retainedLBP && sale.retainedLBP > 0)) && (
+            <div className="flex justify-between font-bold text-teal-700 dark:text-teal-400">
+              <span>Extra Retained:</span>
+              <span>
+                {sale.retainedUSD && sale.retainedUSD >= 0.01 ? `+$${sale.retainedUSD.toFixed(2)} ` : ''}
+                {sale.retainedLBP && sale.retainedLBP > 0 ? `(+${formatLBPValue(sale.retainedLBP)} L.L.)` : ''}
+              </span>
+            </div>
+          )}
+          {(sale.writeOffUSD && sale.writeOffUSD >= 0.01) || (sale.writeOffLBP && sale.writeOffLBP > 0) ? (
             <div className="flex justify-between font-bold text-rose-600 dark:text-rose-400 pt-1 border-t border-slate-200 dark:border-slate-700">
               <span>Difference Written Off:</span>
-              <span>-${sale.writeOffUSD.toFixed(2)} ({formatLBPValue(sale.writeOffLBP || 0)} L.L.)</span>
+              <span>
+                {sale.writeOffUSD && sale.writeOffUSD >= 0.01 ? `-$${sale.writeOffUSD.toFixed(2)} ` : ''}
+                ({formatLBPValue(sale.writeOffLBP || 0)} L.L.)
+              </span>
             </div>
           ) : null}
         </div>
@@ -189,12 +209,25 @@ const A4Invoice: React.FC<{ sale: SaleTransaction, settings: PharmacySettings }>
 
   const totalQty = sale.items.reduce((sum, item) => sum + item.quantity, 0);
   
-  const totalBeforeDiscountLBP = sale.items.reduce((sum, item) => {
-    const unitPrice = item.unitPriceLBP || (item.totalLBP / item.quantity);
-    return sum + (unitPrice * item.quantity);
-  }, 0);
+  // Check if any real discount was actually applied by the user while items were in the cart
+  const hasRealDiscount = sale.items.some((item) => (item.discountPercent || 0) > 0);
 
-  const totalDiscountLBP = totalBeforeDiscountLBP - sale.totalLBP;
+  // If real discount was applied, calculate the discount amount in LBP
+  const totalDiscountUSD = hasRealDiscount
+    ? sale.items.reduce((sum, item) => {
+        const disc = item.discountPercent || 0;
+        if (disc <= 0) return sum;
+        return sum + (item.unitPriceUSD || 0) * item.quantity * (disc / 100);
+      }, 0)
+    : 0;
+
+  const totalDiscountLBP = hasRealDiscount
+    ? Math.round(totalDiscountUSD * (sale.exchangeRate || 89500))
+    : 0;
+
+  const totalBeforeDiscountLBP = hasRealDiscount && totalDiscountLBP > 0
+    ? sale.totalLBP + totalDiscountLBP
+    : sale.totalLBP;
 
   return (
     <div className="bg-white text-black p-4 w-[750px] mx-auto text-[13px]" style={{ fontFamily: 'Arial, sans-serif' }}>
@@ -226,6 +259,7 @@ const A4Invoice: React.FC<{ sale: SaleTransaction, settings: PharmacySettings }>
           <p>{tpl.headerArabic.pharmacistName}</p>
           <p>إجازة رقم : {tpl.headerArabic.amendedDegreeNo}</p>
           <p>رقم التسجيل في النقابة : {tpl.headerArabic.orderRegNo}</p>
+          {tpl.headerArabic.cnssNo ? <p>رقم الضمان : {tpl.headerArabic.cnssNo}</p> : null}
           <p>{tpl.headerArabic.address}</p>
           <p>تلفون : {tpl.headerArabic.tel}</p>
         </div>
@@ -278,8 +312,10 @@ const A4Invoice: React.FC<{ sale: SaleTransaction, settings: PharmacySettings }>
         </thead>
         <tbody>
           {sale.items.map((item, idx) => {
-             const unitPrice = item.unitPriceLBP || (item.totalLBP / item.quantity);
              const discountPerc = item.discountPercent || 0;
+             const unitPrice = discountPerc > 0
+               ? (item.unitPriceLBP || Math.round((item.unitPriceUSD || 0) * (sale.exchangeRate || 89500)))
+               : (item.quantity > 0 ? Math.round(item.totalLBP / item.quantity) : (item.unitPriceLBP || 0));
              return (
               <tr key={idx} className="border-b border-gray-300">
                 <td className="border-r border-black p-1 text-center font-semibold">{item.quantity}</td>
@@ -328,7 +364,9 @@ const A4Invoice: React.FC<{ sale: SaleTransaction, settings: PharmacySettings }>
           </div>
           <div className="flex border-b border-black h-8">
             <div className="w-1/2 border-r border-black flex items-center pl-2 text-xs">Discount</div>
-            <div className="w-1/2 flex items-center justify-end pr-2">{formatLBPValue(totalDiscountLBP)}</div>
+            <div className="w-1/2 flex items-center justify-end pr-2">
+              {hasRealDiscount && totalDiscountLBP > 0 ? formatLBPValue(totalDiscountLBP) : ''}
+            </div>
           </div>
           <div className="flex border-b border-black h-8">
             <div className="w-1/2 border-r border-black flex items-center pl-2 text-xs">VAT 11%</div>

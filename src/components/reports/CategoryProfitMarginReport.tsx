@@ -88,9 +88,10 @@ export const CategoryProfitMarginReport: React.FC = () => {
     }
   };
 
-  // Filtered sales in range
+  // Filtered sales in range (excluding unreal invoices)
   const salesInRange = useMemo(() => {
     return sales.filter((s) => {
+      if (s.isUnreal) return false;
       const saleDate = new Date(s.timestamp || s.date).toISOString().split('T')[0];
       return saleDate >= startDate && saleDate <= endDate;
     });

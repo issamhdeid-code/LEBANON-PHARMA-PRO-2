@@ -130,6 +130,7 @@ export const ControlledDispensationReport: React.FC = () => {
     const records: ControlledDispensationItem[] = [];
 
     sales.forEach((sale) => {
+      if (sale.isUnreal) return;
       const saleDate = new Date(sale.timestamp || sale.date).toISOString().split('T')[0];
       if (saleDate < startDate || saleDate > endDate) return;
 

@@ -14,13 +14,17 @@ import { DailyCashierSummaryReport } from './DailyCashierSummaryReport';
 import { CategoryProfitMarginReport } from './CategoryProfitMarginReport';
 import { ControlledDispensationReport } from './ControlledDispensationReport';
 import { CustomerDebtAgingReport } from './CustomerDebtAgingReport';
+import { OrderPreparationReport } from './OrderPreparationReport';
+import { VatSalesValueReport } from './VatSalesValueReport';
 
 export type CollectReportType =
   | 'daily_sales_items'
   | 'daily_cashier_summary'
   | 'category_profit_margin'
   | 'controlled_dispensation'
-  | 'customer_debt_aging';
+  | 'customer_debt_aging'
+  | 'order_preparation'
+  | 'vat_sales_value';
 
 interface ReportOptionMeta {
   id: CollectReportType;
@@ -37,6 +41,14 @@ const REPORT_OPTIONS: ReportOptionMeta[] = [
     description:
       'Detailed item-by-item dispensing audit for the selected day, capturing unit prices, batch numbers, expiry dates, discounts, gross margin profits, dispensers, and patients in dual currency ($ & L.L.).',
     badge: 'Operational Log',
+    isAvailable: true,
+  },
+  {
+    id: 'order_preparation',
+    title: 'Order Preparation',
+    description:
+      'Prepare replenishment purchase orders for suppliers based on items sold during a defined period. Adjust quantities effortlessly using keyboard arrows & Enter, review current stock, and export or print supplier orders.',
+    badge: 'Supplier Order',
     isAvailable: true,
   },
   {
@@ -71,6 +83,14 @@ const REPORT_OPTIONS: ReportOptionMeta[] = [
     badge: 'Receivables Ledger',
     isAvailable: true,
   },
+  {
+    id: 'vat_sales_value',
+    title: 'Vat Sales Value',
+    description:
+      'Official Value Added Tax (VAT) audit report collecting all items sold subject to VAT (Vitamins, Cosmetics, Para-pharmaceuticals, and any VAT-rated items) with taxable base value, VAT collected, and gross turnover in dual currency ($ & L.L.).',
+    badge: 'VAT Tax Audit',
+    isAvailable: true,
+  },
 ];
 
 export const CollectReportsView: React.FC = () => {
@@ -88,14 +108,15 @@ export const CollectReportsView: React.FC = () => {
               <FileText className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
               <span>Select Report to Collect:</span>
               <span className="ml-1.5 rounded bg-teal-50 px-1.5 py-0.5 text-[9px] font-bold text-teal-700 border border-teal-200 dark:bg-teal-950/50 dark:text-teal-300 dark:border-teal-800">
-                5 Active Reports
+                7 Active Reports
               </span>
             </label>
             <div className="relative max-w-lg">
               <select
+                id="select-report-to-collect"
                 value={selectedReport}
                 onChange={(e) => setSelectedReport(e.target.value as CollectReportType)}
-                className="w-full appearance-none rounded-lg border border-teal-300/80 bg-white py-2 pl-3.5 pr-10 text-xs font-bold text-slate-900 shadow-xs hover:border-teal-500 focus:border-teal-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-teal-700/80 dark:bg-slate-800 dark:text-slate-100 cursor-pointer transition-all"
+                className="w-full appearance-none rounded-lg border-2 border-teal-500/80 bg-white py-2.5 pl-3.5 pr-10 text-xs font-bold text-slate-900 shadow-xs hover:border-teal-600 focus:border-teal-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/25 dark:border-teal-500/70 dark:bg-slate-800 dark:text-slate-100 cursor-pointer transition-all"
               >
                 {REPORT_OPTIONS.map((opt) => (
                   <option
@@ -125,10 +146,12 @@ export const CollectReportsView: React.FC = () => {
 
       {/* Render Selected Report in the Same Window */}
       {selectedReport === 'daily_sales_items' && <DailySalesItemsReport />}
+      {selectedReport === 'order_preparation' && <OrderPreparationReport />}
       {selectedReport === 'daily_cashier_summary' && <DailyCashierSummaryReport />}
       {selectedReport === 'category_profit_margin' && <CategoryProfitMarginReport />}
       {selectedReport === 'controlled_dispensation' && <ControlledDispensationReport />}
       {selectedReport === 'customer_debt_aging' && <CustomerDebtAgingReport />}
+      {selectedReport === 'vat_sales_value' && <VatSalesValueReport />}
     </div>
   );
 };

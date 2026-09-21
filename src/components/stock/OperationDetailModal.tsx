@@ -10,10 +10,11 @@ import {
   ArrowRightLeft,
   DollarSign,
   FileText,
-  AlertCircle
+  AlertCircle,
+  RotateCcw
 } from 'lucide-react';
 import { DesktopWindow } from '../common/DesktopWindow';
-import { Product, PurchaseInvoice, SaleTransaction, AppLogEntry } from '../../types/pharmacy';
+import { Product, PurchaseInvoice, SaleTransaction, AppLogEntry, PurchaseReturn, PurchaseReturnItem } from '../../types/pharmacy';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { formatStockDisplay, parseExpiryDate } from '../../utils/stockUtils';
 import { usePharmacy } from '../../context/PharmacyContext';
@@ -22,8 +23,8 @@ export interface ProductOperationItem {
   id: string; // ID assigned by the system
   referenceId: string;
   invoiceNumber?: string;
-  operationType: 'Purchase' | 'Sale' | 'Qty Adj';
-  type: 'purchase' | 'sale' | 'adjustment';
+  operationType: 'Purchase' | 'Sale' | 'Qty Adj' | 'Purchase Return';
+  type: 'purchase' | 'sale' | 'adjustment' | 'purchase_return';
   quantity: number;
   formattedQuantity: string;
   expiry: string;
@@ -34,6 +35,8 @@ export interface ProductOperationItem {
   purchase?: PurchaseInvoice;
   sale?: SaleTransaction;
   log?: AppLogEntry;
+  purchaseReturn?: PurchaseReturn;
+  purchaseReturnItem?: PurchaseReturnItem;
   initialAdj?: boolean;
 }
 
@@ -55,6 +58,8 @@ export const OperationDetailModal: React.FC<OperationDetailModalProps> = ({
       ? `Purchase Operation: ${operation.invoiceNumber || operation.referenceId}`
       : operation.type === 'sale'
       ? `Sale Operation: ${operation.invoiceNumber || operation.referenceId}`
+      : operation.type === 'purchase_return'
+      ? `Purchase Return Voucher: ${operation.invoiceNumber || operation.referenceId}`
       : `Stock Adjustment Operation: ${operation.referenceId}`;
 
   return (
@@ -71,6 +76,11 @@ export const OperationDetailModal: React.FC<OperationDetailModalProps> = ({
                   <span className="text-emerald-600 dark:text-emerald-400 font-bold">Purchase</span>
                 ) : operation.type === 'sale' ? (
                   <span className="text-blue-600 dark:text-blue-400 font-bold">Sale</span>
+                ) : operation.type === 'purchase_return' ? (
+                  <span className="text-rose-600 dark:text-rose-400 font-bold flex items-center gap-1">
+                    <RotateCcw className="h-3 w-3" />
+                    {operation.purchaseReturn?.returnType === 'replace_expiry' ? 'Expiry Swap' : 'Return (Purch)'}
+                  </span>
                 ) : (
                   <span className="text-amber-600 dark:text-amber-400 font-bold">Qty Adjustment</span>
                 )}
@@ -98,6 +108,12 @@ export const OperationDetailModal: React.FC<OperationDetailModalProps> = ({
                   ? 'text-emerald-600 dark:text-emerald-400'
                   : operation.type === 'sale'
                   ? 'text-blue-600 dark:text-blue-400'
+                  : operation.type === 'purchase_return'
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : operation.formattedQuantity.startsWith('-')
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : operation.formattedQuantity.startsWith('+')
+                  ? 'text-emerald-600 dark:text-emerald-400'
                   : 'text-amber-600 dark:text-amber-400'
               }`}>
                 {operation.formattedQuantity}
@@ -365,6 +381,141 @@ export const OperationDetailModal: React.FC<OperationDetailModalProps> = ({
                     </span>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* 4. PURCHASE RETURN DETAILS */}
+          {operation.type === 'purchase_return' && operation.purchaseReturn && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-1.5 font-bold text-slate-700 dark:text-slate-300">
+                  <RotateCcw className="h-4 w-4 text-rose-600" />
+                  <span>Purchase Return & Supplier Credit</span>
+                </div>
+                <div className="flex items-center gap-2 text-[11px]">
+                  <span className="text-slate-500">Voucher:</span>
+                  <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                    #{operation.purchaseReturn.returnNumber || operation.purchaseReturn.id}
+                  </span>
+                  <span className={`px-1.5 py-0.2 rounded font-semibold ${
+                    operation.purchaseReturn.returnType === 'replace_expiry'
+                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                      : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                  }`}>
+                    {operation.purchaseReturn.returnType === 'replace_expiry' ? 'EXPIRY SWAP' : 'CASH REFUND'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                <div>
+                  <span className="text-slate-400 text-[10px] block">Returned To Supplier</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    {operation.purchaseReturn.supplierName || 'Supplier'}
+                  </span>
+                  <span className="text-slate-400 text-[10px] block mt-1">Reason / Notes</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-300">
+                    {operation.purchaseReturnItem?.reason || operation.purchaseReturn.reason || operation.purchaseReturn.notes || 'Return on purchase'}
+                  </span>
+                </div>
+                <div className="text-right">
+                  {operation.purchaseReturn.returnType === 'replace_expiry' ? (
+                    <div>
+                      <span className="text-slate-400 text-[10px] block">Action Type</span>
+                      <span className="font-bold text-blue-700 dark:text-blue-400 text-xs">
+                        Expiry Lot Exchange
+                      </span>
+                      {operation.purchaseReturnItem?.newExpiryDate && (
+                        <span className="block text-[10px] text-slate-500 mt-1">
+                          New Expiry: {operation.purchaseReturnItem.newExpiryDate}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <span className="text-slate-400 text-[10px] block">Total Refund Value</span>
+                      <span className="font-mono font-bold text-rose-700 dark:text-rose-400 text-sm">
+                        ${(operation.purchaseReturn.totalRefundUSD || 0).toFixed(2)}
+                      </span>
+                      <span className="block text-[10px] text-slate-500">
+                        ({formatLBPValue(operation.purchaseReturn.totalRefundLBP || 0)} LBP)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Items in this return voucher */}
+              <div>
+                <span className="font-bold text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1 block">
+                  Returned Products ({(operation.purchaseReturn.items || []).length})
+                </span>
+                <div className="rounded border border-slate-200 dark:border-slate-800 overflow-hidden max-h-48 overflow-y-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-100 dark:bg-slate-800 text-[10px] font-bold uppercase text-slate-600 dark:text-slate-300">
+                      <tr>
+                        <th className="py-1.5 px-2.5">Medication</th>
+                        <th className="py-1.5 px-2">Old Lot / Expiry</th>
+                        {operation.purchaseReturn.returnType === 'replace_expiry' && (
+                          <th className="py-1.5 px-2">New Lot / Expiry</th>
+                        )}
+                        <th className="py-1.5 px-2 text-center">Qty</th>
+                        {operation.purchaseReturn.returnType !== 'replace_expiry' && (
+                          <th className="py-1.5 px-2.5 text-right">Refund ($)</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {(operation.purchaseReturn.items || []).map((it, itIdx) => {
+                        const isCurrentItem = it.productId === product.id || it.productCode === product.code;
+                        const { displayMMYYYY: oldExp } = parseExpiryDate(it.oldExpiryDate);
+                        const { displayMMYYYY: newExp } = parseExpiryDate(it.newExpiryDate);
+                        return (
+                          <tr
+                            key={itIdx}
+                            className={isCurrentItem ? 'bg-rose-50/70 dark:bg-rose-950/40 font-semibold' : ''}
+                          >
+                            <td className="py-1.5 px-2.5">
+                              <span className="block text-slate-800 dark:text-slate-200">
+                                {it.productName || it.name}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {it.productCode}
+                              </span>
+                            </td>
+                            <td className="py-1.5 px-2 font-mono text-[11px]">
+                              <span>{oldExp}</span>
+                              {it.oldBatchNumber && (
+                                <span className="block text-[10px] text-slate-400">
+                                  #{it.oldBatchNumber}
+                                </span>
+                              )}
+                            </td>
+                            {operation.purchaseReturn?.returnType === 'replace_expiry' && (
+                              <td className="py-1.5 px-2 font-mono text-[11px] text-emerald-600 dark:text-emerald-400">
+                                <span>{newExp || '—'}</span>
+                                {it.newBatchNumber && (
+                                  <span className="block text-[10px] text-slate-400">
+                                    #{it.newBatchNumber}
+                                  </span>
+                                )}
+                              </td>
+                            )}
+                            <td className="py-1.5 px-2 text-center font-bold text-rose-600 dark:text-rose-400">
+                              -{it.quantity}
+                            </td>
+                            {operation.purchaseReturn?.returnType !== 'replace_expiry' && (
+                              <td className="py-1.5 px-2.5 text-right font-mono font-bold text-rose-600 dark:text-rose-400">
+                                ${(it.refundAmountUSD || it.totalUSD || 0).toFixed(2)}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}

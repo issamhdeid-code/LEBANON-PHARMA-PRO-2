@@ -241,4 +241,65 @@ describe('resolveProductBatches', () => {
     expect(resolved).toHaveLength(1);
     expect(resolved[0].quantity).toBe(15);
   });
+
+  it('accurately preserves stock deductions when batch quantities are adjusted downwards', () => {
+    const purchases: PurchaseInvoice[] = [
+      {
+        id: 'pur-1',
+        invoiceNumber: 'INV-100',
+        supplierId: 'sup-1',
+        supplierName: 'Omnipharma',
+        date: '2025-01-10',
+        totalCostUSD: 100,
+        totalCostLBP: 9000000,
+        exchangeRate: 89500,
+        status: 'received',
+        paid: true,
+        timestamp: Date.now(),
+        items: [
+          {
+            productId: 'prod-1',
+            productCode: 'PAN500',
+            productName: 'Panadol Extra',
+            quantity: 20,
+            unitCostUSD: 1.8,
+            unitCostLBP: 162000,
+            sellingPriceLBP: 225000,
+            batchNumber: 'LOT-DEDUCT',
+            expiryDate: '2026-10',
+          },
+        ],
+      },
+    ];
+
+    // Pharmacist manually deducted 8 units from stock (e.g., damaged/expired/audited)
+    const product: Product = {
+      ...baseProduct,
+      stockQuantity: 12,
+      batches: [
+        { batchNumber: 'LOT-DEDUCT', expiryDate: '2026-10', quantity: 12 },
+      ],
+    };
+
+    const resolved = resolveProductBatches(product, purchases);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].batchNumber).toBe('LOT-DEDUCT');
+    expect(resolved[0].quantity).toBe(12);
+    expect(resolved[0].isDepleted).toBe(false);
+  });
+
+  it('accurately preserves multiple batches when a batch is depleted or deleted during adjustment', () => {
+    const product: Product = {
+      ...baseProduct,
+      stockQuantity: 4,
+      batches: [
+        { batchNumber: 'LOT-ACTIVE', expiryDate: '2027-01', quantity: 4 },
+      ],
+    };
+
+    const resolved = resolveProductBatches(product, []);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].batchNumber).toBe('LOT-ACTIVE');
+    expect(resolved[0].quantity).toBe(4);
+  });
 });

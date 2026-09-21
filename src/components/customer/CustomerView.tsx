@@ -77,7 +77,7 @@ export const CustomerView: React.FC = () => {
 
     const salesByCustomer = new Map<string, typeof sales>();
     sales.forEach(s => {
-      if (!s.customerId) return;
+      if (s.isUnreal || !s.customerId) return;
       const list = salesByCustomer.get(s.customerId) || [];
       list.push(s);
       salesByCustomer.set(s.customerId, list);
@@ -215,7 +215,7 @@ export const CustomerView: React.FC = () => {
   const unpaidCustomerSales = useMemo(() => {
     if (!paymentCustomerId) return [];
     return sales.filter(s => {
-      if (s.customerId !== paymentCustomerId || s.paymentMethod !== 'credit_debt') return false;
+      if (s.isUnreal || s.customerId !== paymentCustomerId || s.paymentMethod !== 'credit_debt') return false;
       const rem = saleRemainingMap.get(s.id);
       if (rem) {
         return !rem.isSettled && rem.remainingUSD > 0.005;

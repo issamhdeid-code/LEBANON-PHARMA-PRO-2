@@ -17,9 +17,24 @@ export const ViewSaleModal: React.FC<ViewSaleModalProps> = ({ sale, onClose, onE
   const customer = customers.find((c) => c.id === sale.customerId);
 
   return (
-    <DesktopWindow id="view-sale-modal" section="sale" title={`Sale Transaction Details: ${sale.invoiceNumber}`} isOpen={true} onClose={onClose} width="620px" height="auto">
+    <DesktopWindow
+      id="view-sale-modal"
+      section="sale"
+      title={sale.isUnreal ? `Unreal Invoice Details: ${sale.invoiceNumber}` : `Sale Transaction Details: ${sale.invoiceNumber}`}
+      isOpen={true}
+      onClose={onClose}
+      width="620px"
+      height="auto"
+    >
       <div className="w-full flex-1 flex flex-col min-h-0 overflow-y-auto">
         <div className="p-4 space-y-3.5 text-xs flex-1 flex flex-col justify-between">
+          {sale.isUnreal && (
+            <div className="flex items-center justify-between rounded bg-amber-50 border border-amber-300 dark:border-amber-700/60 dark:bg-amber-950/40 p-2 text-amber-900 dark:text-amber-200">
+              <span className="font-bold">Fictitious / Unreal Invoice</span>
+              <span className="text-[10px]">No real stock deducted • Excluded from official financial reports</span>
+            </div>
+          )}
+
           {/* Metadata Badges */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded border border-gray-200 dark:border-slate-800 text-[11px]">
             <div>
@@ -51,7 +66,7 @@ export const ViewSaleModal: React.FC<ViewSaleModalProps> = ({ sale, onClose, onE
             <div className="flex items-center justify-between">
               <span className="font-bold text-[11px] text-gray-700 dark:text-slate-200 flex items-center">
                 <User className="h-3.5 w-3.5 mr-1 text-gray-400" />
-                Customer: {sale.customerName || 'Cash Client'}
+                Customer: {sale.customerName || (sale.isUnreal ? 'Unreal Invoice' : 'Cash Client')}
               </span>
             </div>
             {customer?.allergies && (
@@ -155,10 +170,23 @@ export const ViewSaleModal: React.FC<ViewSaleModalProps> = ({ sale, onClose, onE
               </div>
             </div>
 
-            {sale.writeOffUSD && sale.writeOffUSD > 0.001 ? (
+            {((sale.retainedUSD && sale.retainedUSD >= 0.01) || (sale.retainedLBP && sale.retainedLBP > 0)) && (
+              <div className="mt-2 flex items-center justify-between rounded bg-teal-50 px-2.5 py-1.5 text-[11px] font-bold text-teal-800 border border-teal-200 dark:bg-teal-950/40 dark:text-teal-300 dark:border-teal-900">
+                <span>Extra Kept in Cash Drawer:</span>
+                <span>
+                  {sale.retainedUSD && sale.retainedUSD >= 0.01 ? `+$${sale.retainedUSD.toFixed(2)} ` : ''}
+                  {sale.retainedLBP && sale.retainedLBP > 0 ? `(+${formatLBPValue(sale.retainedLBP)} LBP)` : ''}
+                </span>
+              </div>
+            )}
+
+            {(sale.writeOffUSD && sale.writeOffUSD >= 0.01) || (sale.writeOffLBP && sale.writeOffLBP > 0) ? (
               <div className="mt-2 flex items-center justify-between rounded bg-rose-50 px-2.5 py-1.5 text-[11px] font-bold text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900">
                 <span>Difference Written Off:</span>
-                <span>-${sale.writeOffUSD.toFixed(2)} (-{formatLBPValue(sale.writeOffLBP || 0)} LBP)</span>
+                <span>
+                  {sale.writeOffUSD && sale.writeOffUSD >= 0.01 ? `-$${sale.writeOffUSD.toFixed(2)} ` : ''}
+                  (-{formatLBPValue(sale.writeOffLBP || 0)} LBP)
+                </span>
               </div>
             ) : null}
           </div>

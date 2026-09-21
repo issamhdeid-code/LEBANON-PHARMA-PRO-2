@@ -53,7 +53,7 @@ export const DailyCashierSummaryReport: React.FC = () => {
   const cashiersList = useMemo(() => {
     const set = new Set<string>();
     sales.forEach((s) => {
-      if (s.cashierName) set.add(s.cashierName);
+      if (!s.isUnreal && s.cashierName) set.add(s.cashierName);
     });
     return Array.from(set).sort();
   }, [sales]);
@@ -61,6 +61,7 @@ export const DailyCashierSummaryReport: React.FC = () => {
   // Filtered sales matching date and cashier
   const matchingSales = useMemo(() => {
     return sales.filter((s) => {
+      if (s.isUnreal) return false;
       const saleDateStr = new Date(s.timestamp || s.date).toISOString().split('T')[0];
       if (saleDateStr !== selectedDate) return false;
       if (selectedCashier !== 'ALL' && s.cashierName !== selectedCashier) return false;
@@ -116,12 +117,18 @@ export const DailyCashierSummaryReport: React.FC = () => {
       stat.totalTurnoverLBP += sale.totalLBP;
 
       // Net Cash collected: paid minus change returned
-      if (sale.paymentMethod === 'cash_usd' || sale.paymentMethod === 'mixed') {
-        const netUSD = Math.max(0, (sale.amountPaidUSD || 0) - (sale.changeGivenUSD || 0));
-        stat.cashUSDIn += netUSD;
+      let changeUSD = sale.changeGivenUSD || 0;
+      let changeLBP = sale.changeGivenLBP || 0;
+      if ((sale.amountPaidLBP || 0) === 0 && (sale.amountPaidUSD || 0) > 0 && changeUSD > 0 && changeLBP > 0) {
+        changeLBP = 0;
+      } else if ((sale.amountPaidUSD || 0) === 0 && (sale.amountPaidLBP || 0) > 0 && changeUSD > 0 && changeLBP > 0) {
+        changeUSD = 0;
       }
-      if (sale.paymentMethod === 'cash_lbp' || sale.paymentMethod === 'mixed') {
-        const netLBP = Math.max(0, (sale.amountPaidLBP || 0) - (sale.changeGivenLBP || 0));
+
+      if (sale.paymentMethod === 'cash_usd' || sale.paymentMethod === 'cash_lbp' || sale.paymentMethod === 'mixed') {
+        const netUSD = (sale.amountPaidUSD || 0) - changeUSD;
+        const netLBP = (sale.amountPaidLBP || 0) - changeLBP;
+        stat.cashUSDIn += netUSD;
         stat.cashLBPIn += netLBP;
       }
       if (sale.paymentMethod === 'card') {
@@ -152,11 +159,17 @@ export const DailyCashierSummaryReport: React.FC = () => {
       totalSalesUSD += s.totalUSD;
       totalSalesLBP += s.totalLBP;
 
-      if (s.paymentMethod === 'cash_usd' || s.paymentMethod === 'mixed') {
-        netCashUSD += Math.max(0, (s.amountPaidUSD || 0) - (s.changeGivenUSD || 0));
+      let changeUSD = s.changeGivenUSD || 0;
+      let changeLBP = s.changeGivenLBP || 0;
+      if ((s.amountPaidLBP || 0) === 0 && (s.amountPaidUSD || 0) > 0 && changeUSD > 0 && changeLBP > 0) {
+        changeLBP = 0;
+      } else if ((s.amountPaidUSD || 0) === 0 && (s.amountPaidLBP || 0) > 0 && changeUSD > 0 && changeLBP > 0) {
+        changeUSD = 0;
       }
-      if (s.paymentMethod === 'cash_lbp' || s.paymentMethod === 'mixed') {
-        netCashLBP += Math.max(0, (s.amountPaidLBP || 0) - (s.changeGivenLBP || 0));
+
+      if (s.paymentMethod === 'cash_usd' || s.paymentMethod === 'cash_lbp' || s.paymentMethod === 'mixed') {
+        netCashUSD += (s.amountPaidUSD || 0) - changeUSD;
+        netCashLBP += (s.amountPaidLBP || 0) - changeLBP;
       }
       if (s.paymentMethod === 'card') {
         cardUSD += s.totalUSD;
@@ -229,8 +242,15 @@ export const DailyCashierSummaryReport: React.FC = () => {
     ];
 
     const rows = matchingSales.map((s) => {
-      const netUSD = Math.max(0, (s.amountPaidUSD || 0) - (s.changeGivenUSD || 0));
-      const netLBP = Math.max(0, (s.amountPaidLBP || 0) - (s.changeGivenLBP || 0));
+      let changeUSD = s.changeGivenUSD || 0;
+      let changeLBP = s.changeGivenLBP || 0;
+      if ((s.amountPaidLBP || 0) === 0 && (s.amountPaidUSD || 0) > 0 && changeUSD > 0 && changeLBP > 0) {
+        changeLBP = 0;
+      } else if ((s.amountPaidUSD || 0) === 0 && (s.amountPaidLBP || 0) > 0 && changeUSD > 0 && changeLBP > 0) {
+        changeUSD = 0;
+      }
+      const netUSD = (s.amountPaidUSD || 0) - changeUSD;
+      const netLBP = (s.amountPaidLBP || 0) - changeLBP;
       return [
         `"${new Date(s.timestamp || s.date).toLocaleTimeString()}"`,
         `"${s.invoiceNumber || s.receiptNumber || 'N/A'}"`,
@@ -452,109 +472,114 @@ export const DailyCashierSummaryReport: React.FC = () => {
         </div>
       </div>
 
-      {/* Drawer Reconciliation & Variance Calculator (Interactive Audit Tool) */}
-      <div className="rounded border border-teal-200 bg-teal-50/40 p-3 shadow-2xs dark:border-teal-900/60 dark:bg-teal-950/20 no-print">
-        <div className="flex items-center justify-between pb-2 border-b border-teal-200/60 dark:border-teal-900/40">
-          <div className="flex items-center space-x-2">
-            <Scale className="h-4 w-4 text-teal-700 dark:text-teal-400" />
-            <h4 className="text-xs font-black uppercase tracking-wider text-teal-900 dark:text-teal-200">
-              Cash Drawer Physical Count & Variance Audit
-            </h4>
-          </div>
-          <span className="text-[10px] text-teal-700 dark:text-teal-400 font-semibold">
-            Count drawer bills at shift end to reconcile against system totals
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2.5">
-          {/* USD Audit */}
-          <div className="rounded border border-gray-200 bg-white p-2.5 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-[10px] font-bold uppercase text-gray-600 dark:text-slate-400">
-                Counted Cash ($ USD)
-              </span>
-              <span className="text-[10px] font-mono text-gray-500">
-                Expected: ${summary.expectedDrawerUSD.toFixed(2)}
-              </span>
-            </div>
+      {/* Drawer Reconciliation & Variance Calculator (Interactive Audit Tool - not needed when choosing All Cashiers / Combined Drawer) */}
+      {selectedCashier !== 'ALL' && (
+        <div
+          id="drawer-reconciliation-audit-section"
+          className="rounded-lg border border-teal-200/90 bg-teal-50/50 p-3.5 shadow-2xs dark:border-teal-900/60 dark:bg-teal-950/20 no-print transition-all"
+        >
+          <div className="flex items-center justify-between pb-2.5 border-b border-teal-200/70 dark:border-teal-900/50">
             <div className="flex items-center space-x-2">
-              <div className="relative flex-1">
-                <span className="absolute left-2.5 top-1.5 text-xs text-gray-400">$</span>
-                <input
-                  type="number"
-                  placeholder="Enter counted USD..."
-                  value={countedCashUSD}
-                  onChange={(e) => setCountedCashUSD(e.target.value)}
-                  className="w-full rounded border border-gray-200 bg-white pl-6 pr-2 py-1 text-xs font-mono font-bold text-slate-900 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                />
-              </div>
-              {diffUSD !== null && (
-                <div
-                  className={`px-2 py-1 rounded text-xs font-bold font-mono whitespace-nowrap ${
-                    Math.abs(diffUSD) < 0.05
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : diffUSD > 0
-                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                      : 'bg-rose-50 text-rose-700 border border-rose-200'
-                  }`}
-                >
-                  {diffUSD === 0 ? '✓ Balanced' : diffUSD > 0 ? `+$${diffUSD.toFixed(2)}` : `-$${Math.abs(diffUSD).toFixed(2)}`}
-                </div>
-              )}
+              <Scale className="h-4 w-4 text-teal-700 dark:text-teal-400" />
+              <h4 className="text-xs font-black uppercase tracking-wider text-teal-950 dark:text-teal-200">
+                Cash Drawer Physical Count &amp; Variance Audit ({selectedCashier})
+              </h4>
             </div>
+            <span className="text-[10px] text-teal-700 dark:text-teal-400 font-semibold">
+              Count drawer bills at shift end to reconcile against system totals
+            </span>
           </div>
 
-          {/* LBP Audit */}
-          <div className="rounded border border-gray-200 bg-white p-2.5 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-[10px] font-bold uppercase text-gray-600 dark:text-slate-400">
-                Counted Cash (L.L.)
-              </span>
-              <span className="text-[10px] font-mono text-gray-500 truncate">
-                Expected: {formatLBPValue(summary.expectedDrawerLBP)}
-              </span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <div className="relative flex-1">
-                <input
-                  type="number"
-                  placeholder="Enter counted L.L...."
-                  value={countedCashLBP}
-                  onChange={(e) => setCountedCashLBP(e.target.value)}
-                  className="w-full rounded border border-gray-200 bg-white px-2.5 py-1 text-xs font-mono font-bold text-slate-900 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2.5">
+            {/* USD Audit */}
+            <div className="rounded-lg border border-gray-200 bg-white p-2.5 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] font-bold uppercase text-gray-600 dark:text-slate-400">
+                  Counted Cash ($ USD)
+                </span>
+                <span className="text-[10px] font-mono text-gray-500">
+                  Expected: ${summary.expectedDrawerUSD.toFixed(2)}
+                </span>
               </div>
-              {diffLBP !== null && (
-                <div
-                  className={`px-2 py-1 rounded text-xs font-bold font-mono whitespace-nowrap ${
-                    Math.abs(diffLBP) < 500
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : diffLBP > 0
-                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                      : 'bg-rose-50 text-rose-700 border border-rose-200'
-                  }`}
-                >
-                  {diffLBP === 0 ? '✓ Balanced' : diffLBP > 0 ? `+${formatLBPValue(diffLBP)}` : `-${formatLBPValue(Math.abs(diffLBP))}`}
+              <div className="flex items-center space-x-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-2.5 top-1.5 text-xs text-gray-400">$</span>
+                  <input
+                    type="number"
+                    placeholder="Enter counted USD..."
+                    value={countedCashUSD}
+                    onChange={(e) => setCountedCashUSD(e.target.value)}
+                    className="w-full rounded border border-gray-200 bg-white pl-6 pr-2 py-1 text-xs font-mono font-bold text-slate-900 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
                 </div>
-              )}
+                {diffUSD !== null && (
+                  <div
+                    className={`px-2 py-1 rounded text-xs font-bold font-mono whitespace-nowrap ${
+                      Math.abs(diffUSD) < 0.05
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : diffUSD > 0
+                        ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                        : 'bg-rose-50 text-rose-700 border border-rose-200'
+                    }`}
+                  >
+                    {diffUSD === 0 ? '✓ Balanced' : diffUSD > 0 ? `+$${diffUSD.toFixed(2)}` : `-$${Math.abs(diffUSD).toFixed(2)}`}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
-          {/* Shift Audit Note */}
-          <div className="rounded border border-gray-200 bg-white p-2.5 dark:border-slate-800 dark:bg-slate-900">
-            <label className="block text-[10px] font-bold uppercase text-gray-600 dark:text-slate-400 mb-1">
-              Shift Reconcile Notes / Reason for Variance
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Starting float $50 verified, small change discrepancy"
-              value={drawerNotes}
-              onChange={(e) => setDrawerNotes(e.target.value)}
-              className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-slate-900 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-            />
+            {/* LBP Audit */}
+            <div className="rounded-lg border border-gray-200 bg-white p-2.5 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] font-bold uppercase text-gray-600 dark:text-slate-400">
+                  Counted Cash (L.L.)
+                </span>
+                <span className="text-[10px] font-mono text-gray-500 truncate">
+                  Expected: {formatLBPValue(summary.expectedDrawerLBP)}
+                </span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="relative flex-1">
+                  <input
+                    type="number"
+                    placeholder="Enter counted L.L...."
+                    value={countedCashLBP}
+                    onChange={(e) => setCountedCashLBP(e.target.value)}
+                    className="w-full rounded border border-gray-200 bg-white px-2.5 py-1 text-xs font-mono font-bold text-slate-900 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+                {diffLBP !== null && (
+                  <div
+                    className={`px-2 py-1 rounded text-xs font-bold font-mono whitespace-nowrap ${
+                      Math.abs(diffLBP) < 500
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : diffLBP > 0
+                        ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                        : 'bg-rose-50 text-rose-700 border border-rose-200'
+                    }`}
+                  >
+                    {diffLBP === 0 ? '✓ Balanced' : diffLBP > 0 ? `+${formatLBPValue(diffLBP)}` : `-${formatLBPValue(Math.abs(diffLBP))}`}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Shift Audit Note */}
+            <div className="rounded-lg border border-gray-200 bg-white p-2.5 dark:border-slate-800 dark:bg-slate-900">
+              <label className="block text-[10px] font-bold uppercase text-gray-600 dark:text-slate-400 mb-1">
+                Shift Reconcile Notes / Reason for Variance
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Starting float $50 verified, small change discrepancy"
+                value={drawerNotes}
+                onChange={(e) => setDrawerNotes(e.target.value)}
+                className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-slate-900 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Main Printable Report Block */}
       <div
@@ -592,8 +617,8 @@ export const DailyCashierSummaryReport: React.FC = () => {
             </div>
           </div>
 
-          {/* Drawer Reconciliation Summary Box in Printed Document */}
-          {(countedUSDNum !== null || countedLBPNum !== null || drawerNotes) && (
+          {/* Drawer Reconciliation Summary Box in Printed Document (Only if specific cashier selected) */}
+          {selectedCashier !== 'ALL' && (countedUSDNum !== null || countedLBPNum !== null || drawerNotes) && (
             <div className="mt-2.5 rounded border border-gray-200 bg-white p-2 text-xs dark:border-slate-700 dark:bg-slate-800">
               <div className="font-bold text-[10px] uppercase text-gray-500 mb-1">
                 Cash Drawer Physical Count & Variance Summary:

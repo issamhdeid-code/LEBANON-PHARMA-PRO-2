@@ -6,6 +6,7 @@ import {
   Customer,
   SaleTransaction,
   PurchaseInvoice,
+  PurchaseReturn,
   SupplierPayment,
   CustomerPayment,
   PharmacySettings,
@@ -245,6 +246,7 @@ interface PharmacyContextType {
 
   // Purchases & Suppliers
   purchases: PurchaseInvoice[];
+  purchaseReturns: PurchaseReturn[];
   supplierPayments: SupplierPayment[];
   recordSupplierPayment: (payment: Omit<SupplierPayment, 'id' | 'timestamp' | 'allocations'>) => { success: boolean; error?: string };
   updateSupplierPayment: (paymentId: string, updatedData: Partial<SupplierPayment>) => { success: boolean; error?: string };
@@ -252,6 +254,8 @@ interface PharmacyContextType {
   recordPurchase: (purchase: Omit<PurchaseInvoice, 'id' | 'timestamp' | 'invoiceNumber'> & { invoiceNumber?: string }) => PurchaseInvoice;
   updatePurchase: (purchaseId: string, updatedData: Partial<PurchaseInvoice>) => { success: boolean; error?: string };
   deletePurchase: (purchaseId: string) => { success: boolean; error?: string };
+  recordPurchaseReturn: (returnData: Omit<PurchaseReturn, 'id' | 'timestamp' | 'returnNumber'> & { returnNumber?: string }) => PurchaseReturn;
+  deletePurchaseReturn: (returnId: string) => { success: boolean; error?: string };
   suppliers: Supplier[];
   addSupplier: (supplier: Omit<Supplier, 'id'>) => void;
   bulkAddSuppliers: (suppliersData: Omit<Supplier, 'id'>[]) => void;
@@ -301,6 +305,7 @@ interface PharmacyContextType {
     user?: AppLogEntry['user'];
     device?: string;
   }) => AppLogEntry;
+  deleteLog: (logId: string) => void;
   clearLogs: () => void;
   exportLogs: (format?: 'json' | 'csv') => void;
 
@@ -408,6 +413,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>(() => OfflineStorage.getCustomerPayments());
   const [sales, setSales] = useState<SaleTransaction[]>(() => OfflineStorage.getSales());
   const [purchases, setPurchases] = useState<PurchaseInvoice[]>(() => OfflineStorage.getPurchases());
+  const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>(() => OfflineStorage.getPurchaseReturns());
   const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>(() => OfflineStorage.getSupplierPayments());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => OfflineStorage.getNotifications());
   const [, setSyncConflicts] = useState<SyncConflictLog[]>(() => OfflineStorage.getConflicts());
@@ -458,6 +464,14 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     return newLog;
   }, [currentUser, settings.deviceName]);
+
+  const deleteLog = useCallback((logId: string) => {
+    setLogs(prev => {
+      const next = prev.filter(l => l.id !== logId);
+      OfflineStorage.saveLogs(next);
+      return next;
+    });
+  }, []);
 
   const clearLogs = useCallback(() => {
     setLogs([]);
@@ -552,6 +566,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const suppliersRef = useRef(suppliers);
   const customersRef = useRef(customers);
   const purchasesRef = useRef(purchases);
+  const purchaseReturnsRef = useRef(purchaseReturns);
   const usersRef = useRef(users);
   const settingsRef = useRef(settings);
   const activeSessionsRef = useRef(activeSessions);
@@ -564,6 +579,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => { suppliersRef.current = suppliers; }, [suppliers]);
   useEffect(() => { customersRef.current = customers; }, [customers]);
   useEffect(() => { purchasesRef.current = purchases; }, [purchases]);
+  useEffect(() => { purchaseReturnsRef.current = purchaseReturns; }, [purchaseReturns]);
   useEffect(() => { usersRef.current = users; }, [users]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { activeSessionsRef.current = activeSessions; }, [activeSessions]);
@@ -643,7 +659,8 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
           // Mirror the stock that the other terminal dispensed for this sale, so both
           // PCs converge on the same quantities without waiting for a snapshot.
-          if (remoteSale?.items?.length) {
+          // Bypassed for unreal/fictitious invoices so real inventory is untouched.
+          if (!remoteSale?.isUnreal && remoteSale?.items?.length) {
             setProducts(prev => {
               const { updated: updatedProds } = applySaleStockDepletion(prev, remoteSale.items);
               OfflineStorage.saveProducts(updatedProds);
@@ -743,6 +760,22 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             OfflineStorage.savePurchases(next);
             return next;
           });
+        } else if (payload.type === 'PURCHASE_RETURN_CREATED') {
+          const remoteReturn = payload.data as PurchaseReturn;
+          setPurchaseReturns(prev => {
+            if (!remoteReturn || prev.some(r => r.id === remoteReturn.id)) return prev;
+            const next = [remoteReturn, ...prev];
+            OfflineStorage.savePurchaseReturns(next);
+            return next;
+          });
+        } else if (payload.type === 'PURCHASE_RETURN_DELETED') {
+          const deletedId = payload.data?.id;
+          setPurchaseReturns(prev => {
+            if (!deletedId || !prev.some(r => r.id === deletedId)) return prev;
+            const next = prev.filter(r => r.id !== deletedId);
+            OfflineStorage.savePurchaseReturns(next);
+            return next;
+          });
         } else if (payload.type === 'USER_UPSERT') {
           const remoteUser = payload.data as User;
           if (!remoteUser) return;
@@ -791,6 +824,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           let mergedSuppliers = suppliersRef.current;
           let mergedCustomers = customersRef.current;
           let mergedPurchases = purchasesRef.current;
+          let mergedPurchaseReturns = purchaseReturnsRef.current;
           let mergedUsers = usersRef.current;
           let mergedNotifications = notificationsRef.current;
           let mergedLogs = logsRef.current;
@@ -827,6 +861,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               setPurchases(mergedPurchases);
               OfflineStorage.savePurchases(mergedPurchases);
             }
+            if (Array.isArray(requesterData.purchaseReturns)) {
+              mergedPurchaseReturns = mergeById(requesterData.purchaseReturns, purchaseReturnsRef.current);
+              setPurchaseReturns(mergedPurchaseReturns);
+              OfflineStorage.savePurchaseReturns(mergedPurchaseReturns);
+            }
             if (Array.isArray(requesterData.users)) {
               mergedUsers = mergeById(requesterData.users, usersRef.current);
               setUsers(mergedUsers);
@@ -850,6 +889,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             suppliers: mergedSuppliers,
             customers: mergedCustomers,
             purchases: mergedPurchases,
+            purchaseReturns: mergedPurchaseReturns,
             users: mergedUsers,
             settings: pickSharedSettings(settingsRef.current),
             activeSessions: activeSessionsRef.current,
@@ -887,6 +927,13 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setPurchases(prev => {
             const next = mergeById(prev, snapshotData.purchases);
             OfflineStorage.savePurchases(next);
+            return next;
+          });
+        }
+        if (Array.isArray(snapshotData?.purchaseReturns)) {
+          setPurchaseReturns(prev => {
+            const next = mergeById(prev, snapshotData.purchaseReturns);
+            OfflineStorage.savePurchaseReturns(next);
             return next;
           });
         }
@@ -931,6 +978,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         suppliers: suppliersRef.current,
         customers: customersRef.current,
         purchases: purchasesRef.current,
+        purchaseReturns: purchaseReturnsRef.current,
         users: usersRef.current,
         notifications: notificationsRef.current,
         logs: logsRef.current,
@@ -2307,14 +2355,19 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Sales
   const recordSale = (saleData: Omit<SaleTransaction, 'id' | 'timestamp' | 'invoiceNumber' | 'synced'>): SaleTransaction => {
-    const saleId = `sale-${Date.now()}`;
-    const invoiceNumber = nextInvoiceNumber(sales, 'INV', sales.length + 1);
+    const isUnreal = !!saleData.isUnreal;
+    const saleId = isUnreal ? `unreal-${Date.now()}` : `sale-${Date.now()}`;
+    const invoiceNumber = isUnreal
+      ? nextInvoiceNumber(sales.filter(s => s.isUnreal), 'UNR', sales.filter(s => s.isUnreal).length + 1)
+      : nextInvoiceNumber(sales.filter(s => !s.isUnreal), 'INV', sales.filter(s => !s.isUnreal).length + 1);
+
     const fullSale: SaleTransaction = {
       ...saleData,
       id: saleId,
       invoiceNumber,
       timestamp: Date.now(),
       synced: true,
+      isUnreal,
     };
 
     // 1. Save Sale
@@ -2323,71 +2376,78 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     OfflineStorage.saveSales(updatedSales);
     try { syncEngine.broadcast('SALE_CREATED', fullSale); } catch (e) {}
 
-    // 2. Deplete product stock and broadcast
-    setProducts(prevProducts => {
-      const { updated: updatedProds, mutated: mutatedProds } = applySaleStockDepletion(prevProducts, fullSale.items);
-      OfflineStorage.saveProducts(updatedProds);
-      if (mutatedProds.length > 0) {
-        try { syncEngine.broadcast('STOCK_MUTATION', mutatedProds); } catch (e) {}
-      }
-      return updatedProds;
-    });
-
-    // 3. Update customer loyalty and debt if customer selected
-    if (fullSale.customerId) {
-      setCustomers(prevCustomers => {
-        const updatedCusts = prevCustomers.map(c => {
-          if (c.id === fullSale.customerId) {
-            const addedPoints = Math.floor(fullSale.totalUSD * 2);
-            let debtLBP = c.balanceLBP;
-            let debtUSD = c.balanceUSD;
-
-            if (fullSale.paymentMethod === 'credit_debt') {
-              debtUSD += fullSale.totalUSD;
-              debtLBP += fullSale.totalLBP;
-            }
-
-            return {
-              ...c,
-              loyaltyPoints: c.loyaltyPoints + addedPoints,
-              balanceUSD: debtUSD,
-              balanceLBP: debtLBP,
-              lastVisit: new Date().toISOString().split('T')[0],
-            };
-          }
-          return c;
-        });
-        OfflineStorage.saveCustomers(updatedCusts);
-        try {
-          const updatedCust = updatedCusts.find(c => c.id === fullSale.customerId);
-          if (updatedCust) syncEngine.broadcast('CUSTOMER_UPSERT', updatedCust);
-        } catch (e) {}
-        return updatedCusts;
+    // 2. Deplete product stock and broadcast (ONLY for real sales)
+    if (!isUnreal) {
+      setProducts(prevProducts => {
+        const { updated: updatedProds, mutated: mutatedProds } = applySaleStockDepletion(prevProducts, fullSale.items);
+        OfflineStorage.saveProducts(updatedProds);
+        if (mutatedProds.length > 0) {
+          try { syncEngine.broadcast('STOCK_MUTATION', mutatedProds); } catch (e) {}
+        }
+        return updatedProds;
       });
+
+      // 3. Update customer loyalty and debt if customer selected
+      if (fullSale.customerId) {
+        setCustomers(prevCustomers => {
+          const updatedCusts = prevCustomers.map(c => {
+            if (c.id === fullSale.customerId) {
+              const addedPoints = Math.floor(fullSale.totalUSD * 2);
+              let debtLBP = c.balanceLBP;
+              let debtUSD = c.balanceUSD;
+
+              if (fullSale.paymentMethod === 'credit_debt') {
+                debtUSD += fullSale.totalUSD;
+                debtLBP += fullSale.totalLBP;
+              }
+
+              return {
+                ...c,
+                loyaltyPoints: c.loyaltyPoints + addedPoints,
+                balanceUSD: debtUSD,
+                balanceLBP: debtLBP,
+                lastVisit: new Date().toISOString().split('T')[0],
+              };
+            }
+            return c;
+          });
+          OfflineStorage.saveCustomers(updatedCusts);
+          try {
+            const updatedCust = updatedCusts.find(c => c.id === fullSale.customerId);
+            if (updatedCust) syncEngine.broadcast('CUSTOMER_UPSERT', updatedCust);
+          } catch (e) {}
+          return updatedCusts;
+        });
+      }
     }
 
     addNotification(
-      'Sale Completed',
-      `Invoice #${invoiceNumber}: ${formatUSD(fullSale.totalUSD)} / ${formatLBP(fullSale.totalLBP)}`,
+      isUnreal ? 'Unreal Invoice Recorded' : 'Sale Completed',
+      isUnreal
+        ? `Fictitious invoice #${invoiceNumber} saved to Sales Transactions Log.`
+        : `Invoice #${invoiceNumber}: ${formatUSD(fullSale.totalUSD)} / ${formatLBP(fullSale.totalLBP)}`,
       'sale',
-      'success'
+      isUnreal ? 'info' : 'success'
     );
 
     addLog({
       component: 'POS / Sale',
-      action: 'SALE_DISPENSED',
+      action: isUnreal ? 'UNREAL_SALE_RECORDED' : 'SALE_DISPENSED',
       level: 'success',
-      title: `Sale Dispensed #${invoiceNumber}`,
-      description: `${fullSale.items.length} item(s) dispensed for ${formatUSD(fullSale.totalUSD)} (${formatLBP(fullSale.totalLBP)}). Paid via ${fullSale.paymentMethod}.`,
+      title: isUnreal ? `Unreal Invoice #${invoiceNumber}` : `Sale Dispensed #${invoiceNumber}`,
+      description: isUnreal
+        ? `Fictitious invoice #${invoiceNumber} logged (${fullSale.items.length} items, total ${formatUSD(fullSale.totalUSD)}). Inventory & ledger untouched.`
+        : `${fullSale.items.length} item(s) dispensed for ${formatUSD(fullSale.totalUSD)} (${formatLBP(fullSale.totalLBP)}). Paid via ${fullSale.paymentMethod}.`,
       entityId: saleId,
       entityType: 'sale',
       details: {
         invoiceNumber,
+        isUnreal,
         totalUSD: fullSale.totalUSD,
         totalLBP: fullSale.totalLBP,
         paymentMethod: fullSale.paymentMethod,
         itemsCount: fullSale.items.length,
-        customer: fullSale.customerName || 'Walk-in Patient',
+        customer: fullSale.customerName || (isUnreal ? 'Unreal Invoice' : 'Walk-in Patient'),
         items: fullSale.items.map(it => ({
           code: it.productCode,
           name: it.productName,
@@ -2408,13 +2468,15 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     const prevSale = sales[existingIndex];
+    const isUnreal = !!prevSale.isUnreal;
     const updatedSale: SaleTransaction = {
       ...prevSale,
       ...updatedData,
+      isUnreal,
     };
 
-    // If items were updated, calculate stock difference for each item
-    if (updatedData.items) {
+    // If items were updated, calculate stock difference for each item (bypassed for unreal invoices)
+    if (!isUnreal && updatedData.items) {
       const getEquivalentQty = (items: SaleTransaction['items'], productId: string, prod: Product | undefined) => {
         return items
           .filter(i => i.productId === productId)
@@ -2573,8 +2635,8 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     OfflineStorage.saveSales(newSales);
     try { syncEngine.broadcast('SALE_UPDATED', updatedSale); } catch (e) {}
 
-    // If debt customer changed or amounts changed
-    if (updatedSale.customerId && (prevSale.totalUSD !== updatedSale.totalUSD || prevSale.paymentMethod !== updatedSale.paymentMethod)) {
+    // If debt customer changed or amounts changed (bypassed for unreal invoices)
+    if (!isUnreal && updatedSale.customerId && (prevSale.totalUSD !== updatedSale.totalUSD || prevSale.paymentMethod !== updatedSale.paymentMethod)) {
       setCustomers(prevCusts => {
         const nextCusts = prevCusts.map(c => {
           if (c.id === updatedSale.customerId) {
@@ -2637,8 +2699,9 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const saleToDelete = sales.find(s => s.id === saleId);
     if (!saleToDelete) return { success: false };
 
-    // Restock all items
-    setProducts(prevProducts => {
+    // Restock all items (ONLY for real sales - bypassed for unreal invoices)
+    if (!saleToDelete.isUnreal) {
+      setProducts(prevProducts => {
       const mutatedIds = new Set<string>();
       const nextProducts = prevProducts.map(prod => {
         const soldItems = (saleToDelete.items || []).filter(it => it.productId === prod.id || it.productCode === prod.code);
@@ -2761,6 +2824,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return nextCusts;
       });
     }
+  }
 
     const updatedSales = sales.filter(s => s.id !== saleId);
     setSales(updatedSales);
@@ -2768,22 +2832,27 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try { syncEngine.broadcast('SALE_DELETED', { id: saleId }); } catch (e) {}
 
     addNotification(
-      'Sale Canceled / Voided',
-      `Invoice #${saleToDelete.invoiceNumber} was voided and stock restocked.`,
+      saleToDelete.isUnreal ? 'Unreal Invoice Deleted' : 'Sale Canceled / Voided',
+      saleToDelete.isUnreal
+        ? `Unreal invoice #${saleToDelete.invoiceNumber} was removed from the log.`
+        : `Invoice #${saleToDelete.invoiceNumber} was voided and stock restocked.`,
       'sale',
-      'warning'
+      saleToDelete.isUnreal ? 'info' : 'warning'
     );
 
     addLog({
       component: 'POS / Sale',
-      action: 'SALE_VOIDED',
-      level: 'error',
-      title: `Invoice Voided #${saleToDelete.invoiceNumber}`,
-      description: `Voided transaction (${formatUSD(saleToDelete.totalUSD)}). Restocked ${(saleToDelete.items || []).length} items.`,
+      action: saleToDelete.isUnreal ? 'UNREAL_SALE_DELETED' : 'SALE_VOIDED',
+      level: saleToDelete.isUnreal ? 'info' : 'error',
+      title: saleToDelete.isUnreal ? `Unreal Invoice Removed #${saleToDelete.invoiceNumber}` : `Invoice Voided #${saleToDelete.invoiceNumber}`,
+      description: saleToDelete.isUnreal
+        ? `Removed fictitious invoice #${saleToDelete.invoiceNumber} from Sales Transactions Log.`
+        : `Voided transaction (${formatUSD(saleToDelete.totalUSD)}). Restocked ${(saleToDelete.items || []).length} items.`,
       entityId: saleId,
       entityType: 'sale',
       details: {
         invoiceNumber: saleToDelete.invoiceNumber,
+        isUnreal: !!saleToDelete.isUnreal,
         totalUSD: saleToDelete.totalUSD,
         itemsCount: (saleToDelete.items || []).length
       }
@@ -3613,6 +3682,191 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     return { success: true };
   };
 
+  const recordPurchaseReturn = (returnData: Omit<PurchaseReturn, 'id' | 'timestamp' | 'returnNumber'> & { returnNumber?: string }): PurchaseReturn => {
+    const currentYear = new Date().getFullYear().toString().slice(-2);
+    const yearReturns = purchaseReturns.filter(r => r.id && r.id.startsWith(`RET-${currentYear}-`));
+    let nextNum = 1;
+    if (yearReturns.length > 0) {
+      const maxNum = Math.max(...yearReturns.map(r => parseInt(r.id.split('-')[2], 10) || 0));
+      nextNum = maxNum + 1;
+    }
+    const returnId = `RET-${currentYear}-${nextNum}`;
+    const returnNumber = returnData.returnNumber || nextInvoiceNumber(purchaseReturns.map(r => ({ invoiceNumber: r.returnNumber })), 'PRET', purchaseReturns.length + 100);
+
+    const fullReturn: PurchaseReturn = {
+      ...returnData,
+      id: returnId,
+      returnNumber,
+      timestamp: Date.now(),
+    };
+
+    // 1. Add purchase return
+    const updatedReturns = [fullReturn, ...purchaseReturns];
+    setPurchaseReturns(updatedReturns);
+    OfflineStorage.savePurchaseReturns(updatedReturns);
+    try { syncEngine.broadcast('PURCHASE_RETURN_CREATED', fullReturn); } catch (e) {}
+
+    // 2. Stock count and batch updates
+    setProducts(prevProducts => {
+      const mutatedProds: Product[] = [];
+      const updatedProds = prevProducts.map(prod => {
+        const matchingItems = (fullReturn.items || []).filter(i => i.productId === prod.id || (i.productCode && i.productCode === prod.code) || (i.barcode && i.barcode === prod.barcode));
+        if (matchingItems.length === 0) return prod;
+
+        let nextStock = prod.stockQuantity;
+        let nextBatches = [...(prod.batches || [])].map(b => ({ ...b }));
+
+        for (const item of matchingItems) {
+          const returnedQty = item.quantity;
+          const replacementQty = fullReturn.returnType === 'replace_expiry' ? (item.replacementQuantity ?? returnedQty) : 0;
+
+          // Deduct returned quantity from current stock
+          nextStock = Math.max(0, nextStock - returnedQty);
+
+          // Deduct from old batch if specified, or FIFO
+          if (nextBatches.length > 0) {
+            if (item.oldBatchNumber || item.oldExpiryDate) {
+              const batchIdx = nextBatches.findIndex(b =>
+                (item.oldBatchNumber && b.batchNumber === item.oldBatchNumber) ||
+                (item.oldExpiryDate && b.expiryDate === item.oldExpiryDate)
+              );
+              if (batchIdx >= 0) {
+                const bQty = nextBatches[batchIdx].quantity || 0;
+                nextBatches[batchIdx].quantity = Math.max(0, bQty - returnedQty);
+              }
+            } else {
+              let remainingToDeduct = returnedQty;
+              for (let i = 0; i < nextBatches.length && remainingToDeduct > 0; i++) {
+                const bQty = nextBatches[i].quantity || 0;
+                const deduct = Math.min(bQty, remainingToDeduct);
+                nextBatches[i].quantity = bQty - deduct;
+                remainingToDeduct -= deduct;
+              }
+            }
+            nextBatches = nextBatches.filter(b => (b.quantity || 0) > 0);
+          }
+
+          // If replace_expiry: add new replacement batch and add replacement qty to stock
+          if (fullReturn.returnType === 'replace_expiry') {
+            nextStock += replacementQty;
+            nextBatches.push({
+              batchNumber: item.newBatchNumber || prod.batchNumber || `LOT-${Date.now().toString().slice(-4)}`,
+              expiryDate: item.newExpiryDate || prod.expiryDate || '',
+              quantity: replacementQty,
+            });
+          }
+        }
+
+        let nextExpiryDate = prod.expiryDate;
+        let nextBatchNumber = prod.batchNumber;
+        if (fullReturn.returnType === 'replace_expiry') {
+          const lastWithNewExpiry = [...matchingItems].reverse().find(i => i.newExpiryDate);
+          if (lastWithNewExpiry?.newExpiryDate) {
+            nextExpiryDate = lastWithNewExpiry.newExpiryDate;
+          }
+          if (lastWithNewExpiry?.newBatchNumber) {
+            nextBatchNumber = lastWithNewExpiry.newBatchNumber;
+          }
+        }
+
+        const nextProd: Product = {
+          ...prod,
+          stockQuantity: nextStock,
+          batches: nextBatches,
+          expiryDate: nextExpiryDate,
+          batchNumber: nextBatchNumber,
+          updatedAt: Date.now(),
+          version: (prod.version || 1) + 1,
+        };
+        mutatedProds.push(nextProd);
+        return nextProd;
+      });
+
+      OfflineStorage.saveProducts(updatedProds);
+      if (mutatedProds.length > 0) {
+        try { syncEngine.broadcast('STOCK_MUTATION', mutatedProds); } catch (e) {}
+      }
+      return updatedProds;
+    });
+
+    const totalVal = fullReturn.totalRefundUSD > 0 ? `$${fullReturn.totalRefundUSD.toFixed(2)}` : `${fullReturn.totalRefundLBP.toLocaleString()} L.L.`;
+    const typeLabel = fullReturn.returnType === 'replace_expiry' ? 'Expiry Replacement' : 'Cash/Credit Return';
+    addNotification(
+      'Purchase Return Recorded',
+      `Return #${returnNumber} recorded for ${fullReturn.supplierName} (${typeLabel})`,
+      'inventory',
+      'info'
+    );
+
+    addLog({
+      component: 'Purchases',
+      action: 'PURCHASE_RETURN_CREATED',
+      level: 'info',
+      title: `Purchase Return #${returnNumber}`,
+      description: `Returned ${fullReturn.items.length} item(s) to ${fullReturn.supplierName} via ${typeLabel}. Value: ${totalVal}. Reason: ${fullReturn.reason || 'Not specified'}.`,
+      entityId: returnId,
+      entityType: 'purchase',
+      details: {
+        returnNumber,
+        supplierName: fullReturn.supplierName,
+        returnType: fullReturn.returnType,
+        itemsCount: fullReturn.items.length,
+        totalRefundUSD: fullReturn.totalRefundUSD,
+        totalRefundLBP: fullReturn.totalRefundLBP,
+        reason: fullReturn.reason,
+        items: fullReturn.items,
+      }
+    });
+
+    return fullReturn;
+  };
+
+  const deletePurchaseReturn = (returnId: string): { success: boolean; error?: string } => {
+    const returnToDel = purchaseReturns.find(r => r.id === returnId);
+    if (!returnToDel) return { success: false, error: 'Purchase return not found' };
+
+    const updatedReturns = purchaseReturns.filter(r => r.id !== returnId);
+    setPurchaseReturns(updatedReturns);
+    OfflineStorage.savePurchaseReturns(updatedReturns);
+    try { syncEngine.broadcast('PURCHASE_RETURN_DELETED', { id: returnId }); } catch (e) {}
+
+    // Revert stock changes
+    setProducts(prevProducts => {
+      const mutatedProds: Product[] = [];
+      const updatedProds = prevProducts.map(prod => {
+        const matchingItems = (returnToDel.items || []).filter(i => i.productId === prod.id || (i.productCode && i.productCode === prod.code));
+        if (matchingItems.length === 0) return prod;
+
+        let nextStock = prod.stockQuantity;
+        for (const item of matchingItems) {
+          if (returnToDel.returnType === 'cash_refund') {
+            nextStock += item.quantity;
+          } else if (returnToDel.returnType === 'replace_expiry') {
+            const replacementQty = item.replacementQuantity ?? item.quantity;
+            nextStock = Math.max(0, nextStock - replacementQty + item.quantity);
+          }
+        }
+
+        const nextProd = {
+          ...prod,
+          stockQuantity: nextStock,
+          updatedAt: Date.now(),
+          version: (prod.version || 1) + 1,
+        };
+        mutatedProds.push(nextProd);
+        return nextProd;
+      });
+      OfflineStorage.saveProducts(updatedProds);
+      if (mutatedProds.length > 0) {
+        try { syncEngine.broadcast('STOCK_MUTATION', mutatedProds); } catch (e) {}
+      }
+      return updatedProds;
+    });
+
+    addNotification('Purchase Return Deleted', `Purchase return #${returnToDel.returnNumber} was removed.`, 'inventory', 'warning');
+    return { success: true };
+  };
+
   // Suppliers CRUD
   const addSupplier = (supplierData: Omit<Supplier, 'id'>) => {
     const newSup: Supplier = {
@@ -3744,6 +3998,8 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
       setCustomers(OfflineStorage.getCustomers());
       setSales(OfflineStorage.getSales());
       setPurchases(OfflineStorage.getPurchases());
+      setSupplierPayments(OfflineStorage.getSupplierPayments());
+      setCustomerPayments(OfflineStorage.getCustomerPayments());
       setSyncConflicts(OfflineStorage.getConflicts());
       setNotifications(OfflineStorage.getNotifications());
       setLogs(OfflineStorage.getLogs());
@@ -3845,6 +4101,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     deleteSale,
 
     purchases,
+    purchaseReturns,
     supplierPayments,
     recordSupplierPayment,
     updateSupplierPayment,
@@ -3852,6 +4109,8 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     recordPurchase,
     updatePurchase,
     deletePurchase,
+    recordPurchaseReturn,
+    deletePurchaseReturn,
     suppliers,
     addSupplier,
     bulkAddSuppliers,
@@ -3882,6 +4141,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
 
     logs,
     addLog,
+    deleteLog,
     clearLogs,
     exportLogs,
 
@@ -3890,17 +4150,17 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     resetDemoData,
     clearAllData,
   }), [
-    currentUser, users, activeTab, exchangeRate, products, sales, purchases, suppliers, customers,
+    currentUser, users, activeTab, exchangeRate, products, sales, purchases, purchaseReturns, suppliers, customers,
     settings, notifications, syncStatus, activeSessions, logs, isSearchingScientifics,
     login, logout, addUser, updateUser, deleteUser, setActiveTab, setExchangeRate,
     toLBP, toUSD, formatLBP, formatUSD,
     addProduct, updateProduct, bulkUpdateProducts, bulkDeleteProducts, deleteProduct, deleteAllProducts,
     updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV,
     searchScientificDataOnline, enrichProductWithOnlineScientifics, enrichAllProductsOnline, standardizeAllScientifics,
-    recordSale, updateSale, deleteSale, recordPurchase, updatePurchase, deletePurchase,
+    recordSale, updateSale, deleteSale, recordPurchase, updatePurchase, deletePurchase, recordPurchaseReturn, deletePurchaseReturn,
     addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier, addCustomer, updateCustomer, updateSettings, toggleDarkMode,
     unreadCount, dismissNotification, markAllNotificationsRead, addNotification,
-    connectSyncEngine, addLog, clearLogs, exportLogs, exportBackup, restoreBackup, resetDemoData, clearAllData,
+    connectSyncEngine, addLog, deleteLog, clearLogs, exportLogs, exportBackup, restoreBackup, resetDemoData, clearAllData,
   ]);
 
   return (

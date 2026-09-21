@@ -283,26 +283,39 @@ export const resolveProductBatches = (
     return allBatches;
   }
 
-  // Check if product.batches already has explicit user-configured batches that exactly sum to currentStock
-  // and covers all active inventory without missing newly purchased batches
+  // Check if product.batches already has explicit user-configured batches that match currentStock
   const explicitSum = product.batches && product.batches.length > 0
     ? product.batches.reduce((acc, b) => acc + (b.quantity || 0), 0)
     : -1;
 
-  const hasUnaccountedPurchases = relevantPurchases.some((p) => {
-    const normExp = parseExpiryDate(p.itemExpiry).displayMMYYYY;
-    const key = `${p.itemBatch.toLowerCase()}____${normExp}`;
-    return !product.batches?.some((b) => {
-      const bNormExp = parseExpiryDate(b.expiryDate).displayMMYYYY;
-      return `${(b.batchNumber || '').toLowerCase()}____${bNormExp}` === key;
+  if (explicitSum >= 0 && Math.abs(explicitSum - currentStock) < 0.001 && product.batches && product.batches.length > 0) {
+    const explicitBatches: ResolvedBatch[] = product.batches.map((b) => {
+      const bNum = (b.batchNumber || '').trim();
+      const bExp = (b.expiryDate || '').trim();
+      const normExp = parseExpiryDate(bExp).displayMMYYYY;
+      const key = `${bNum.toLowerCase()}____${normExp}`;
+      const existing = batchMap.get(key);
+      const qty = Math.max(0, b.quantity || 0);
+      return {
+        batchNumber: bNum || 'N/A',
+        expiryDate: bExp,
+        quantity: qty,
+        totalPurchased: existing ? existing.totalPurchased : qty,
+        isDepleted: qty <= 0,
+        purchaseSources: existing ? existing.purchaseSources : [],
+      };
     });
-  });
 
-  if (explicitSum === currentStock && !hasUnaccountedPurchases && product.batches && product.batches.length > 0) {
-    for (const b of allBatches) {
-      b.isDepleted = (b.quantity || 0) <= 0;
-    }
-    return allBatches;
+    explicitBatches.sort((a, b) => {
+      const timeA = parseExpiryDate(a.expiryDate).timestamp;
+      const timeB = parseExpiryDate(b.expiryDate).timestamp;
+      if (timeA === 0 && timeB === 0) return 0;
+      if (timeA === 0) return 1;
+      if (timeB === 0) return -1;
+      return timeA - timeB;
+    });
+
+    return explicitBatches;
   }
 
   // Otherwise, allocate current live stock across batches using FEFO (earliest expiry first)

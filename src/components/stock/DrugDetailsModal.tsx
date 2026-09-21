@@ -45,7 +45,7 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
   onViewScientific,
   exchangeRate = 89500,
 }) => {
-  const { purchases, sales, logs } = usePharmacy();
+  const { purchases, sales, logs, purchaseReturns } = usePharmacy();
   const [showAllExpiries, setShowAllExpiries] = useState(true);
   const [selectedOperation, setSelectedOperation] = useState<ProductOperationItem | null>(null);
 
@@ -101,7 +101,7 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
 
     // 2. Outbound sales
     (sales || []).forEach((s) => {
-      if (!s.items || !Array.isArray(s.items)) return;
+      if (s.isUnreal || !s.items || !Array.isArray(s.items)) return;
       s.items.forEach((it, itIdx) => {
         if (it.productId === product.id || (product.code && it.productCode === product.code)) {
           const expStr = it.selectedExpiryDate || product.expiryDate || '';
@@ -134,18 +134,29 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
       const isEntity = l.entityId === product.id;
       const isDetails = l.details && (l.details.productId === product.id || l.details.code === product.code);
       if ((isEntity || isDetails) && l.action === 'QTY_ADJUSTMENT') {
-        const delta = l.details?.delta;
+        const delta = l.details?.delta !== undefined
+          ? l.details.delta
+          : (l.details?.newStock !== undefined && l.details?.previousStock !== undefined)
+          ? l.details.newStock - l.details.previousStock
+          : undefined;
         const newStock = l.details?.newStock ?? l.details?.stockQuantity;
         const batchExp = l.details?.batches?.[0]?.expiryDate || l.details?.expiryDate || product.expiryDate;
         const { displayMMYYYY } = parseExpiryDate(batchExp);
         const batchNum = l.details?.batches?.[0]?.batchNumber || l.details?.batchNumber || product.batchNumber;
         const expLabel = displayMMYYYY !== 'N/A' ? displayMMYYYY : '—';
 
-        const qtyDisplay = delta !== undefined
-          ? `${delta >= 0 ? '+' : ''}${formatStockDisplay(Math.abs(delta), product.isDivisible, product.piecesPerBox, product.pieceName)}`
-          : newStock !== undefined
-          ? `${formatStockDisplay(newStock, product.isDivisible, product.piecesPerBox, product.pieceName)}`
-          : '—';
+        let qtyDisplay = '—';
+        if (delta !== undefined) {
+          if (delta < 0) {
+            qtyDisplay = `-${formatStockDisplay(Math.abs(delta), product.isDivisible, product.piecesPerBox, product.pieceName)}`;
+          } else if (delta > 0) {
+            qtyDisplay = `+${formatStockDisplay(delta, product.isDivisible, product.piecesPerBox, product.pieceName)}`;
+          } else {
+            qtyDisplay = `0`;
+          }
+        } else if (newStock !== undefined) {
+          qtyDisplay = `${formatStockDisplay(newStock, product.isDivisible, product.piecesPerBox, product.pieceName)}`;
+        }
 
         list.push({
           id: l.id,
@@ -165,10 +176,62 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
       }
     });
 
+    // 4. Returns on Purchase to suppliers (Cash Refund or Expiry Lot Swap)
+    (purchaseReturns || []).forEach((r) => {
+      if (!r.items || !Array.isArray(r.items)) return;
+      r.items.forEach((it, itIdx) => {
+        if (it.productId === product.id || (product.code && it.productCode === product.code)) {
+          const isReplaceExpiry = r.returnType === 'replace_expiry';
+          const oldExp = it.oldExpiryDate || '';
+          const newExp = it.newExpiryDate || '';
+          const { displayMMYYYY: oldDisplayExp } = parseExpiryDate(oldExp);
+          const { displayMMYYYY: newDisplayExp } = parseExpiryDate(newExp);
+
+          let expLabel = oldDisplayExp !== 'N/A' ? oldDisplayExp : '—';
+          if (isReplaceExpiry && newDisplayExp !== 'N/A') {
+            expLabel = `${oldDisplayExp !== 'N/A' ? oldDisplayExp : '—'} ➔ ${newDisplayExp}`;
+          }
+
+          const qty = it.quantity || 0;
+          let formattedQty = `-${formatStockDisplay(qty, product.isDivisible, product.piecesPerBox, product.pieceName)}`;
+          if (isReplaceExpiry) {
+            const replQty = it.replacementQuantity ?? qty;
+            if (replQty === qty) {
+              formattedQty = `↻ ${formatStockDisplay(qty, product.isDivisible, product.piecesPerBox, product.pieceName)}`;
+            } else {
+              const delta = replQty - qty;
+              formattedQty = `${delta >= 0 ? '+' : ''}${formatStockDisplay(delta, product.isDivisible, product.piecesPerBox, product.pieceName)} (Swap)`;
+            }
+          }
+
+          const batchLabel = isReplaceExpiry && it.newBatchNumber && it.oldBatchNumber && it.newBatchNumber !== it.oldBatchNumber
+            ? `${it.oldBatchNumber} ➔ ${it.newBatchNumber}`
+            : it.newBatchNumber || it.oldBatchNumber;
+
+          list.push({
+            id: `${r.id}-${itIdx}`,
+            referenceId: r.returnNumber ? `#${r.returnNumber}` : r.id,
+            invoiceNumber: r.returnNumber || r.id,
+            operationType: 'Purchase Return',
+            type: 'purchase_return',
+            quantity: qty,
+            formattedQuantity: formattedQty,
+            expiry: expLabel,
+            rawExpiry: it.newExpiryDate || it.oldExpiryDate,
+            batchNumber: batchLabel,
+            date: r.date,
+            timestamp: r.timestamp || (r.date ? new Date(r.date).getTime() : 0),
+            purchaseReturn: r,
+            purchaseReturnItem: it,
+          });
+        }
+      });
+    });
+
     // Sort chronologically descending (newest operation first)
     list.sort((a, b) => b.timestamp - a.timestamp);
     return list;
-  }, [product, purchases, sales, logs]);
+  }, [product, purchases, sales, logs, purchaseReturns]);
 
   if (!isOpen || !product) return null;
 
@@ -552,6 +615,10 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
                                   <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800/60">
                                     Sale
                                   </span>
+                                ) : op.operationType === 'Purchase Return' ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800/60">
+                                    {op.purchaseReturn?.returnType === 'replace_expiry' ? 'Expiry Swap' : 'Return (Purch)'}
+                                  </span>
                                 ) : (
                                   <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60">
                                     Qty Adj
@@ -571,6 +638,12 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
                                     ? 'text-emerald-700 dark:text-emerald-400'
                                     : op.operationType === 'Sale'
                                     ? 'text-blue-700 dark:text-blue-400'
+                                    : op.operationType === 'Purchase Return'
+                                    ? 'text-rose-700 dark:text-rose-400'
+                                    : op.formattedQuantity.startsWith('-')
+                                    ? 'text-rose-700 dark:text-rose-400'
+                                    : op.formattedQuantity.startsWith('+')
+                                    ? 'text-emerald-700 dark:text-emerald-400'
                                     : 'text-amber-700 dark:text-amber-400'
                                 }`}
                               >

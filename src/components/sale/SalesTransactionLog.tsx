@@ -32,6 +32,7 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'yesterday' | 'week'>('all');
   const [paymentFilter, setPaymentFilter] = useState<'all' | 'cash_lbp' | 'cash_usd' | 'mixed' | 'credit_debt'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'real' | 'unreal'>('all');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
   // Modal states
@@ -44,6 +45,10 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
   const filteredSales = useMemo(() => {
     return sales
       .filter((sale) => {
+        // Type filter: All, Real sales, or Unreal invoices
+        if (typeFilter === 'real' && sale.isUnreal) return false;
+        if (typeFilter === 'unreal' && !sale.isUnreal) return false;
+
         // Query match
         const q = searchQuery.trim().toLowerCase();
         const matchQuery =
@@ -51,6 +56,7 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
           (sale.invoiceNumber || '').toLowerCase().includes(q) ||
           (sale.customerName && sale.customerName.toLowerCase().includes(q)) ||
           (sale.cashierName || '').toLowerCase().includes(q) ||
+          (sale.isUnreal && (q === 'unreal' || q === 'fictitious')) ||
           (sale.items || []).some(
             (it) =>
               (it.productName || '').toLowerCase().includes(q) ||
@@ -85,12 +91,14 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
         const timeB = b.timestamp || new Date(b.date).getTime();
         return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
       });
-  }, [sales, searchQuery, dateFilter, paymentFilter, sortOrder]);
+  }, [sales, searchQuery, dateFilter, paymentFilter, typeFilter, sortOrder]);
 
-  // Aggregate stats
-  const totalVolumeUSD = filteredSales.reduce((acc, s) => acc + s.totalUSD, 0);
-  const totalVolumeLBP = filteredSales.reduce((acc, s) => acc + s.totalLBP, 0);
-  const totalCreditUSD = filteredSales
+  // Aggregate stats (separated for real vs unreal)
+  const realSales = useMemo(() => filteredSales.filter(s => !s.isUnreal), [filteredSales]);
+  const unrealCount = filteredSales.length - realSales.length;
+  const totalVolumeUSD = realSales.reduce((acc, s) => acc + s.totalUSD, 0);
+  const totalVolumeLBP = realSales.reduce((acc, s) => acc + s.totalLBP, 0);
+  const totalCreditUSD = realSales
     .filter((s) => s.paymentMethod === 'credit_debt')
     .reduce((acc, s) => acc + s.totalUSD, 0);
 
@@ -135,6 +143,17 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
 
           {/* Payment Method Filter */}
           <div className="flex items-center space-x-1 text-xs">
+            {/* Invoice Type Filter: All / Real Sales / Unreal Invoices */}
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value as any)}
+              className="rounded border border-gray-300 bg-white px-2 py-1 text-[10px] font-bold uppercase text-slate-700 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              <option value="all">All Invoices</option>
+              <option value="real">Real Sales Only</option>
+              <option value="unreal">Unreal Invoices Only</option>
+            </select>
+
             <select
               value={paymentFilter}
               onChange={(e) => setPaymentFilter(e.target.value as any)}
@@ -160,21 +179,28 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
         {/* Dense Stats Overview Bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
           <div className="rounded border border-gray-200 bg-white p-1.5 dark:border-slate-800 dark:bg-slate-800/50">
-            <span className="text-[9px] uppercase font-bold text-gray-400 block">Total Sales</span>
-            <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-              {filteredSales.length} Transactions
-            </span>
+            <span className="text-[9px] uppercase font-bold text-gray-400 block">Total Invoices</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                {filteredSales.length} Invoices
+              </span>
+              {unrealCount > 0 && (
+                <span className="rounded bg-amber-100 dark:bg-amber-950 px-1 py-0.2 text-[9px] font-bold text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                  {unrealCount} Unreal
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="rounded border border-gray-200 bg-white p-1.5 dark:border-slate-800 dark:bg-slate-800/50">
-            <span className="text-[9px] uppercase font-bold text-gray-400 block">Revenue (USD)</span>
+            <span className="text-[9px] uppercase font-bold text-gray-400 block">Real Revenue (USD)</span>
             <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
               {formatUSD(totalVolumeUSD)}
             </span>
           </div>
 
           <div className="rounded border border-gray-200 bg-white p-1.5 dark:border-slate-800 dark:bg-slate-800/50">
-            <span className="text-[9px] uppercase font-bold text-gray-400 block">Revenue (L.L.)</span>
+            <span className="text-[9px] uppercase font-bold text-gray-400 block">Real Revenue (L.L.)</span>
             <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
               {formatLBP(totalVolumeLBP)}
             </span>
@@ -226,9 +252,23 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
                     {/* Invoice # */}
                     <td className="py-2 px-3 whitespace-nowrap">
                       <div className="flex items-center space-x-1.5">
-                        <span className="font-mono text-xs font-bold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 px-1.5 py-0.5 rounded border border-teal-200 dark:border-teal-900">
+                        <span
+                          className={`font-mono text-xs font-bold px-1.5 py-0.5 rounded border ${
+                            sale.isUnreal
+                              ? 'text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800'
+                              : 'text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 border-teal-200 dark:border-teal-900'
+                          }`}
+                        >
                           {sale.invoiceNumber}
                         </span>
+                        {sale.isUnreal && (
+                          <span
+                            className="rounded bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 px-1 py-0.2 text-[9px] font-extrabold uppercase tracking-wide"
+                            title="Fictitious / Unreal invoice (no stock deducted)"
+                          >
+                            Unreal
+                          </span>
+                        )}
                         {sale.synced && (
                           <span title="Synced across LAN terminals" className="text-emerald-500">
                             •
@@ -252,8 +292,13 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
 
                     {/* Customer */}
                     <td className="py-2 px-2.5">
-                      <div className="font-bold text-slate-900 dark:text-slate-100">
-                        {sale.customerName || 'Cash Client'}
+                      <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1">
+                        <span>{sale.customerName || (sale.isUnreal ? 'Unreal Invoice' : 'Cash Client')}</span>
+                        {sale.isUnreal && (
+                          <span className="text-[9px] text-amber-600 dark:text-amber-400 font-normal">
+                            (No stock deduction)
+                          </span>
+                        )}
                       </div>
                       {sale.notes && (
                         <div className="text-[10px] text-amber-600 dark:text-amber-400 truncate max-w-[150px]">
@@ -299,9 +344,9 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
                       <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
                         {formatLBPValue(sale.totalLBP)} LBP
                       </div>
-                      {sale.writeOffUSD && sale.writeOffUSD > 0.001 ? (
+                      {(sale.writeOffUSD && sale.writeOffUSD >= 0.01) || (sale.writeOffLBP && sale.writeOffLBP > 0) ? (
                         <div className="text-[9px] font-extrabold text-rose-600 dark:text-rose-400">
-                          Write-off: -${sale.writeOffUSD.toFixed(2)}
+                          Write-off: {sale.writeOffUSD && sale.writeOffUSD >= 0.01 ? `-$${sale.writeOffUSD.toFixed(2)}` : `-${formatLBPValue(sale.writeOffLBP || 0)} LBP`}
                         </div>
                       ) : null}
                     </td>
@@ -313,7 +358,7 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
                         <button
                           onClick={() => setViewingSale(sale)}
                           className="rounded p-1 text-gray-500 hover:bg-teal-50 hover:text-teal-700 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer"
-                          title="View sale transaction details"
+                          title={sale.isUnreal ? "View unreal invoice details" : "View sale transaction details"}
                         >
                           <Eye className="h-3.5 w-3.5" />
                         </button>
@@ -322,7 +367,7 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
                         <button
                           onClick={() => setEditingSale(sale)}
                           className="rounded p-1 text-gray-500 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-blue-950/40 dark:hover:text-blue-300 cursor-pointer"
-                          title="Edit completed sale items, quantities & customer"
+                          title={sale.isUnreal ? "Edit unreal invoice items & quantities" : "Edit completed sale items, quantities & customer"}
                         >
                           <Edit className="h-3.5 w-3.5" />
                         </button>
@@ -343,7 +388,7 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
                               onClick={() => handleDelete(sale.id)}
                               className="px-1 text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:underline cursor-pointer"
                             >
-                              Void
+                              {sale.isUnreal ? 'Delete' : 'Void'}
                             </button>
                             <button
                               onClick={() => setConfirmDeleteId(null)}
@@ -356,7 +401,7 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
                           <button
                             onClick={() => setConfirmDeleteId(sale.id)}
                             className="rounded p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400 cursor-pointer"
-                            title="Void / cancel sale and restock items"
+                            title={sale.isUnreal ? "Delete unreal invoice from log" : "Void / cancel sale and restock items"}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>

@@ -107,31 +107,93 @@ export const CashDrawerView: React.FC = () => {
 
     // A. Cash movements from POS Sales
     sales.forEach((s) => {
+      if (s.isUnreal) return;
       if (s.paymentMethod === 'credit_debt' || s.paymentMethod === 'card') {
         // No physical cash in drawer
         return;
       }
 
-      const netUSD = (s.amountPaidUSD || 0) - (s.changeGivenUSD || 0);
-      const netLBP = (s.amountPaidLBP || 0) - (s.changeGivenLBP || 0);
+      // Heal historical duplicate change data if both were populated for single-currency payments:
+      let changeUSD = s.changeGivenUSD || 0;
+      let changeLBP = s.changeGivenLBP || 0;
+      if ((s.amountPaidLBP || 0) === 0 && (s.amountPaidUSD || 0) > 0 && changeUSD > 0 && changeLBP > 0) {
+        changeLBP = 0; // Legacy pure USD payment duplicate
+      } else if ((s.amountPaidUSD || 0) === 0 && (s.amountPaidLBP || 0) > 0 && changeUSD > 0 && changeLBP > 0) {
+        changeUSD = 0; // Legacy pure LBP payment duplicate
+      }
 
-      if (netUSD !== 0 || netLBP !== 0) {
+      const netUSD = (s.amountPaidUSD || 0) - changeUSD;
+      const netLBP = (s.amountPaidLBP || 0) - changeLBP;
+
+      if (netUSD === 0 && netLBP === 0) return;
+
+      const timestamp = s.timestamp || new Date(s.date).getTime();
+      const date = s.date || new Date(s.timestamp).toISOString();
+      const referenceNumber = s.invoiceNumber || `INV-${s.id.substring(0, 6)}`;
+      const partyName = s.customerName || 'Walk-in Patient';
+      const performedBy = s.cashierName || 'Cashier';
+
+      // Check if both currencies move in the same direction or one is 0:
+      if ((netUSD >= 0 && netLBP >= 0) || (netUSD <= 0 && netLBP <= 0)) {
         const isOverallIn = netUSD >= 0 && netLBP >= 0;
         entries.push({
           id: `sale-${s.id}`,
-          timestamp: s.timestamp || new Date(s.date).getTime(),
-          date: s.date || new Date(s.timestamp).toISOString(),
+          timestamp,
+          date,
           type: isOverallIn ? 'IN' : 'OUT',
-          categoryLabel: 'POS Cash Sale',
+          categoryLabel: isOverallIn ? 'POS Cash Sale' : 'POS Cash Refund',
           categoryKey: 'pos_sale',
-          referenceNumber: s.invoiceNumber || `INV-${s.id.substring(0, 6)}`,
-          partyName: s.customerName || 'Walk-in Patient',
+          referenceNumber,
+          partyName,
           amountUSD: Math.abs(netUSD),
           amountLBP: Math.abs(netLBP),
-          performedBy: s.cashierName || 'Cashier',
+          performedBy,
           notes: `${s.items.length} item(s) dispensed • Method: ${s.paymentMethod.toUpperCase()}`,
           source: 'pos_sale',
         });
+      } else {
+        // Split cross-currency cash flows into separate IN and OUT entries
+        // so drawer USD and drawer LBP reflect actual physical cash movements
+        if (netUSD !== 0) {
+          const isUSDIn = netUSD > 0;
+          entries.push({
+            id: `sale-${s.id}-usd`,
+            timestamp,
+            date,
+            type: isUSDIn ? 'IN' : 'OUT',
+            categoryLabel: isUSDIn ? 'POS Cash Sale' : 'POS Change Return',
+            categoryKey: 'pos_sale',
+            referenceNumber,
+            partyName,
+            amountUSD: Math.abs(netUSD),
+            amountLBP: 0,
+            performedBy,
+            notes: isUSDIn
+              ? `${s.items.length} item(s) • USD Cash Received (Change given in LBP)`
+              : `Change returned in USD for invoice ${referenceNumber}`,
+            source: 'pos_sale',
+          });
+        }
+        if (netLBP !== 0) {
+          const isLBPIn = netLBP > 0;
+          entries.push({
+            id: `sale-${s.id}-lbp`,
+            timestamp,
+            date,
+            type: isLBPIn ? 'IN' : 'OUT',
+            categoryLabel: isLBPIn ? 'POS Cash Sale' : 'POS Change Return',
+            categoryKey: 'pos_sale',
+            referenceNumber,
+            partyName,
+            amountUSD: 0,
+            amountLBP: Math.abs(netLBP),
+            performedBy,
+            notes: isLBPIn
+              ? `${s.items.length} item(s) • LBP Cash Received (Change given in USD)`
+              : `Change returned in LBP for invoice ${referenceNumber}`,
+            source: 'pos_sale',
+          });
+        }
       }
     });
 

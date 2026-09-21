@@ -22,7 +22,15 @@ import {
   Check,
   Percent,
   ArrowLeftRight,
-  Printer
+  Printer,
+  ArrowDownToLine,
+  Wallet,
+  Zap,
+  SlidersHorizontal,
+  Barcode,
+  Calendar,
+  Layers,
+  Activity
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
@@ -86,10 +94,13 @@ const ProductCardTitle: React.FC<ProductCardTitleProps> = ({
     const el = containerRef.current;
     if (!el) return;
 
-    let rAF: number | null = null;
+    let lastWidth = 0;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
 
-    const evaluateWrap = () => {
-      const containerWidth = el.clientWidth;
+    const evaluateWrap = (width?: number) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const containerWidth = width ?? container.clientWidth;
       if (containerWidth <= 0) return;
 
       const ctx = getSharedCanvasContext();
@@ -116,16 +127,22 @@ const ProductCardTitle: React.FC<ProductCardTitleProps> = ({
 
     evaluateWrap();
 
-    const resizeObserver = new ResizeObserver(() => {
-      if (rAF !== null) cancelAnimationFrame(rAF);
-      rAF = requestAnimationFrame(() => {
-        evaluateWrap();
-      });
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const w = entry.contentRect.width;
+      if (w <= 0 || Math.abs(w - lastWidth) < 2) return;
+      lastWidth = w;
+      if (timerId !== null) clearTimeout(timerId);
+      // Defer state update to next macrotask to prevent ResizeObserver loop notification
+      timerId = setTimeout(() => {
+        evaluateWrap(w);
+      }, 0);
     });
     resizeObserver.observe(el);
 
     return () => {
-      if (rAF !== null) cancelAnimationFrame(rAF);
+      if (timerId !== null) clearTimeout(timerId);
       resizeObserver.disconnect();
     };
   }, [name, trimmedDosage, trimmedPresentation, trimmedForm, hasMeta]);
@@ -200,6 +217,8 @@ const ProductCardTitle: React.FC<ProductCardTitleProps> = ({
   );
 };
 
+const UNREAL_INVOICE_ID = '__UNREAL_INVOICE__';
+
 interface ProductCardProps {
   prod: Product;
   index: number;
@@ -210,6 +229,8 @@ interface ProductCardProps {
   onAddPiece: (prod: Product) => void;
   onViewScientific: (prod: Product) => void;
   onOpenStockCard: (prod: Product) => void;
+  isUnreal?: boolean;
+  viewMode?: 'pos' | 'advanced';
 }
 
 const ProductCard = React.memo(function ProductCard({
@@ -222,64 +243,296 @@ const ProductCard = React.memo(function ProductCard({
   onAddPiece,
   onViewScientific,
   onOpenStockCard,
+  isUnreal = false,
+  viewMode = 'pos',
 }: ProductCardProps) {
   const isLow = prod.stockQuantity <= prod.minStockAlert;
   const isOut = prod.stockQuantity <= 0;
   const isInCart = inCartBoxes > 0 || inCartPieces > 0;
+  const canAdd = !isOut || isUnreal;
   const totalInCartDisplay = inCartBoxes > 0 && inCartPieces > 0
     ? `${inCartBoxes} bxs, ${inCartPieces} ${prod.pieceName || 'pcs'}`
     : inCartBoxes > 0
     ? `${inCartBoxes} ${inCartBoxes === 1 ? 'box' : 'boxes'}`
     : `${inCartPieces} ${prod.pieceName || 'pcs'}`;
 
+  // Advanced mode computations
+  const marginPct = prod.pharmacistMarginProfit || (prod.costPriceUSD > 0 && prod.priceUSD > 0 ? ((prod.priceUSD - prod.costPriceUSD) / prod.priceUSD) * 100 : 0);
+  const activeBatches = prod.batches && prod.batches.length > 0 ? prod.batches : (prod.batchNumber ? [{ batchNumber: prod.batchNumber, expiryDate: prod.expiryDate, quantity: prod.stockQuantity }] : []);
+  const primaryBatch = activeBatches[0] || null;
+  const expDateStr = primaryBatch?.expiryDate || prod.expiryDate;
+
+  // Expiry check
+  let expiryStatus: 'expired' | 'soon' | 'valid' | 'none' = 'none';
+  let formattedExpDate = '';
+  if (expDateStr) {
+    formattedExpDate = expDateStr.length === 7 ? expDateStr : expDateStr.slice(0, 7);
+    const expDate = new Date(expDateStr);
+    if (!isNaN(expDate.getTime())) {
+      const now = new Date();
+      const diffMonths = (expDate.getFullYear() - now.getFullYear()) * 12 + (expDate.getMonth() - now.getMonth());
+      if (diffMonths < 0) expiryStatus = 'expired';
+      else if (diffMonths <= 3) expiryStatus = 'soon';
+      else expiryStatus = 'valid';
+    }
+  }
+
+  if (viewMode === 'advanced') {
+    return (
+      <div
+        id={`product-card-${index}`}
+        onClick={() => {
+          if (canAdd) onAdd(prod);
+        }}
+        role="button"
+        tabIndex={canAdd ? 0 : -1}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && canAdd) {
+            e.preventDefault();
+            onAdd(prod);
+          }
+        }}
+        className={`group relative flex flex-col justify-between rounded-lg border p-3 transition-all select-none shadow-2xs ${
+          isFocused ? 'ring-2 ring-indigo-500 dark:ring-indigo-400 border-indigo-500 z-10' : ''
+        } ${
+          isOut && !isUnreal
+            ? 'border-gray-200 bg-gray-50/70 opacity-70 dark:border-slate-800 dark:bg-slate-900/40 cursor-not-allowed'
+            : isInCart
+            ? 'border-teal-500 bg-teal-50/30 ring-1 ring-teal-500/30 hover:border-teal-600 hover:shadow-md dark:border-teal-500 dark:bg-teal-950/25 cursor-pointer'
+            : isOut && isUnreal
+            ? 'border-amber-300 bg-amber-50/30 hover:border-amber-500 hover:shadow-md dark:border-amber-700/50 dark:bg-amber-950/20 cursor-pointer'
+            : 'border-gray-200 bg-white hover:border-teal-500 hover:shadow-md dark:border-slate-800 dark:bg-slate-900/70 dark:hover:border-teal-500 cursor-pointer'
+        }`}
+      >
+        <div className="space-y-2">
+          {/* Header Row: Codes, Category, Importer & Quick Actions */}
+          <div className="flex items-start justify-between gap-1.5 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-mono text-[10px] font-bold uppercase rounded bg-gray-100 px-1.5 py-0.5 text-gray-700 dark:bg-slate-800 dark:text-slate-300">
+                {prod.code}
+              </span>
+              <span
+                className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                  prod.category === 'drug'
+                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                    : prod.category === 'vitamins'
+                    ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300'
+                    : prod.category === 'cosmetics'
+                    ? 'bg-pink-100 text-pink-800 dark:bg-pink-950/60 dark:text-pink-300'
+                    : 'bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300'
+                }`}
+              >
+                {prod.category}
+              </span>
+              {prod.agent && (
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-400 truncate max-w-[120px]" title={`Importer/Agent: ${prod.agent}`}>
+                  {prod.agent}
+                </span>
+              )}
+              {prod.barcode && (
+                <span className="hidden sm:inline-flex items-center gap-0.5 text-[9px] font-mono text-gray-400 dark:text-slate-500">
+                  <Barcode className="h-3 w-3" />
+                  {prod.barcode}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {isInCart && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-teal-600 px-1.5 py-0.5 text-[9px] font-bold text-white shadow-2xs shrink-0">
+                  <Check className="h-2.5 w-2.5" />
+                  <span>{totalInCartDisplay} in cart</span>
+                </span>
+              )}
+              {/* Quick Stock Card button (s) */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenStockCard(prod);
+                }}
+                className="flex items-center justify-center w-5 h-5 rounded border border-gray-200 text-[10px] font-bold text-gray-600 hover:border-teal-400 hover:bg-teal-50 hover:text-teal-700 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer transition-colors leading-none"
+                title="Open Stock Card of this item (Shortcut: s)"
+              >
+                s
+              </button>
+              {/* Scientific info */}
+              {prod.category === 'drug' && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onViewScientific(prod);
+                  }}
+                  className="flex items-center justify-center w-5 h-5 rounded border border-gray-200 text-gray-400 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer transition-colors"
+                  title="View Scientific Indications, Contraindications & Generics"
+                >
+                  <Info className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Product Title, Presentation, Dosage */}
+          <ProductCardTitle
+            name={prod.name}
+            dosage={prod.dosage}
+            presentation={prod.presentation}
+            form={prod.form}
+          />
+
+          {prod.ingredients && (
+            <p className="text-[10px] text-gray-500 dark:text-slate-400 line-clamp-1 leading-tight">
+              <span className="font-semibold text-slate-600 dark:text-slate-300">Active: </span>
+              {prod.ingredients}
+            </p>
+          )}
+
+          {/* Full Inventory, Batch & Expiry Micro-Panel */}
+          <div className="rounded border border-gray-100 bg-slate-50/80 p-2 text-[10px] dark:border-slate-800 dark:bg-slate-800/40 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                <Layers className="h-3 w-3 text-teal-600" />
+                Stock: {formatStockDisplay(prod.stockQuantity, prod.isDivisible, prod.piecesPerBox, prod.pieceName)}
+              </span>
+              <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                isOut
+                  ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                  : isLow
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+              }`}>
+                {isOut ? 'Out of Stock' : isLow ? `Low (Min: ${prod.minStockAlert})` : 'In Stock'}
+              </span>
+            </div>
+
+            {/* Batch & Expiry Date row */}
+            <div className="flex items-center justify-between text-[9.5px] text-slate-500 dark:text-slate-400 pt-0.5 border-t border-gray-200/50 dark:border-slate-700/50">
+              <span className="truncate max-w-[130px]">
+                {primaryBatch?.batchNumber ? `Lot: #${primaryBatch.batchNumber}` : 'Lot: Unassigned'}
+                {activeBatches.length > 1 && ` (${activeBatches.length} lots)`}
+              </span>
+              {formattedExpDate ? (
+                <span className={`font-semibold flex items-center gap-0.5 ${
+                  expiryStatus === 'expired'
+                    ? 'text-rose-600 dark:text-rose-400 font-bold'
+                    : expiryStatus === 'soon'
+                    ? 'text-amber-600 dark:text-amber-400 font-bold'
+                    : 'text-slate-600 dark:text-slate-400'
+                }`}>
+                  <Calendar className="h-2.5 w-2.5" />
+                  Exp: {formattedExpDate}
+                </span>
+              ) : (
+                <span>No Exp Date</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Pricing, Cost, Margin & Quick Add Buttons */}
+        <div className="mt-2.5 pt-2 border-t border-gray-100 dark:border-slate-800 flex items-center justify-between gap-2">
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-sm font-black text-blue-600 dark:text-blue-400">
+                ${prod.priceUSD.toFixed(2)}
+              </span>
+              <span className="text-[10px] font-semibold text-green-700 dark:text-green-400">
+                {formatLBPValue(prod.priceLBP)} LBP
+              </span>
+            </div>
+
+            {/* Margin & Cost info */}
+            <div className="flex items-center gap-1.5 text-[9px] text-slate-500 dark:text-slate-400 mt-0.5">
+              {prod.costPriceUSD > 0 && (
+                <span>Cost: ${prod.costPriceUSD.toFixed(2)}</span>
+              )}
+              {marginPct > 0 && (
+                <span className="rounded bg-emerald-50 px-1 py-0.2 font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  {marginPct.toFixed(1)}% mgn
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1">
+            {prod.isDivisible && prod.piecesPerBox && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddPiece(prod);
+                }}
+                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:hover:bg-indigo-900/60 dark:text-indigo-300 rounded text-[10px] font-bold shadow-2xs transition-colors border border-indigo-200 dark:border-indigo-800/50 cursor-pointer"
+                title={`Add 1 ${prod.pieceName || 'Piece'} ($${(prod.piecePriceUSD || prod.priceUSD / prod.piecesPerBox).toFixed(2)})`}
+              >
+                + {prod.pieceName || 'Piece'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (canAdd) onAdd(prod);
+              }}
+              disabled={!canAdd}
+              className={`px-2 py-1 rounded text-[10px] font-bold shadow-2xs transition-colors cursor-pointer ${
+                canAdd
+                  ? 'bg-teal-700 hover:bg-teal-800 text-white dark:bg-teal-600 dark:hover:bg-teal-500'
+                  : 'bg-gray-200 text-gray-400 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed'
+              }`}
+            >
+              + Box
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // POS Mode (Simplified high-speed retail checkout: hides MOPH code, category, and active ingredients)
   return (
     <div
       id={`product-card-${index}`}
-      onClick={() => onAdd(prod)}
+      onClick={() => {
+        if (canAdd) onAdd(prod);
+      }}
       role="button"
-      tabIndex={isOut ? -1 : 0}
+      tabIndex={canAdd ? 0 : -1}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
+        if ((e.key === 'Enter' || e.key === ' ') && canAdd) {
           e.preventDefault();
           onAdd(prod);
         }
       }}
-      className={`group relative flex flex-col justify-between rounded-lg border p-3 transition-all select-none shadow-2xs ${
+      className={`group relative flex flex-col justify-between rounded-lg border p-2.5 transition-all select-none shadow-2xs min-h-[92px] ${
         isFocused ? 'ring-2 ring-indigo-500 dark:ring-indigo-400 border-indigo-500 z-10' : ''
       } ${
-        isOut
+        isOut && !isUnreal
           ? 'border-gray-200 bg-gray-50/70 opacity-60 dark:border-slate-800 dark:bg-slate-900/40 cursor-not-allowed'
           : isInCart
           ? 'border-teal-500 bg-teal-50/30 ring-1 ring-teal-500/30 hover:border-teal-600 hover:shadow-md active:scale-[0.985] dark:border-teal-500 dark:bg-teal-950/25 cursor-pointer'
+          : isOut && isUnreal
+          ? 'border-amber-300 bg-amber-50/30 hover:border-amber-500 hover:shadow-md active:scale-[0.985] dark:border-amber-700/50 dark:bg-amber-950/20 cursor-pointer'
           : 'border-gray-200 bg-white hover:border-teal-500 hover:shadow-md active:scale-[0.985] dark:border-slate-800 dark:bg-slate-900/60 dark:hover:border-teal-500 cursor-pointer'
       }`}
     >
       <div>
-        <div className="flex items-start justify-between gap-1.5">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="font-mono text-[10px] font-bold uppercase rounded bg-gray-100 px-1.5 py-0.5 text-gray-600 dark:bg-slate-800 dark:text-slate-400">
-              {prod.code}
-            </span>
-            <span
-              className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
-                prod.category === 'drug'
-                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
-                  : prod.category === 'vitamins'
-                  ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300'
-                  : prod.category === 'cosmetics'
-                  ? 'bg-pink-100 text-pink-800 dark:bg-pink-950/60 dark:text-pink-300'
-                  : 'bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300'
-              }`}
-            >
-              {prod.category}
-            </span>
+        <div className="flex items-start justify-between gap-1">
+          <div className="flex-1 min-w-0 pr-0.5">
+            <ProductCardTitle
+              name={prod.name}
+              dosage={prod.dosage}
+              presentation={prod.presentation}
+              form={prod.form}
+            />
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
             {isInCart && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-teal-600 px-1.5 py-0.5 text-[9px] font-bold text-white shadow-2xs shrink-0">
-                <Check className="h-2.5 w-2.5" />
-                <span>{totalInCartDisplay} in cart</span>
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-teal-600 px-1.5 py-0.5 text-[8.5px] font-bold text-white shadow-2xs shrink-0" title={`${totalInCartDisplay} in cart`}>
+                <Check className="h-2 w-2" />
+                <span className="max-w-[70px] truncate">{totalInCartDisplay}</span>
               </span>
             )}
             {/* Quick Stock Card button (s) */}
@@ -289,8 +542,8 @@ const ProductCard = React.memo(function ProductCard({
                 e.stopPropagation();
                 onOpenStockCard(prod);
               }}
-              className="flex items-center justify-center w-5 h-5 rounded border border-gray-200 text-[10px] font-bold text-gray-500 hover:border-teal-400 hover:bg-teal-50 hover:text-teal-700 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer transition-colors leading-none"
-              title="Open Stock Card of this item"
+              className="flex items-center justify-center w-4.5 h-4.5 rounded border border-gray-200 text-[9px] font-bold text-gray-500 hover:border-teal-400 hover:bg-teal-50 hover:text-teal-700 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer transition-colors leading-none"
+              title="Open Stock Card of this item (s)"
             >
               s
             </button>
@@ -302,34 +555,22 @@ const ProductCard = React.memo(function ProductCard({
                   e.stopPropagation();
                   onViewScientific(prod);
                 }}
-                className="flex items-center justify-center w-5 h-5 rounded border border-gray-200 text-gray-400 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer transition-colors"
+                className="flex items-center justify-center w-4.5 h-4.5 rounded border border-gray-200 text-gray-400 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-300 cursor-pointer transition-colors"
                 title="View Scientific Indications, Contraindications & Generics"
               >
-                <Info className="h-3 w-3" />
+                <Info className="h-2.5 w-2.5" />
               </button>
             )}
           </div>
         </div>
-
-        <ProductCardTitle
-          name={prod.name}
-          dosage={prod.dosage}
-          presentation={prod.presentation}
-          form={prod.form}
-        />
-        {prod.ingredients ? (
-          <p className="mt-0.5 text-[10px] text-gray-500 dark:text-slate-400 break-words whitespace-normal leading-relaxed">
-            {prod.ingredients}
-          </p>
-        ) : null}
       </div>
 
-      <div className="mt-2.5 pt-2 border-t border-gray-100 dark:border-slate-800 flex items-center justify-between gap-2">
-        <div className="shrink-0">
-          <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
+      <div className="mt-2 pt-1.5 border-t border-gray-100 dark:border-slate-800 flex items-center justify-between gap-1.5">
+        <div className="shrink-0 min-w-0">
+          <div className="text-sm font-black text-blue-600 dark:text-blue-400 leading-none">
             ${prod.priceUSD.toFixed(2)}
           </div>
-          <div className="text-[10px] font-medium text-green-700 dark:text-green-400">
+          <div className="text-[9.5px] font-semibold text-green-700 dark:text-green-400 leading-tight mt-0.5 truncate">
             {formatLBPValue(prod.priceLBP)} LBP
           </div>
         </div>
@@ -342,13 +583,13 @@ const ProductCard = React.memo(function ProductCard({
                 e.stopPropagation();
                 onAddPiece(prod);
               }}
-              className="px-1.5 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:hover:bg-indigo-900/60 dark:text-indigo-300 rounded text-[9px] font-bold shadow-xs transition-colors border border-indigo-200 dark:border-indigo-800/50 z-10 cursor-pointer"
+              className="px-1.5 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:hover:bg-indigo-900/60 dark:text-indigo-300 rounded text-[8.5px] font-bold shadow-2xs transition-colors border border-indigo-200 dark:border-indigo-800/50 z-10 cursor-pointer leading-none"
             >
               + Add {prod.pieceName || 'Piece'}
             </button>
           )}
           <span
-            className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${
+            className={`inline-block rounded px-1.5 py-0.5 text-[9.5px] font-bold leading-none ${
               isOut
                 ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
                 : isLow
@@ -376,6 +617,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     formatLBP,
     formatUSD,
     settings,
+    addNotification,
   } = usePharmacy();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -408,11 +650,58 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   });
 
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory | 'all'>('all');
+  const getNumCols = useCallback((mode: 'pos' | 'advanced') => {
+    const width = window.innerWidth;
+    if (mode === 'pos') {
+      if (width >= 1024) return 4;
+      if (width >= 768) return 3;
+      if (width >= 480) return 2;
+      return 1;
+    } else {
+      if (width >= 1280) return 3;
+      if (width >= 640) return 2;
+      return 1;
+    }
+  }, []);
+
+  const [catalogViewMode, setCatalogViewMode] = useState<'pos' | 'advanced'>(() => {
+    return (localStorage.getItem('pos_catalog_view_mode') as 'pos' | 'advanced') || 'pos';
+  });
+
+  const [numCols, setNumCols] = useState<number>(() => {
+    const initialMode = (localStorage.getItem('pos_catalog_view_mode') as 'pos' | 'advanced') || 'pos';
+    const width = typeof window !== 'undefined' ? window.innerWidth : 1280;
+    if (initialMode === 'pos') {
+      if (width >= 1024) return 4;
+      if (width >= 768) return 3;
+      if (width >= 480) return 2;
+      return 1;
+    } else {
+      if (width >= 1280) return 3;
+      if (width >= 640) return 2;
+      return 1;
+    }
+  });
+
+  const handleSetCatalogViewMode = (mode: 'pos' | 'advanced') => {
+    setCatalogViewMode(mode);
+    localStorage.setItem('pos_catalog_view_mode', mode);
+    setNumCols(getNumCols(mode));
+  };
+
+  useEffect(() => {
+    const updateCols = () => setNumCols(getNumCols(catalogViewMode));
+    updateCols();
+    window.addEventListener('resize', updateCols);
+    return () => window.removeEventListener('resize', updateCols);
+  }, [catalogViewMode, getNumCols]);
+
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartPosition, setCartPosition] = useState<'right' | 'left'>(() => {
     return (localStorage.getItem('pos_cart_position') as 'right' | 'left') || 'right';
   });
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const isUnrealInvoice = selectedCustomerId === UNREAL_INVOICE_ID;
   const [paymentMethod, setPaymentMethod] = useState<'cash_lbp' | 'cash_usd' | 'mixed' | 'credit_debt'>('cash_lbp');
   const [showPaymentConfirmModal, setShowPaymentConfirmModal] = useState<boolean>(false);
   const [writeOffDifferences, setWriteOffDifferences] = useState<boolean>(false);
@@ -430,28 +719,23 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   }, [restoreWindow]);
 
   const selectedCust = useMemo(
-    () => customers.find((c) => c.id === selectedCustomerId),
+    () => (selectedCustomerId === UNREAL_INVOICE_ID ? null : customers.find((c) => c.id === selectedCustomerId)),
     [customers, selectedCustomerId]
   );
 
   // Tendered amounts
   const [tenderedUSD, setTenderedUSD] = useState<string>('');
   const [tenderedLBP, setTenderedLBP] = useState<string>('');
+  const [changeCurrency, setChangeCurrency] = useState<'USD' | 'LBP' | 'keep_extra' | 'auto'>('auto');
+  const [customChangeUSD, setCustomChangeUSD] = useState<string>('');
+  const [customChangeLBP, setCustomChangeLBP] = useState<string>('');
+  const [isCustomChange, setIsCustomChange] = useState<boolean>(false);
 
   const [lastCompletedSale, setLastCompletedSale] = useState<SaleTransaction | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [leftPanelMode, setLeftPanelMode] = useState<'log' | 'catalog'>('log');
   const catalogContainerRef = useRef<HTMLDivElement>(null);
   const printAfterSaleRef = useRef(false);
-
-  const getNumCols = () => (window.innerWidth >= 1280 ? 3 : window.innerWidth >= 640 ? 2 : 1);
-
-  const [numCols, setNumCols] = useState<number>(() => getNumCols());
-  useEffect(() => {
-    const updateCols = () => setNumCols(getNumCols());
-    window.addEventListener('resize', updateCols);
-    return () => window.removeEventListener('resize', updateCols);
-  }, []);
 
   const [focusedItemIndex, setFocusedItemIndex] = useState<number>(-1);
   const addToCartRef = useRef<((product: Product, isPiece?: boolean) => void) | null>(null);
@@ -497,9 +781,9 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   const productGridVirtualizer = useVirtualizer({
     count: Math.ceil(filteredProducts.length / numCols),
     getScrollElement: () => catalogContainerRef.current,
-    estimateSize: () => 150,
+    estimateSize: () => (catalogViewMode === 'advanced' ? 245 : 105),
     overscan: 4,
-    getItemKey: (index) => index,
+    getItemKey: (index) => `${catalogViewMode}-${index}`,
   });
 
   // Reset focus when filters change
@@ -524,22 +808,22 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
       if (leftPanelMode !== 'catalog') return;
       if (filteredProducts.length === 0) return;
 
-      const numCols = window.innerWidth >= 1280 ? 3 : window.innerWidth >= 640 ? 2 : 1;
+      const currentCols = numCols;
 
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setFocusedItemIndex(prev => {
           if (prev === -1) return 0;
-          const next = prev < filteredProducts.length - numCols ? prev + numCols : prev;
-          setTimeout(() => productGridVirtualizer.scrollToIndex(Math.floor(next / numCols), { align: 'auto', behavior: 'smooth' }), 0);
+          const next = prev < filteredProducts.length - currentCols ? prev + currentCols : prev;
+          setTimeout(() => productGridVirtualizer.scrollToIndex(Math.floor(next / currentCols), { align: 'auto', behavior: 'smooth' }), 0);
           return next;
         });
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setFocusedItemIndex(prev => {
           if (prev === -1) return 0;
-          const next = prev >= numCols ? prev - numCols : 0;
-          setTimeout(() => productGridVirtualizer.scrollToIndex(Math.floor(next / numCols), { align: 'auto', behavior: 'smooth' }), 0);
+          const next = prev >= currentCols ? prev - currentCols : 0;
+          setTimeout(() => productGridVirtualizer.scrollToIndex(Math.floor(next / currentCols), { align: 'auto', behavior: 'smooth' }), 0);
           return next;
         });
       } else if (e.key === 'ArrowRight') {
@@ -548,7 +832,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         setFocusedItemIndex(prev => {
           if (prev === -1) return 0;
           const next = prev < filteredProducts.length - 1 ? prev + 1 : prev;
-          setTimeout(() => productGridVirtualizer.scrollToIndex(Math.floor(next / numCols), { align: 'auto', behavior: 'smooth' }), 0);
+          setTimeout(() => productGridVirtualizer.scrollToIndex(Math.floor(next / currentCols), { align: 'auto', behavior: 'smooth' }), 0);
           return next;
         });
       } else if (e.key === 'ArrowLeft') {
@@ -557,7 +841,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         setFocusedItemIndex(prev => {
           if (prev === -1) return 0;
           const next = prev > 0 ? prev - 1 : 0;
-          setTimeout(() => productGridVirtualizer.scrollToIndex(Math.floor(next / numCols), { align: 'auto', behavior: 'smooth' }), 0);
+          setTimeout(() => productGridVirtualizer.scrollToIndex(Math.floor(next / currentCols), { align: 'auto', behavior: 'smooth' }), 0);
           return next;
         });
       } else if (e.key === 'Enter') {
@@ -565,7 +849,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         // unless they actually focused an item.
         if (focusedItemIndex >= 0 && focusedItemIndex < filteredProducts.length) {
           const prod = filteredProducts[focusedItemIndex];
-          if (prod.stockQuantity > 0 && addToCartRef.current) {
+          if ((prod.stockQuantity > 0 || isUnrealInvoice) && addToCartRef.current) {
             e.preventDefault();
             addToCartRef.current(prod);
           }
@@ -575,14 +859,14 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [leftPanelMode, filteredProducts, focusedItemIndex]);
+  }, [leftPanelMode, filteredProducts, focusedItemIndex, isUnrealInvoice]);
 
 
   // Global barcode scanner listener is handled by useBarcodeScanner hook at the top of the component
 
   // Cart operations
   const addToCart = (product: Product, isPiece: boolean = false) => {
-    if (product.stockQuantity <= 0) {
+    if (!isUnrealInvoice && product.stockQuantity <= 0) {
       setErrorMessage(`Cannot add "${product.name}": Out of stock!`);
       setTimeout(() => setErrorMessage(null), 3000);
       return;
@@ -592,14 +876,16 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
 
     setCart((prev) => {
       // Calculate current cart usage of this product to prevent exceeding stock
-      const currentUsage = prev
-        .filter((item) => item.product.id === product.id)
-        .reduce((sum, item) => sum + (item.isPiece && item.product.piecesPerBox ? item.quantity / item.product.piecesPerBox : item.quantity), 0);
+      if (!isUnrealInvoice) {
+        const currentUsage = prev
+          .filter((item) => item.product.id === product.id)
+          .reduce((sum, item) => sum + (item.isPiece && item.product.piecesPerBox ? item.quantity / item.product.piecesPerBox : item.quantity), 0);
 
-      if (currentUsage + requestedEquivalent > product.stockQuantity) {
-        setErrorMessage(`Only ${formatStockDisplay(product.stockQuantity, product.isDivisible, product.piecesPerBox, product.pieceName)} available in stock!`);
-        setTimeout(() => setErrorMessage(null), 3000);
-        return prev;
+        if (currentUsage + requestedEquivalent > product.stockQuantity) {
+          setErrorMessage(`Only ${formatStockDisplay(product.stockQuantity, product.isDivisible, product.piecesPerBox, product.pieceName)} available in stock!`);
+          setTimeout(() => setErrorMessage(null), 3000);
+          return prev;
+        }
       }
 
       const existingIdx = prev.findIndex((item) => item.product.id === product.id && !!item.isPiece === !!isPiece && (!item.selectedBatchNumber || (item.product.batches && item.product.batches.length <= 1)));
@@ -660,16 +946,18 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
             const nextQty = item.quantity + delta;
             
             // Check usage
-            const otherUsage = prev
-               .filter(i => i.product.id === item.product.id && i.cartItemId !== cartItemId)
-               .reduce((sum, i) => sum + (i.isPiece && i.product.piecesPerBox ? i.quantity / i.product.piecesPerBox : i.quantity), 0);
-            
-            const thisUsage = item.isPiece && item.product.piecesPerBox ? nextQty / item.product.piecesPerBox : nextQty;
+            if (!isUnrealInvoice) {
+              const otherUsage = prev
+                 .filter(i => i.product.id === item.product.id && i.cartItemId !== cartItemId)
+                 .reduce((sum, i) => sum + (i.isPiece && i.product.piecesPerBox ? i.quantity / i.product.piecesPerBox : i.quantity), 0);
+              
+              const thisUsage = item.isPiece && item.product.piecesPerBox ? nextQty / item.product.piecesPerBox : nextQty;
 
-            if (otherUsage + thisUsage > item.product.stockQuantity) {
-              setErrorMessage(`Stock maximum reached (${formatStockDisplay(item.product.stockQuantity, item.product.isDivisible, item.product.piecesPerBox, item.product.pieceName)})`);
-              setTimeout(() => setErrorMessage(null), 2500);
-              return item;
+              if (otherUsage + thisUsage > item.product.stockQuantity) {
+                setErrorMessage(`Stock maximum reached (${formatStockDisplay(item.product.stockQuantity, item.product.isDivisible, item.product.piecesPerBox, item.product.pieceName)})`);
+                setTimeout(() => setErrorMessage(null), 2500);
+                return item;
+              }
             }
             return { ...item, quantity: nextQty };
           }
@@ -686,16 +974,18 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         .map((item) => {
           if (item.cartItemId === cartItemId) {
             // Check usage
-            const otherUsage = prev
-               .filter(i => i.product.id === item.product.id && i.cartItemId !== cartItemId)
-               .reduce((sum, i) => sum + (i.isPiece && i.product.piecesPerBox ? i.quantity / i.product.piecesPerBox : i.quantity), 0);
-            
-            const thisUsage = item.isPiece && item.product.piecesPerBox ? qty / item.product.piecesPerBox : qty;
-            
-            if (otherUsage + thisUsage > item.product.stockQuantity) {
-              setErrorMessage(`Stock maximum reached (${formatStockDisplay(item.product.stockQuantity, item.product.isDivisible, item.product.piecesPerBox, item.product.pieceName)})`);
-              setTimeout(() => setErrorMessage(null), 2500);
-              return item;
+            if (!isUnrealInvoice) {
+              const otherUsage = prev
+                 .filter(i => i.product.id === item.product.id && i.cartItemId !== cartItemId)
+                 .reduce((sum, i) => sum + (i.isPiece && i.product.piecesPerBox ? i.quantity / i.product.piecesPerBox : i.quantity), 0);
+              
+              const thisUsage = item.isPiece && item.product.piecesPerBox ? qty / item.product.piecesPerBox : qty;
+              
+              if (otherUsage + thisUsage > item.product.stockQuantity) {
+                setErrorMessage(`Stock maximum reached (${formatStockDisplay(item.product.stockQuantity, item.product.isDivisible, item.product.piecesPerBox, item.product.pieceName)})`);
+                setTimeout(() => setErrorMessage(null), 2500);
+                return item;
+              }
             }
             return { ...item, quantity: qty };
           }
@@ -739,6 +1029,10 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     setCart([]);
     setTenderedUSD('');
     setTenderedLBP('');
+    setChangeCurrency('auto');
+    setCustomChangeUSD('');
+    setCustomChangeLBP('');
+    setIsCustomChange(false);
     setWriteOffDifferences(false);
     setErrorMessage(null);
   };
@@ -850,21 +1144,87 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   const totalPaidInLBP = Math.round(paidUSD * exchangeRate) + paidLBP;
 
   // Exact difference between received and total due
-  const diffUSD = totalPaidInUSD - totalUSD;
-  const isExactPayment = hasEnteredPayment && Math.abs(diffUSD) < 0.009;
-  const isOverpaid = hasEnteredPayment && diffUSD >= 0.009;
-  const isUnderpaid = hasEnteredPayment && diffUSD <= -0.009;
+  let isExactPayment = false;
+  let isOverpaid = false;
+  let isUnderpaid = false;
+  let changeUSD = 0;
+  let changeLBP = 0;
+  let remainingUSD = 0;
+  let remainingLBP = 0;
 
-  // Change amounts to return (when customer overpaid)
-  const changeUSD = isOverpaid ? Number(diffUSD.toFixed(2)) : 0;
-  const changeLBP = isOverpaid
-    ? (paidUSD === 0 ? Math.max(0, paidLBP - totalLBP) : Math.round(diffUSD * exchangeRate))
+  if (hasEnteredPayment) {
+    if (paidUSD > 0 && paidLBP === 0) {
+      // Pure USD Payment
+      const diffUSD = paidUSD - totalUSD;
+      if (Math.abs(diffUSD) < 0.005) {
+        isExactPayment = true;
+      } else if (diffUSD >= 0.005) {
+        isOverpaid = true;
+        changeUSD = Number(diffUSD.toFixed(2));
+        changeLBP = Math.round(changeUSD * exchangeRate);
+      } else {
+        isUnderpaid = true;
+        remainingUSD = Number(Math.abs(diffUSD).toFixed(2));
+        remainingLBP = Math.round(remainingUSD * exchangeRate);
+      }
+    } else {
+      // Pure LBP or Mixed Payment (LBP is involved)
+      const diffLBP = totalPaidInLBP - totalLBP;
+
+      if (diffLBP === 0) {
+        isExactPayment = true;
+      } else if (diffLBP > 0) {
+        isOverpaid = true;
+        changeLBP = diffLBP;
+        changeUSD = Number((diffLBP / (exchangeRate || 89500)).toFixed(2));
+      } else {
+        isUnderpaid = true;
+        remainingLBP = Math.abs(diffLBP);
+        remainingUSD = Number((remainingLBP / (exchangeRate || 89500)).toFixed(2));
+      }
+    }
+  }
+
+  const effectiveChangeCurrency: 'USD' | 'LBP' =
+    changeCurrency === 'USD' || changeCurrency === 'LBP'
+      ? changeCurrency
+      : (paidUSD > 0 && paidLBP === 0 && changeUSD >= 0.01)
+      ? 'USD'
+      : 'LBP';
+
+  let actualChangeUSD = 0;
+  let actualChangeLBP = 0;
+
+  if (isOverpaid) {
+    if (isCustomChange) {
+      actualChangeUSD = customChangeUSD.trim() !== '' ? parseUSD(customChangeUSD) : 0;
+      actualChangeLBP = customChangeLBP.trim() !== '' ? parseLBP(customChangeLBP) : 0;
+    } else if (changeCurrency === 'keep_extra') {
+      actualChangeUSD = 0;
+      actualChangeLBP = 0;
+    } else {
+      actualChangeUSD = effectiveChangeCurrency === 'USD' ? changeUSD : 0;
+      actualChangeLBP = effectiveChangeCurrency === 'LBP' ? changeLBP : 0;
+    }
+  }
+
+  // Maximum change customer is entitled to
+  const maxChangeUSD = changeUSD;
+  const maxChangeLBP = changeLBP;
+
+  // Total change returned to customer in USD equivalent
+  const totalChangeReturnedUSD = Number((actualChangeUSD + (exchangeRate > 0 ? actualChangeLBP / exchangeRate : 0)).toFixed(2));
+  const totalChangeReturnedLBP = Math.round(actualChangeUSD * (exchangeRate || 89500)) + actualChangeLBP;
+
+  // Has cashier entered more change than overpayment?
+  const isChangeExceeding = isOverpaid && (totalChangeReturnedUSD > maxChangeUSD + 0.009);
+
+  // Extra money retained by the pharmacy and added to the cash drawer
+  const retainedUSD = isOverpaid && !isChangeExceeding
+    ? Math.max(0, Number((maxChangeUSD - totalChangeReturnedUSD).toFixed(2)))
     : 0;
-
-  // Shortage amounts (when customer underpaid)
-  const remainingUSD = isUnderpaid ? Number(Math.abs(diffUSD).toFixed(2)) : 0;
-  const remainingLBP = isUnderpaid
-    ? (paidUSD === 0 ? Math.max(0, totalLBP - paidLBP) : Math.round(Math.abs(diffUSD) * exchangeRate))
+  const retainedLBP = isOverpaid && !isChangeExceeding
+    ? Math.max(0, Math.round(maxChangeLBP - totalChangeReturnedLBP))
     : 0;
 
   // Complete checkout
@@ -872,7 +1232,12 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   const handlePrintClick = () => {
     if (cart.length === 0) return;
     
-    const isInvalid = (!selectedCustomerId && !hasEnteredPayment) || (hasEnteredPayment && isUnderpaid && !writeOffDifferences);
+    if (isUnrealInvoice) {
+      handleCheckout(true);
+      return;
+    }
+
+    const isInvalid = (!selectedCustomerId && !hasEnteredPayment) || (hasEnteredPayment && isUnderpaid && !writeOffDifferences) || (isOverpaid && isChangeExceeding);
     
     if (isInvalid) {
       // Print Draft
@@ -932,10 +1297,15 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         paymentMethod: finalMethod,
         amountPaidUSD: finalPaidUSD,
         amountPaidLBP: finalPaidLBP,
-        changeGivenUSD: changeUSD,
-        changeGivenLBP: changeLBP,
+        changeGivenUSD: actualChangeUSD,
+        changeGivenLBP: actualChangeLBP,
         writeOffUSD: 0,
         writeOffLBP: 0,
+        retainedUSD,
+        retainedLBP,
+        notes: (retainedUSD >= 0.01 || retainedLBP > 0)
+          ? `Retained extra in drawer: ${retainedUSD >= 0.01 ? `${retainedUSD.toFixed(2)} ` : ''}(+${formatLBPValue(retainedLBP)} LBP)`
+          : undefined,
         synced: false,
       };
       
@@ -953,20 +1323,43 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
       return;
     }
 
-    if (!selectedCustomerId && !hasEnteredPayment) {
+    if (!selectedCustomerId && !isUnrealInvoice && !hasEnteredPayment) {
       setErrorMessage('Please enter the received cash amount (USD or LBP) for Cash Client.');
       return;
     }
 
     if (hasEnteredPayment && isUnderpaid && !writeOffDifferences) {
+      const shortageDisplay = remainingUSD >= 0.01
+        ? `${remainingUSD.toFixed(2)} (${formatLBPValue(remainingLBP)} LBP)`
+        : `${formatLBPValue(remainingLBP)} LBP`;
       setErrorMessage(
-        `Received payment is short by $${remainingUSD.toFixed(2)} (${formatLBPValue(remainingLBP)} LBP). Check "Write off differences" to forgive the shortage and accept this transaction.`
+        `Received payment is short by ${shortageDisplay}. Check "Write off differences" to forgive the shortage and accept this transaction.`
       );
       return;
     }
 
-    // If "Cash Client" is chosen, it is always a payment paid with cash directly (not a debt)
-    if (!selectedCustomerId) {
+    if (isOverpaid && isChangeExceeding) {
+      setErrorMessage(
+        `Change to return (${totalChangeReturnedUSD.toFixed(2)}) cannot exceed customer overpayment (${maxChangeUSD.toFixed(2)}).`
+      );
+      return;
+    }
+
+    if (!isUnrealInvoice) {
+      const exceedingItem = cart.find((item) => {
+        const usage = cart
+          .filter((i) => i.product.id === item.product.id)
+          .reduce((sum, i) => sum + (i.isPiece && i.product.piecesPerBox ? i.quantity / i.product.piecesPerBox : i.quantity), 0);
+        return usage > item.product.stockQuantity;
+      });
+      if (exceedingItem) {
+        setErrorMessage(`"${exceedingItem.product.name}" exceeds available stock. Switch to "Unreal Invoice" to proceed without stock deduction.`);
+        return;
+      }
+    }
+
+    // If "Cash Client" or "Unreal Invoice" is chosen, it is always a payment paid with cash directly (not a debt)
+    if (!selectedCustomerId || isUnrealInvoice) {
       executeCompleteSale('cash');
       return;
     }
@@ -978,12 +1371,101 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   const executeCompleteSale = (chosenType: 'cash' | 'debt') => {
     if (cart.length === 0) return;
 
+    if (isUnrealInvoice) {
+      if (hasEnteredPayment && isUnderpaid && !writeOffDifferences) {
+        const shortageDisplay = remainingUSD >= 0.01
+          ? `$${remainingUSD.toFixed(2)} (${formatLBPValue(remainingLBP)} LBP)`
+          : `${formatLBPValue(remainingLBP)} LBP`;
+        setErrorMessage(
+          `Tendered cash is less than total due. Remaining: ${shortageDisplay}. Please check "Write off differences" to accept.`
+        );
+        setShowPaymentConfirmModal(false);
+        return;
+      }
+
+      let finalPaidUSD = paidUSD;
+      let finalPaidLBP = paidLBP;
+      let finalMethod: 'cash_lbp' | 'cash_usd' | 'mixed' = 'cash_lbp';
+
+      if (!hasEnteredPayment) {
+        finalPaidUSD = 0;
+        finalPaidLBP = totalLBP;
+        finalMethod = 'cash_lbp';
+      } else {
+        if (finalPaidUSD > 0 && finalPaidLBP > 0) {
+          finalMethod = 'mixed';
+        } else if (finalPaidUSD > 0 && finalPaidLBP === 0) {
+          finalMethod = 'cash_usd';
+        } else if (finalPaidLBP > 0 && finalPaidUSD === 0) {
+          finalMethod = 'cash_lbp';
+        }
+      }
+
+      const unrealSaleRecord = recordSale({
+        date: new Date().toISOString(),
+        items: cart.map((item) => {
+          const rate = settings.vatRates?.[item.product.category] || 0;
+          const preTaxUSD = item.unitPriceUSD * item.quantity * (1 - item.discountPercent / 100);
+          const taxUSD = preTaxUSD * (rate / 100);
+          const finalItemTotalUSD = Number((preTaxUSD + taxUSD).toFixed(2));
+          return {
+            productId: item.product.id,
+            productCode: item.product.code,
+            productName: item.product.name,
+            category: item.product.category,
+            quantity: item.quantity,
+            discountPercent: item.discountPercent,
+            unitPriceUSD: item.unitPriceUSD,
+            unitPriceLBP: item.unitPriceLBP,
+            costPriceUSD: item.product.costPriceUSD,
+            totalUSD: finalItemTotalUSD,
+            totalLBP: Math.round(finalItemTotalUSD * exchangeRate),
+            isPiece: item.isPiece,
+            selectedBatchNumber: item.selectedBatchNumber,
+            selectedExpiryDate: item.selectedExpiryDate,
+          };
+        }),
+        totalUSD,
+        totalLBP,
+        exchangeRate,
+        customerId: undefined,
+        customerName: 'Unreal Invoice',
+        cashierId: currentUser?.id || 'admin',
+        cashierName: currentUser?.name || 'Administrator',
+        paymentMethod: finalMethod,
+        amountPaidUSD: finalPaidUSD,
+        amountPaidLBP: finalPaidLBP,
+        changeGivenUSD: actualChangeUSD,
+        changeGivenLBP: actualChangeLBP,
+        writeOffUSD: 0,
+        writeOffLBP: 0,
+        retainedUSD,
+        retainedLBP,
+        notes: (retainedUSD >= 0.01 || retainedLBP > 0)
+          ? `Retained extra in drawer: ${retainedUSD >= 0.01 ? `$${retainedUSD.toFixed(2)} ` : ''}(+${formatLBPValue(retainedLBP)} LBP)`
+          : undefined,
+        isUnreal: true,
+      });
+
+      if (printAfterSaleRef.current) {
+        setLastCompletedSale(unrealSaleRecord);
+      }
+      clearCart();
+      setTenderedUSD('');
+      setTenderedLBP('');
+      setShowPaymentConfirmModal(false);
+      return;
+    }
+
     const currentCustomer = customers.find((c) => c.id === selectedCustomerId);
 
     if (chosenType === 'cash') {
       if (hasEnteredPayment && isUnderpaid && !writeOffDifferences) {
+        const shortageDisplay = remainingUSD >= 0.01
+          ? `$${remainingUSD.toFixed(2)} (${formatLBPValue(remainingLBP)} LBP)`
+          : `${formatLBPValue(remainingLBP)} LBP`;
         setErrorMessage(
-          `Tendered cash is less than total due. Remaining: $${remainingUSD.toFixed(2)} (${formatLBPValue(remainingLBP)} LBP). Please check "Write off differences" to accept.`
+          `Tendered cash is less than total due. Remaining: ${shortageDisplay}. Please check "Write off differences" to accept.`
         );
         setShowPaymentConfirmModal(false);
         return;
@@ -1047,12 +1529,16 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         paymentMethod: finalMethod,
         amountPaidUSD: finalPaidUSD,
         amountPaidLBP: finalPaidLBP,
-        changeGivenUSD: changeUSD,
-        changeGivenLBP: changeLBP,
+        changeGivenUSD: actualChangeUSD,
+        changeGivenLBP: actualChangeLBP,
         writeOffUSD: writeOffUSDAmount,
         writeOffLBP: writeOffLBPAmount,
-        notes: writeOffUSDAmount > 0
-          ? `Difference written off: $${writeOffUSDAmount.toFixed(2)} (${formatLBPValue(writeOffLBPAmount)} LBP)`
+        retainedUSD,
+        retainedLBP,
+        notes: (writeOffUSDAmount > 0 || writeOffLBPAmount > 0)
+          ? `Difference written off: ${writeOffUSDAmount >= 0.01 ? `$${writeOffUSDAmount.toFixed(2)} ` : ''}(${formatLBPValue(writeOffLBPAmount)} LBP)`
+          : (retainedUSD >= 0.01 || retainedLBP > 0)
+          ? `Retained extra in drawer: ${retainedUSD >= 0.01 ? `$${retainedUSD.toFixed(2)} ` : ''}(+${formatLBPValue(retainedLBP)} LBP)`
           : undefined,
       });
 
@@ -1126,8 +1612,8 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
       {/* LEFT PANEL: Sales Transactions Log & Product Directory */}
       <div className={`flex flex-1 flex-col ${cartPosition === 'right' ? 'border-r' : 'border-l'} border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden`}>
         {/* View Mode Switcher Header Toolbar */}
-        <div className="flex items-center justify-between border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/90 px-3 py-2 shrink-0">
-          <div className="flex items-center space-x-1.5">
+        <div className="flex items-center justify-between border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/90 px-3 py-2 shrink-0 flex-wrap gap-2">
+          <div className="flex items-center space-x-1.5 flex-wrap gap-1">
             <SectionRestoreButton section="sale" className="mr-1" />
             <button
               onClick={() => setLeftPanelMode('log')}
@@ -1150,13 +1636,44 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
               }`}
             >
               <ShoppingBag className="h-3.5 w-3.5" />
-              <span>Medications Catalog (POS)</span>
+              <span>Medications Catalog</span>
             </button>
           </div>
 
+          {/* Quick Toggle: POS Mode vs Advanced Mode */}
           {leftPanelMode === 'catalog' && (
-            <div className="text-[10px] text-gray-500 dark:text-slate-400 hidden sm:block">
-              Click any medication to add directly to cart
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase text-gray-500 dark:text-slate-400 hidden sm:inline-block">
+                View:
+              </span>
+              <div className="flex items-center rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-0.5 shadow-2xs text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleSetCatalogViewMode('pos')}
+                  className={`flex items-center gap-1 rounded px-2.5 py-1 text-[10px] font-bold uppercase transition-all cursor-pointer ${
+                    catalogViewMode === 'pos'
+                      ? 'bg-teal-700 text-white shadow-2xs'
+                      : 'text-gray-600 hover:text-gray-900 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                  title="POS Mode: Streamlined, high-speed retail checkout view"
+                >
+                  <Zap className="h-3 w-3 text-amber-300" />
+                  <span>POS Mode</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetCatalogViewMode('advanced')}
+                  className={`flex items-center gap-1 rounded px-2.5 py-1 text-[10px] font-bold uppercase transition-all cursor-pointer ${
+                    catalogViewMode === 'advanced'
+                      ? 'bg-teal-700 text-white shadow-2xs'
+                      : 'text-gray-600 hover:text-gray-900 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                  title="Advanced Mode: Full inventory details, batch/expiry, cost prices, margins & agents"
+                >
+                  <SlidersHorizontal className="h-3 w-3" />
+                  <span>Advanced Mode</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1259,7 +1776,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                             transform: `translateY(${virtualRow.start}px)`,
                             display: 'grid',
                             gridTemplateColumns: `repeat(${numCols}, minmax(0, 1fr))`,
-                            gap: '0.625rem',
+                            gap: catalogViewMode === 'pos' ? '0.5rem' : '0.625rem',
                           }}
                         >
                           {rowItems.map((prod, j) => {
@@ -1277,6 +1794,8 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                                 onAddPiece={(p) => addToCart(p, true)}
                                 onViewScientific={onViewScientific}
                                 onOpenStockCard={handleOpenStockCard}
+                                isUnreal={isUnrealInvoice}
+                                viewMode={catalogViewMode}
                               />
                             );
                           })}
@@ -1325,15 +1844,24 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         </div>
 
         {/* Customer Selector */}
-        <div className="p-2.5 border-b border-gray-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+        <div className={`p-2.5 border-b transition-colors ${
+          isUnrealInvoice
+            ? 'border-amber-300 bg-amber-50/70 dark:border-amber-700/50 dark:bg-amber-950/30'
+            : 'border-gray-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30'
+        }`}>
           <div className="flex items-center space-x-2">
-            <User className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+            <User className={`h-3.5 w-3.5 shrink-0 ${isUnrealInvoice ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'}`} />
             <select
               value={selectedCustomerId}
               onChange={(e) => setSelectedCustomerId(e.target.value)}
-              className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-slate-800 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              className={`w-full rounded border px-2 py-1 text-xs transition-colors focus:outline-hidden ${
+                isUnrealInvoice
+                  ? 'border-amber-400 bg-white font-semibold text-amber-900 focus:border-amber-500 dark:border-amber-600 dark:bg-slate-900 dark:text-amber-200'
+                  : 'border-gray-300 bg-white text-slate-800 focus:border-teal-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'
+              }`}
             >
               <option value="">Cash Client</option>
+              <option value={UNREAL_INVOICE_ID}>Unreal Invoice</option>
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} {c.balanceUSD > 0 ? `• Debt: $${c.balanceUSD}` : ''}
@@ -1341,6 +1869,12 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
               ))}
             </select>
           </div>
+          {isUnrealInvoice && (
+            <div className="mt-1.5 flex items-center justify-between rounded bg-amber-100/70 px-2 py-1 text-[10px] text-amber-900 dark:bg-amber-900/30 dark:text-amber-200">
+              <span className="font-semibold">Fictitious invoice mode</span>
+              <span className="opacity-80">No stock deduction • Excluded from reports</span>
+            </div>
+          )}
         </div>
 
         {/* Error Alert */}
@@ -1386,11 +1920,22 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                         className="w-full max-w-[220px] appearance-auto text-[10px] bg-white border border-gray-300 rounded px-1.5 py-0.5 text-slate-700 focus:outline-hidden focus:border-teal-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 cursor-pointer shadow-2xs"
                       >
                         <option value="">Auto-Select Expiry</option>
-                        {item.product.batches.map(b => (
-                          <option key={`${b.batchNumber}-${b.expiryDate}`} value={`${b.batchNumber}||${b.expiryDate}`}>
-                            Exp: {b.expiryDate} (Batch: {b.batchNumber})
-                          </option>
-                        ))}
+                        {(() => {
+                          const seen = new Set<string>();
+                          const distinctBatches: typeof item.product.batches = [];
+                          for (const b of (item.product.batches || [])) {
+                            const pairKey = `${b.batchNumber || ''}||${b.expiryDate || ''}`;
+                            if (!seen.has(pairKey)) {
+                              seen.add(pairKey);
+                              distinctBatches.push(b);
+                            }
+                          }
+                          return distinctBatches.map((b, bIdx) => (
+                            <option key={`${b.batchNumber || 'NA'}-${b.expiryDate || 'NA'}-${bIdx}`} value={`${b.batchNumber}||${b.expiryDate}`}>
+                              Exp: {b.expiryDate} (Batch: {b.batchNumber})
+                            </option>
+                          ));
+                        })()}
                       </select>
                     </div>
                   )}
@@ -1415,7 +1960,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                       }
                     }}
                     min="0"
-                    max={item.isPiece && item.product.piecesPerBox ? item.product.stockQuantity * item.product.piecesPerBox : item.product.stockQuantity}
+                    max={isUnrealInvoice ? undefined : (item.isPiece && item.product.piecesPerBox ? item.product.stockQuantity * item.product.piecesPerBox : item.product.stockQuantity)}
                     className="w-7 text-center font-bold text-[10px] text-slate-800 dark:text-slate-100 bg-transparent border border-gray-300 dark:border-slate-700 rounded h-4 focus:outline-hidden focus:border-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   />
                   <button
@@ -1727,21 +2272,225 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
             className="transition-all"
           >
             {isOverpaid ? (
-              <div className="flex flex-col gap-0.5 rounded-lg border border-emerald-300 bg-emerald-50/95 p-1.5 text-[10px] text-emerald-950 shadow-xs dark:border-emerald-700/60 dark:bg-emerald-950/50 dark:text-emerald-100">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-[10px] uppercase tracking-wider text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
+              <div className="flex flex-col gap-1 rounded-lg border border-emerald-300 bg-emerald-50/95 p-1.5 text-[10px] text-emerald-950 shadow-xs dark:border-emerald-700/60 dark:bg-emerald-950/50 dark:text-emerald-100">
+                <div className="flex items-center justify-between gap-1 flex-wrap">
+                  <span className="font-bold text-[10px] uppercase tracking-wider text-emerald-800 dark:text-emerald-300 flex items-center gap-1 shrink-0">
                     <Banknote className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
-                    Change to Return:
+                    Change:
                   </span>
-                  <span className="font-mono text-sm font-extrabold text-emerald-700 dark:text-emerald-300 leading-none">
-{formatLBPValue(changeLBP)} LBP
-                  </span>
+                  <div className="flex items-center gap-1 flex-wrap justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChangeCurrency('USD');
+                        setIsCustomChange(false);
+                      }}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                        !isCustomChange && changeCurrency === 'USD'
+                          ? 'bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-700'
+                          : 'bg-white/80 text-emerald-800 hover:bg-white border border-emerald-300 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-800'
+                      }`}
+                      title="Return full change in USD ($)"
+                    >
+                      ${changeUSD.toFixed(2)} USD
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChangeCurrency('LBP');
+                        setIsCustomChange(false);
+                      }}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                        !isCustomChange && (changeCurrency === 'LBP' || (changeCurrency === 'auto' && effectiveChangeCurrency === 'LBP'))
+                          ? 'bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-700'
+                          : 'bg-white/80 text-emerald-800 hover:bg-white border border-emerald-300 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-800'
+                      }`}
+                      title="Return full change in Lebanese Pounds (LBP)"
+                    >
+                      {formatLBPValue(changeLBP)} LBP
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChangeCurrency('keep_extra');
+                        setIsCustomChange(false);
+                      }}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                        !isCustomChange && changeCurrency === 'keep_extra'
+                          ? 'bg-teal-700 text-white shadow-xs ring-1 ring-teal-800'
+                          : 'bg-white/80 text-teal-800 hover:bg-white border border-teal-300 dark:bg-teal-900/40 dark:text-teal-300 dark:border-teal-800'
+                      }`}
+                      title="Keep extra money in cash drawer (Return 0 change to customer)"
+                    >
+                      Keep in Drawer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isCustomChange;
+                        setIsCustomChange(next);
+                        if (next) {
+                          // Auto-calculate split: USD whole bills + remaining fractional cents in LBP
+                          const wholeUSD = Math.floor(changeUSD);
+                          const fractionUSD = Number((changeUSD - wholeUSD).toFixed(2));
+                          const fractionLBP = Math.round(fractionUSD * (exchangeRate || 89500));
+
+                          if (wholeUSD > 0 && fractionLBP > 0) {
+                            setCustomChangeUSD(wholeUSD.toFixed(2));
+                            setCustomChangeLBP(formatLBPValue(fractionLBP));
+                          } else if (changeUSD < 1.0 && fractionLBP > 0) {
+                            setCustomChangeUSD('0.00');
+                            setCustomChangeLBP(formatLBPValue(fractionLBP));
+                          } else {
+                            setCustomChangeUSD(changeUSD.toFixed(2));
+                            setCustomChangeLBP('0');
+                          }
+                        }
+                      }}
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-semibold transition-all cursor-pointer ${
+                        isCustomChange
+                          ? 'bg-slate-700 text-white dark:bg-slate-600 shadow-xs'
+                          : 'bg-white/80 text-slate-700 hover:bg-white border border-gray-300 dark:bg-slate-800 dark:text-slate-300'
+                      }`}
+                      title="Enter custom or partial change to return (auto-calculates balance)"
+                    >
+                      Custom...
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between text-[10px] pt-0.5 border-t border-emerald-200/60 dark:border-emerald-800/40">
-                  <span className="text-emerald-800/80 dark:text-emerald-300/80">Equivalent in USD:</span>
-                  <span className="font-mono font-bold text-emerald-800 dark:text-emerald-200">
-                    ${changeUSD.toFixed(2)} USD
-                  </span>
+
+                {isCustomChange && (
+                  <div className="flex flex-col gap-1.5 pt-1.5 border-t border-emerald-200/60 dark:border-emerald-800/40 bg-emerald-100/60 dark:bg-emerald-950/70 p-1.5 rounded">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[10px] font-bold text-emerald-950 dark:text-emerald-100 flex items-center gap-1 shrink-0">
+                        Custom Split Change:
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const wholeUSD = Math.floor(changeUSD);
+                            const fractionUSD = Number((changeUSD - wholeUSD).toFixed(2));
+                            const fractionLBP = Math.round(fractionUSD * (exchangeRate || 89500));
+                            setCustomChangeUSD(wholeUSD > 0 ? wholeUSD.toFixed(2) : '0.00');
+                            setCustomChangeLBP(fractionLBP > 0 ? formatLBPValue(fractionLBP) : '0');
+                          }}
+                          className="px-1 py-0.2 rounded bg-white/90 dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 text-[9px] font-semibold text-emerald-900 dark:text-emerald-200 hover:bg-emerald-50 cursor-pointer"
+                          title="Auto-split: USD bills + LBP cents"
+                        >
+                          Auto-Split ($+L.L.)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomChangeUSD(changeUSD.toFixed(2));
+                            setCustomChangeLBP('0');
+                          }}
+                          className="px-1 py-0.2 rounded bg-white/90 dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 text-[9px] font-semibold text-emerald-900 dark:text-emerald-200 hover:bg-emerald-50 cursor-pointer"
+                          title="All in USD"
+                        >
+                          All $
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomChangeUSD('0.00');
+                            setCustomChangeLBP(formatLBPValue(changeLBP));
+                          }}
+                          className="px-1 py-0.2 rounded bg-white/90 dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 text-[9px] font-semibold text-emerald-900 dark:text-emerald-200 hover:bg-emerald-50 cursor-pointer"
+                          title="All in LBP"
+                        >
+                          All L.L.
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1">
+                        <label className="text-[10px] font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-0.5">
+                          <span>$ (USD):</span>
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={customChangeUSD}
+                          onChange={(e) => {
+                            const valStr = e.target.value;
+                            setCustomChangeUSD(valStr);
+                            if (valStr.trim() === '') {
+                              setCustomChangeLBP(formatLBPValue(changeLBP));
+                              return;
+                            }
+                            const valUSD = parseUSD(valStr);
+                            if (!isNaN(valUSD)) {
+                              const remUSD = Math.max(0, Number((changeUSD - valUSD).toFixed(2)));
+                              const remLBP = Math.round(remUSD * (exchangeRate || 89500));
+                              setCustomChangeLBP(remLBP > 0 ? formatLBPValue(remLBP) : '0');
+                            }
+                          }}
+                          placeholder="0.00"
+                          className="w-16 rounded border border-emerald-300 bg-white px-1.5 py-0.5 text-[11px] font-mono font-bold dark:bg-slate-900 dark:border-emerald-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <span className="text-emerald-700 dark:text-emerald-400 font-bold text-[10px]">+</span>
+
+                      <div className="flex items-center gap-1">
+                        <label className="text-[10px] font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-0.5">
+                          <span>L.L. (LBP):</span>
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={customChangeLBP}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const digits = raw.replace(/\D/g, '');
+                            const formatted = digits ? digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : '';
+                            setCustomChangeLBP(formatted);
+                            if (!digits || digits === '0') {
+                              setCustomChangeUSD(changeUSD.toFixed(2));
+                              return;
+                            }
+                            const valLBP = parseLBP(digits);
+                            const rate = exchangeRate || 89500;
+                            const lbpInUSD = rate > 0 ? valLBP / rate : 0;
+                            const remUSD = Math.max(0, Number((changeUSD - lbpInUSD).toFixed(2)));
+                            setCustomChangeUSD(remUSD > 0.009 ? remUSD.toFixed(2) : '0.00');
+                          }}
+                          placeholder="0"
+                          className="w-24 rounded border border-emerald-300 bg-white px-1.5 py-0.5 text-[11px] font-mono font-bold dark:bg-slate-900 dark:border-emerald-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between text-[9px] pt-0.5 border-t border-emerald-200/60 dark:border-emerald-800/40">
+                  {changeCurrency === 'keep_extra' && !isCustomChange ? (
+                    <span className="text-teal-900 dark:text-teal-200 font-bold">
+                      Kept in drawer: <strong className="underline">+{paidUSD > 0 && paidLBP === 0 ? `$${changeUSD.toFixed(2)} USD` : `${formatLBPValue(changeLBP)} LBP`}</strong> (Full tendered cash added to drawer)
+                    </span>
+                  ) : (
+                    <span className="text-emerald-800/80 dark:text-emerald-300/80">
+                      Giving back: <strong className="font-bold">{actualChangeUSD > 0 ? `$${actualChangeUSD.toFixed(2)} USD` : ''} {actualChangeLBP > 0 ? `${formatLBPValue(actualChangeLBP)} LBP` : ''}{actualChangeUSD === 0 && actualChangeLBP === 0 ? 'None ($0.00)' : ''}</strong>
+                      {(retainedUSD >= 0.01 || retainedLBP > 0) && (
+                        <span className="ml-1 text-teal-800 dark:text-teal-300 font-bold">
+                          • Retaining in drawer: +{retainedUSD >= 0.01 ? `$${retainedUSD.toFixed(2)}` : ''}{retainedLBP > 0 ? ` +${formatLBPValue(retainedLBP)} LBP` : ''}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {isChangeExceeding ? (
+                    <span className="text-rose-600 dark:text-rose-400 font-bold text-[9px]">
+                      Exceeds received amount!
+                    </span>
+                  ) : (
+                    <span className="text-emerald-700/70 dark:text-emerald-400/70 italic text-[9px]">
+                      {changeCurrency === 'keep_extra' ? 'Click USD/LBP to return change' : 'Click to change mode'}
+                    </span>
+                  )}
                 </div>
               </div>
             ) : isExactPayment ? (
@@ -1768,7 +2517,9 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                 <div className="flex items-center justify-between text-[10px] text-amber-800/90 dark:text-amber-300/90 pt-0.5 border-t border-amber-200/60 dark:border-amber-900/40">
                   <span>Shortage:</span>
                   <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
-                    -${remainingUSD.toFixed(2)} USD
+                    {remainingUSD >= 0.01
+                      ? `-$${remainingUSD.toFixed(2)} USD`
+                      : `-${formatLBPValue(remainingLBP)} LBP`}
                   </span>
                 </div>
               </div>
@@ -1788,16 +2539,20 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
             {/* Checkout Buttons */}
             <button
               onClick={() => handleCheckout(false)}
-              disabled={cart.length === 0 || (isUnderpaid && !writeOffDifferences) || (!selectedCustomerId && !hasEnteredPayment)}
+              disabled={cart.length === 0 || (isUnderpaid && !writeOffDifferences) || (!selectedCustomerId && !isUnrealInvoice && !hasEnteredPayment)}
               className={`flex-1 flex items-center justify-center space-x-1 rounded-lg px-2 text-[10px] font-bold shadow-xs transition-all cursor-pointer uppercase tracking-wider ${
                 isUnderpaid && !writeOffDifferences
                   ? 'bg-amber-600 text-white opacity-50'
+                  : isUnrealInvoice
+                  ? 'bg-amber-600 text-white hover:bg-amber-700 active:scale-[0.99]'
                   : 'bg-teal-600 text-white hover:bg-teal-700 active:scale-[0.99]'
               } disabled:opacity-40`}
             >
               <span className="truncate">
                 {isUnderpaid && !writeOffDifferences
                   ? `Check "Write Off"`
+                  : isUnrealInvoice
+                  ? 'Fictitious Sale'
                   : 'Sale'}
               </span>
               <ArrowRight className="h-3 w-3 shrink-0" />
@@ -1838,7 +2593,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                   </span>
                   {isUnderpaid && (
                     <span className="font-mono text-[9px] font-extrabold text-rose-600 dark:text-rose-400 leading-none mt-0.5">
-                      -${remainingUSD.toFixed(2)}
+                      {remainingUSD >= 0.01 ? `-$${remainingUSD.toFixed(2)}` : `-${formatLBPValue(remainingLBP)} L.L.`}
                     </span>
                   )}
                 </div>
@@ -1905,19 +2660,26 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                   <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">
                     {paidUSD > 0 ? `$${paidUSD.toFixed(2)} ` : ''}
                     {paidLBP > 0 ? `${formatLBPValue(paidLBP)} LBP` : ''}
-                    {isOverpaid && ` (Change: ${formatLBPValue(changeLBP)} LBP)`}
+                    {isOverpaid && (
+                      actualChangeUSD === 0 && actualChangeLBP === 0
+                        ? ` (No Change • Kept in drawer: +${retainedUSD >= 0.01 ? `$${retainedUSD.toFixed(2)}` : ''}${retainedLBP > 0 ? ` +${formatLBPValue(retainedLBP)} LBP` : ''})`
+                        : ` (Change: ${actualChangeUSD > 0 ? `$${actualChangeUSD.toFixed(2)} USD` : ''} ${actualChangeLBP > 0 ? `${formatLBPValue(actualChangeLBP)} LBP` : ''}${retainedUSD >= 0.01 || retainedLBP > 0 ? ` • Kept: +${retainedUSD >= 0.01 ? `$${retainedUSD.toFixed(2)}` : ''}` : ''})`
+                    )}
                   </span>
                 </div>
               )}
               {hasEnteredPayment && isUnderpaid && (
                 <div className="flex justify-between items-center pt-1 border-t border-dashed border-amber-300 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300 font-bold">
                   <span>Payment Difference:</span>
-                  <span>-${remainingUSD.toFixed(2)} ({formatLBPValue(remainingLBP)} LBP)</span>
+                  <span>
+                    {remainingUSD >= 0.01 ? `-$${remainingUSD.toFixed(2)} ` : ''}
+                    (-{formatLBPValue(remainingLBP)} LBP)
+                  </span>
                 </div>
               )}
               {hasEnteredPayment && isUnderpaid && writeOffDifferences && (
                 <div className="text-[10px] text-teal-800 dark:text-teal-200 font-semibold bg-teal-50 dark:bg-teal-950/60 p-2 rounded border border-teal-200 dark:border-teal-900">
-                  ✓ "Write off differences" is active. The shortage of ${remainingUSD.toFixed(2)} will be forgiven upon saving as cash.
+                  ✓ "Write off differences" is active. The shortage of {remainingUSD >= 0.01 ? `$${remainingUSD.toFixed(2)} ` : ''}({formatLBPValue(remainingLBP)} LBP) will be forgiven upon saving as cash.
                 </div>
               )}
               {hasEnteredPayment && isUnderpaid && !writeOffDifferences && (

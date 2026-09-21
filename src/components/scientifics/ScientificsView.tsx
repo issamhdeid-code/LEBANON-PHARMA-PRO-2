@@ -29,6 +29,7 @@ import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import {
   findInStockGenericAlternatives,
   findOutOfStockGenericAlternatives,
+  findCategorizedGenericAlternatives,
   extractCleanMolecules,
   resolveStraightforwardScientificInfo,
 } from '../../services/scientificDataService';
@@ -106,16 +107,12 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
     return extractCleanMolecules(selectedProduct.ingredients || '');
   }, [selectedProduct, hasActiveIngredient]);
 
-  // Requirement: Generic Alternatives in Lebanon - show ONLY drugs available in stock with the same active ingredients / molecule
-  const inStockGenericAlternatives = useMemo(() => {
-    if (!selectedProduct || !hasActiveIngredient) return [];
-    return findInStockGenericAlternatives(selectedProduct, products);
-  }, [selectedProduct, products, hasActiveIngredient]);
-
-  // Out of stock alternatives for transparency
-  const outOfStockGenericAlternatives = useMemo(() => {
-    if (!selectedProduct || !hasActiveIngredient) return [];
-    return findOutOfStockGenericAlternatives(selectedProduct, products);
+  // Categorized generic alternatives (single active ingredient first, then multi-ingredient combinations, with in-stock first)
+  const categorizedAlternatives = useMemo(() => {
+    if (!selectedProduct || !hasActiveIngredient) {
+      return { singleIngredient: [], multiIngredient: [], allSorted: [], inStockCount: 0, totalCount: 0 };
+    }
+    return findCategorizedGenericAlternatives(selectedProduct, products);
   }, [selectedProduct, products, hasActiveIngredient]);
 
   const filteredDrugs = useMemo(() => {
@@ -776,107 +773,224 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
                 )}
               </div>
 
-              {/* 4. GENERIC ALTERNATIVES IN LEBANON - STRICTLY IN-STOCK WITH SAME MOLECULE */}
+              {/* 4. GENERIC ALTERNATIVES IN LEBANON - SINGLE INGREDIENT FIRST, THEN COMBINATIONS, IN-STOCK PRIORITIZED */}
               <div className="rounded-xl border border-gray-200 bg-white p-3.5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center space-x-1.5 text-teal-800 dark:text-teal-300 font-bold text-xs">
                     <Shuffle className="h-4 w-4 text-teal-600 shrink-0" />
                     <h3>4. Generic Alternatives in Lebanon</h3>
                   </div>
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 px-1.5 py-0.5 rounded">
-                    Only In-Stock
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 px-1.5 py-0.5 rounded">
+                      {categorizedAlternatives.inStockCount} In Stock
+                    </span>
+                    <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700 px-1.5 py-0.5 rounded">
+                      {categorizedAlternatives.totalCount} Total
+                    </span>
+                  </div>
                 </div>
 
-                <div className="mb-2 text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between">
-                  <span>Available stock sharing active molecule ({activeMolecules.join(', ') || selectedProduct.ingredients}):</span>
-                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                    {inStockGenericAlternatives.length} brand{inStockGenericAlternatives.length !== 1 ? 's' : ''} available
-                  </span>
+                <div className="mb-2.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  <span>Alternatives sharing active ingredient ({activeMolecules.join(', ') || selectedProduct.ingredients}):</span>
                 </div>
 
-                {inStockGenericAlternatives.length > 0 ? (
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {inStockGenericAlternatives.map((alt) => (
-                      <div
-                        key={alt.id}
-                        className="rounded-lg border border-emerald-200/80 bg-emerald-50/40 p-2.5 transition-all hover:bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <div className="flex items-center space-x-1.5">
-                              <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
-                                {alt.name}
-                              </span>
-                              <span className="font-mono text-[10px] text-slate-500 bg-white dark:bg-slate-800 px-1 rounded border border-slate-200 dark:border-slate-700">
-                                {alt.code}
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-slate-600 dark:text-slate-300 mt-0.5">
-                              {alt.ingredients} • {alt.dosage} • {alt.form}
-                            </div>
-                            <div className="text-[10px] text-slate-400">
-                              Agent: {alt.agent}
-                            </div>
-                          </div>
-
-                          <div className="text-right shrink-0">
-                            <div className="font-bold text-xs text-blue-600 dark:text-blue-400">
-                              ${alt.priceUSD.toFixed(2)}
-                            </div>
-                            <div className="text-[10px] text-slate-500">
-                              {formatLBPValue(alt.priceLBP)} L.L.
-                            </div>
-                            <div className="mt-1">
-                              <span className="inline-flex items-center space-x-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/70 dark:text-emerald-200">
-                                <PackageCheck className="h-3 w-3" />
-                                <span>{formatStockDisplay(alt.stockQuantity, alt.isDivisible, alt.piecesPerBox, alt.pieceName)} in stock</span>
-                              </span>
-                            </div>
-                          </div>
+                {categorizedAlternatives.totalCount > 0 ? (
+                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                    {/* 1. Single Active Ingredient Alternatives */}
+                    {categorizedAlternatives.singleIngredient.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 dark:text-slate-200 border-b border-gray-100 dark:border-slate-800 pb-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-teal-500 shrink-0"></span>
+                            <span>Single Active Ingredient Alternatives</span>
+                          </span>
+                          <span className="text-[10px] font-semibold text-teal-700 bg-teal-50 dark:bg-teal-950/60 dark:text-teal-300 px-1.5 py-0.5 rounded">
+                            {categorizedAlternatives.singleIngredient.filter((p) => p.stockQuantity > 0).length} in stock / {categorizedAlternatives.singleIngredient.length}
+                          </span>
                         </div>
 
-                        <div className="mt-2 flex items-center justify-end space-x-1.5 border-t border-emerald-100 pt-1.5 dark:border-emerald-900/40">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedProductId(alt.id)}
-                            className="flex items-center space-x-1 text-[11px] font-medium text-teal-700 hover:text-teal-900 dark:text-teal-300 dark:hover:text-teal-100 cursor-pointer"
-                          >
-                            <span>Inspect Dossier</span>
-                            <ArrowRight className="h-3 w-3" />
-                          </button>
-                          {onSelectForSale && (
-                            <button
-                              type="button"
-                              onClick={() => onSelectForSale(alt)}
-                              className="rounded bg-teal-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-teal-700 cursor-pointer"
+                        {categorizedAlternatives.singleIngredient.map((alt) => {
+                          const isAvailable = alt.stockQuantity > 0;
+                          return (
+                            <div
+                              key={alt.id}
+                              className={`rounded-lg border p-2.5 transition-all ${
+                                isAvailable
+                                  ? 'border-emerald-200/90 bg-emerald-50/40 hover:bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40'
+                                  : 'border-slate-200 bg-slate-50/60 hover:bg-slate-100/70 dark:border-slate-800 dark:bg-slate-900/40 dark:hover:bg-slate-900/60 opacity-85 hover:opacity-100'
+                              }`}
                             >
-                              Dispense Alternative
-                            </button>
-                          )}
-                        </div>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                                    <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                                      {alt.name}
+                                    </span>
+                                    <span className="font-mono text-[10px] text-slate-500 bg-white dark:bg-slate-800 px-1 rounded border border-slate-200 dark:border-slate-700">
+                                      {alt.code}
+                                    </span>
+                                    <span className="rounded bg-teal-100/70 text-teal-800 dark:bg-teal-950 dark:text-teal-300 text-[9px] font-semibold px-1.5 py-0.2">
+                                      Single
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-600 dark:text-slate-300 mt-0.5">
+                                    {alt.ingredients} • {alt.dosage} • {alt.form}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400">
+                                    Agent: {alt.agent}
+                                  </div>
+                                </div>
+
+                                <div className="text-right shrink-0">
+                                  <div className="font-bold text-xs text-blue-600 dark:text-blue-400">
+                                    ${alt.priceUSD.toFixed(2)}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500">
+                                    {formatLBPValue(alt.priceLBP)} L.L.
+                                  </div>
+                                  <div className="mt-1">
+                                    {isAvailable ? (
+                                      <span className="inline-flex items-center space-x-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/70 dark:text-emerald-200">
+                                        <PackageCheck className="h-3 w-3" />
+                                        <span>{formatStockDisplay(alt.stockQuantity, alt.isDivisible, alt.piecesPerBox, alt.pieceName)} in stock</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center space-x-1 rounded bg-red-50 border border-red-200 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-300 dark:border-red-800/60">
+                                        <PackageX className="h-3 w-3 text-red-500" />
+                                        <span>Out of Stock</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="mt-2 flex items-center justify-end space-x-1.5 border-t border-gray-100 dark:border-slate-800 pt-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedProductId(alt.id)}
+                                  className="flex items-center space-x-1 text-[11px] font-medium text-teal-700 hover:text-teal-900 dark:text-teal-300 dark:hover:text-teal-100 cursor-pointer"
+                                >
+                                  <span>Inspect Dossier</span>
+                                  <ArrowRight className="h-3 w-3" />
+                                </button>
+                                {isAvailable && onSelectForSale && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onSelectForSale(alt)}
+                                    className="rounded bg-teal-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-teal-700 cursor-pointer"
+                                  >
+                                    Dispense Alternative
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    ))}
+                    )}
+
+                    {/* 2. Multi-Ingredient Combinations */}
+                    {categorizedAlternatives.multiIngredient.length > 0 && (
+                      <div className="space-y-1.5 pt-2">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 dark:text-slate-200 border-b border-gray-100 dark:border-slate-800 pb-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0"></span>
+                            <span>Multi-Ingredient Combinations</span>
+                          </span>
+                          <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 dark:bg-purple-950/60 dark:text-purple-300 px-1.5 py-0.5 rounded">
+                            {categorizedAlternatives.multiIngredient.filter((p) => p.stockQuantity > 0).length} in stock / {categorizedAlternatives.multiIngredient.length}
+                          </span>
+                        </div>
+
+                        {categorizedAlternatives.multiIngredient.map((alt) => {
+                          const isAvailable = alt.stockQuantity > 0;
+                          return (
+                            <div
+                              key={alt.id}
+                              className={`rounded-lg border p-2.5 transition-all ${
+                                isAvailable
+                                  ? 'border-purple-200/80 bg-purple-50/30 hover:bg-purple-50/60 dark:border-purple-900/40 dark:bg-purple-950/20 dark:hover:bg-purple-950/35'
+                                  : 'border-slate-200 bg-slate-50/60 hover:bg-slate-100/70 dark:border-slate-800 dark:bg-slate-900/40 dark:hover:bg-slate-900/60 opacity-85 hover:opacity-100'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                                    <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                                      {alt.name}
+                                    </span>
+                                    <span className="font-mono text-[10px] text-slate-500 bg-white dark:bg-slate-800 px-1 rounded border border-slate-200 dark:border-slate-700">
+                                      {alt.code}
+                                    </span>
+                                    <span className="rounded bg-purple-100/70 text-purple-800 dark:bg-purple-950 dark:text-purple-300 text-[9px] font-semibold px-1.5 py-0.2">
+                                      Combination
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-600 dark:text-slate-300 mt-0.5">
+                                    {alt.ingredients} • {alt.dosage} • {alt.form}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400">
+                                    Agent: {alt.agent}
+                                  </div>
+                                </div>
+
+                                <div className="text-right shrink-0">
+                                  <div className="font-bold text-xs text-blue-600 dark:text-blue-400">
+                                    ${alt.priceUSD.toFixed(2)}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500">
+                                    {formatLBPValue(alt.priceLBP)} L.L.
+                                  </div>
+                                  <div className="mt-1">
+                                    {isAvailable ? (
+                                      <span className="inline-flex items-center space-x-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/70 dark:text-emerald-200">
+                                        <PackageCheck className="h-3 w-3" />
+                                        <span>{formatStockDisplay(alt.stockQuantity, alt.isDivisible, alt.piecesPerBox, alt.pieceName)} in stock</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center space-x-1 rounded bg-red-50 border border-red-200 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-300 dark:border-red-800/60">
+                                        <PackageX className="h-3 w-3 text-red-500" />
+                                        <span>Out of Stock</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="mt-2 flex items-center justify-end space-x-1.5 border-t border-gray-100 dark:border-slate-800 pt-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedProductId(alt.id)}
+                                  className="flex items-center space-x-1 text-[11px] font-medium text-teal-700 hover:text-teal-900 dark:text-teal-300 dark:hover:text-teal-100 cursor-pointer"
+                                >
+                                  <span>Inspect Dossier</span>
+                                  <ArrowRight className="h-3 w-3" />
+                                </button>
+                                {isAvailable && onSelectForSale && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onSelectForSale(alt)}
+                                    className="rounded bg-teal-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-teal-700 cursor-pointer"
+                                  >
+                                    Dispense Alternative
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center dark:border-slate-800 dark:bg-slate-900/50">
                     <PackageX className="mx-auto h-6 w-6 text-slate-400 mb-1" />
                     <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                      No other alternative brand available in stock
+                      No generic alternative brand found
                     </p>
                     <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                      No matching generic formulations for "{activeMolecules[0] || selectedProduct.ingredients}" are currently available in inventory (0 units).
+                      No single or combination generic formulations containing "{activeMolecules[0] || selectedProduct.ingredients}" were found in catalog records.
                     </p>
-                  </div>
-                )}
-
-                {/* Transparency notice for out of stock items */}
-                {outOfStockGenericAlternatives.length > 0 && (
-                  <div className="mt-2.5 rounded bg-slate-50 p-2 text-[10px] text-slate-500 dark:bg-slate-800/40 dark:text-slate-400 border border-slate-200 dark:border-slate-800">
-                    <span className="font-semibold text-slate-600 dark:text-slate-300">
-                      Excluded (Out of Stock):{' '}
-                    </span>
-                    {outOfStockGenericAlternatives.map((o) => `${o.name} [0 in stock]`).join(', ')}
                   </div>
                 )}
               </div>

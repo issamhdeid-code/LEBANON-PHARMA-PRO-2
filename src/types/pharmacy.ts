@@ -126,8 +126,11 @@ export interface SaleTransaction {
   changeGivenLBP: number;
   writeOffUSD?: number;
   writeOffLBP?: number;
+  retainedUSD?: number;
+  retainedLBP?: number;
   notes?: string;
   synced: boolean;
+  isUnreal?: boolean;
 }
 
 export interface PurchaseItem {
@@ -258,6 +261,7 @@ export interface PharmacySettings {
       pharmacistName: string;
       amendedDegreeNo: string;
       orderRegNo: string;
+      cnssNo?: string;
       address: string;
       tel: string;
     };
@@ -373,4 +377,50 @@ export interface SupplierPayment {
   allocations?: { invoiceId: string, amountUSD: number, amountLBP: number }[];
   isPaymentOnAccount: boolean;
   timestamp: number;
+}
+
+export interface PurchaseReturnItem {
+  productId: string;
+  productCode?: string;
+  barcode?: string;
+  name: string;
+  productName?: string;
+  form?: string;
+  dosage?: string;
+  quantity: number; // packs returned
+  unitCostUSD: number;
+  unitCostLBP: number;
+  oldExpiryDate?: string;
+  oldBatchNumber?: string;
+  // For 'replace_expiry' resolution:
+  newExpiryDate?: string;
+  newBatchNumber?: string;
+  replacementQuantity?: number; // replacement packs received
+  totalUSD?: number;
+  totalLBP?: number;
+  refundAmountUSD?: number;
+  refundAmountLBP?: number;
+  reason?: string;
+}
+
+export interface PurchaseReturn {
+  id: string;
+  returnNumber: string;
+  date: string;
+  supplierId: string;
+  supplierName: string;
+  originalInvoiceNumber?: string;
+  returnType: 'cash_refund' | 'replace_expiry'; // Return for Cash vs Replace with New Expiry
+  items: PurchaseReturnItem[];
+  totalRefundUSD: number;
+  totalRefundLBP: number;
+  exchangeRate: number;
+  currency?: 'USD' | 'LBP' | 'MIXED';
+  status?: 'completed' | 'pending';
+  cashReceivedUSD?: number;
+  cashReceivedLBP?: number;
+  reason?: string;
+  notes?: string;
+  timestamp: number;
+  synced?: boolean;
 }

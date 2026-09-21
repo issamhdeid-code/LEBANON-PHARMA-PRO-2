@@ -60,6 +60,7 @@ export const CustomerDebtAgingReport: React.FC = () => {
     customers.forEach((cust) => {
       // Find credit sales belonging to this customer
       const creditSales = sales.filter((s) => {
+        if (s.isUnreal) return false;
         if (s.paymentMethod !== 'credit_debt') return false;
         if (s.customerId && s.customerId === cust.id) return true;
         if (s.customerName && cust.name && s.customerName.toLowerCase() === cust.name.toLowerCase()) return true;
