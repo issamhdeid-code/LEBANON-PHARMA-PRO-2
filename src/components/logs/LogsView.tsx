@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { AppLogEntry, LogComponent, LogLevel } from '../../types/pharmacy';
+import { formatTime } from '../../utils/dateUtils';
 import { LogDetailModal } from './LogDetailModal';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
@@ -487,11 +488,7 @@ export const LogsView: React.FC = () => {
                 </tr>
               ) : (
                 filteredLogs.map((log) => {
-                  const dateStr = new Date(log.timestamp).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                  });
+                  const dateStr = formatTime(log.timestamp);
                   const dayStr = new Date(log.timestamp).toLocaleDateString([], {
                     month: 'short',
                     day: 'numeric',

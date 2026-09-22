@@ -3,6 +3,7 @@ import { Printer, X, CheckCircle, ShieldCheck } from 'lucide-react';
 import { SaleTransaction, PharmacySettings } from '../../types/pharmacy';
 import { DesktopWindow } from './DesktopWindow';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatDateTime } from '../../utils/dateUtils';
 
 interface ReceiptModalProps {
   sale: SaleTransaction | null;
@@ -87,7 +88,7 @@ const ThermalReceipt: React.FC<{ sale: SaleTransaction, settings: PharmacySettin
         </div>
         <div className="flex justify-between">
           <span className="text-slate-500">Date:</span>
-          <span>{new Date(sale.date).toLocaleString()}</span>
+          <span>{formatDateTime(sale.date)}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-slate-500">Cashier:</span>

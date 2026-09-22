@@ -22,6 +22,7 @@ import { usePharmacy } from '../../context/PharmacyContext';
 import { Product } from '../../types/pharmacy';
 import { formatStockDisplay } from '../../utils/stockUtils';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatTime } from '../../utils/dateUtils';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 
 interface DashboardViewProps {
@@ -334,7 +335,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {sale.invoiceNumber || sale.receiptNumber} • {sale.customerName || 'Walk-in Patient'}
                       </div>
                       <div className="text-[10px] text-gray-500">
-                        {new Date(sale.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {sale.items.length} items
+                        {formatTime(sale.timestamp)} • {sale.items.length} items
                       </div>
                     </div>
                     <div className="text-right">
@@ -428,7 +429,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </td>
                       <td className="py-2 px-3 whitespace-nowrap text-gray-600 dark:text-slate-300">
                         <div>{saleDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</div>
-                        <div className="text-[10px] text-gray-400">{saleDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                        <div className="text-[10px] text-gray-400">{formatTime(saleDate)}</div>
                       </td>
                       <td className="py-2 px-3 whitespace-nowrap font-medium text-slate-900 dark:text-slate-100">
                         {sale.customerName || 'Cash Client'}

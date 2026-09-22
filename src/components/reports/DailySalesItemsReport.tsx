@@ -21,6 +21,7 @@ import { usePharmacy } from '../../context/PharmacyContext';
 import { SaleTransaction, ProductCategory } from '../../types/pharmacy';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { formatStockDisplay } from '../../utils/stockUtils';
+import { formatDateTime } from '../../utils/dateUtils';
 
 interface DailySalesItemsReportProps {
   onBackToOverview?: () => void;
@@ -126,7 +127,6 @@ export const DailySalesItemsReport: React.FC<DailySalesItemsReportProps> = () =>
       const timeStr = dateObj.toLocaleTimeString('en-US', {
         hour: '2-digit',
         minute: '2-digit',
-        second: '2-digit',
         hour12: true,
       });
 
@@ -757,7 +757,7 @@ export const DailySalesItemsReport: React.FC<DailySalesItemsReportProps> = () =>
                 {' • '}Rate: <span className="font-mono">1$ = {formatLBPValue(exchangeRate)} L.L.</span>
               </div>
               <div className="text-[9px] text-gray-400 dark:text-slate-500">
-                Generated: {new Date().toLocaleString()} • Mode: {viewMode === 'itemized' ? 'Itemized Log' : 'Grouped by Product'}
+                Generated: {formatDateTime(new Date())} • Mode: {viewMode === 'itemized' ? 'Itemized Log' : 'Grouped by Product'}
               </div>
             </div>
           </div>

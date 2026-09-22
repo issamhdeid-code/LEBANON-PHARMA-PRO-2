@@ -21,6 +21,7 @@ import {
 import { usePharmacy } from '../../context/PharmacyContext';
 import { ProductCategory } from '../../types/pharmacy';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatDateTime } from '../../utils/dateUtils';
 
 const CATEGORY_META: Record<
   ProductCategory,
@@ -500,7 +501,7 @@ export const CategoryProfitMarginReport: React.FC = () => {
                 Period: <span className="font-bold text-slate-900 dark:text-slate-200">{startDate}</span> to <span className="font-bold text-slate-900 dark:text-slate-200">{endDate}</span>
               </div>
               <div className="text-[9px] text-gray-400 dark:text-slate-500">
-                Generated: {new Date().toLocaleString()} • Rate: 1$ = {formatLBPValue(exchangeRate)} L.L.
+                Generated: {formatDateTime(new Date())} • Rate: 1$ = {formatLBPValue(exchangeRate)} L.L.
               </div>
             </div>
           </div>

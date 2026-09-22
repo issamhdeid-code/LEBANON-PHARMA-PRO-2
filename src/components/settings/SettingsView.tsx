@@ -42,6 +42,7 @@ import {
 } from '../../services/googleDriveBackup';
 
 import { DesktopWindow } from '../common/DesktopWindow';
+import { formatTime, formatDateTime } from '../../utils/dateUtils';
 
 export const SettingsView: React.FC = () => {
   const { settings, updateSettings, syncStatus, addNotification, exportBackup, restoreBackup, clearAllData } = usePharmacy();
@@ -134,7 +135,7 @@ export const SettingsView: React.FC = () => {
         const parsed = JSON.parse(backupJson);
         const prodCount = Array.isArray(parsed.products) ? parsed.products.length : 0;
         const salesCount = Array.isArray(parsed.sales) ? parsed.sales.length : 0;
-        const timeStr = modifiedTime ? new Date(modifiedTime).toLocaleString() : 'recently saved';
+        const timeStr = modifiedTime ? formatDateTime(modifiedTime) : 'recently saved';
         summaryText = `Found backup from ${timeStr} containing ${prodCount} products and ${salesCount} sales.\n\nAre you sure you want to restore this database? Current records will be replaced.`;
       } catch {
         summaryText = 'Are you sure you want to restore the backup from Google Drive? Current records will be replaced.';
@@ -216,7 +217,7 @@ export const SettingsView: React.FC = () => {
         const supplierCount = Array.isArray(parsed.suppliers) ? parsed.suppliers.length : 0;
         const exportDate =
           parsed.exportDate ||
-          (parsed.exportTimestamp ? new Date(parsed.exportTimestamp).toLocaleString() : undefined);
+          (parsed.exportTimestamp ? formatDateTime(parsed.exportTimestamp) : undefined);
 
         setRestoreCandidate({
           content,
@@ -250,7 +251,7 @@ export const SettingsView: React.FC = () => {
           productCount: restoreCandidate.productCount,
           salesCount: restoreCandidate.salesCount,
           customerCount: restoreCandidate.customerCount,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          timestamp: formatTime(new Date()),
         };
         setLastRestoredSuccess(successInfo);
         addNotification(
@@ -857,7 +858,7 @@ export const SettingsView: React.FC = () => {
                   <div className="sm:col-span-2 rounded-md border border-slate-200 bg-white p-3 text-xs dark:border-slate-700 dark:bg-slate-900">
                     <strong className="text-slate-700 dark:text-slate-200">Backup verification:</strong>{' '}
                     {settings.backupLastSuccess
-                      ? `${settings.backupLastStatus === 'failed' ? 'Last attempt failed. ' : 'Verified successfully. '}${settings.backupLastSummary || ''} Last success: ${new Date(settings.backupLastSuccess).toLocaleString()}.`
+                      ? `${settings.backupLastStatus === 'failed' ? 'Last attempt failed. ' : 'Verified successfully. '}${settings.backupLastSummary || ''} Last success: ${formatDateTime(settings.backupLastSuccess)}.`
                       : 'No verified backup has been completed on this PC yet.'}
                   </div>
                 </div>
@@ -872,7 +873,7 @@ export const SettingsView: React.FC = () => {
                         saveGoogleDriveClientId(googleClientId);
                         const result = await backupToGoogleDrive(googleClientId, await exportBackup(), settings.backupRetentionCount || 5);
                         const timestamp = result.modifiedTime
-                          ? new Date(result.modifiedTime).toLocaleString()
+                          ? formatDateTime(result.modifiedTime)
                           : 'now';
                         updateSettings({
                           backupLastSuccess: new Date().toISOString(),
@@ -940,7 +941,7 @@ export const SettingsView: React.FC = () => {
                         >
                           <span className="min-w-0">
                             <span className="block truncate text-xs font-semibold text-slate-700 dark:text-slate-200">{version.name}</span>
-                            <span className="block text-[11px] text-slate-500 dark:text-slate-400">{version.modifiedTime ? new Date(version.modifiedTime).toLocaleString() : 'Unknown date'}</span>
+                            <span className="block text-[11px] text-slate-500 dark:text-slate-400">{version.modifiedTime ? formatDateTime(version.modifiedTime) : 'Unknown date'}</span>
                           </span>
                           <span className="shrink-0 text-[11px] text-slate-400">{version.size ? `${Math.round(Number(version.size) / 1024)} KB` : 'Size unknown'}</span>
                         </button>

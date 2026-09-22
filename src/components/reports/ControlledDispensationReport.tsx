@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatTime } from '../../utils/dateUtils';
 
 // Common psychotropic, narcotic, sedative, controlled keywords & molecules in Lebanon
 const SCHEDULED_PATTERNS = [
@@ -336,7 +337,7 @@ export const ControlledDispensationReport: React.FC = () => {
 
     const rows = filteredRecords.map((r) => [
       `"${r.dateStr}"`,
-      `"${new Date(r.timestamp).toLocaleTimeString()}"`,
+      `"${formatTime(r.timestamp)}"`,
       `"${r.rxNumber}"`,
       `"${r.patientName.replace(/"/g, '""')}"`,
       `"${r.patientPhone}"`,
@@ -638,7 +639,7 @@ export const ControlledDispensationReport: React.FC = () => {
                         <td className="py-2 px-2 font-mono text-[10px] text-gray-600 dark:text-slate-400 whitespace-nowrap">
                           {rec.dateStr}{' '}
                           <span className="text-gray-400 text-[9px]">
-                            {new Date(rec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {formatTime(rec.timestamp)}
                           </span>
                         </td>
                         <td className="py-2 px-2 font-mono font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">

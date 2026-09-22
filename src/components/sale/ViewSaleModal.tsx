@@ -4,6 +4,7 @@ import { SaleTransaction } from '../../types/pharmacy';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatDateTime } from '../../utils/dateUtils';
 
 interface ViewSaleModalProps {
   sale: SaleTransaction;
@@ -40,7 +41,7 @@ export const ViewSaleModal: React.FC<ViewSaleModalProps> = ({ sale, onClose, onE
             <div>
               <span className="text-gray-400 block uppercase font-semibold text-[9px]">Date & Time</span>
               <span className="font-bold text-slate-800 dark:text-slate-200">
-                {new Date(sale.timestamp || sale.date).toLocaleDateString()} {new Date(sale.timestamp || sale.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {formatDateTime(sale.timestamp || sale.date)}
               </span>
             </div>
             <div>

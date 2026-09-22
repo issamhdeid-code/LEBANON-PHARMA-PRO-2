@@ -5,6 +5,7 @@ interface UseBarcodeScannerOptions {
   minDuration?: number;
   minCharacters?: number;
   cooldownMs?: number;
+  blurOnScan?: boolean;
 }
 
 export const useBarcodeScanner = ({
@@ -12,6 +13,7 @@ export const useBarcodeScanner = ({
   minDuration = 50,
   minCharacters = 3,
   cooldownMs = 400,
+  blurOnScan = false,
 }: UseBarcodeScannerOptions) => {
   const buffer = useRef<string>('');
   const lastKeyTime = useRef<number>(0);
@@ -52,12 +54,16 @@ export const useBarcodeScanner = ({
           lastHandledScanAt.current = now;
           e.preventDefault();
           e.stopPropagation();
-          onScanRef.current(buffered);
-          // Release the field the scanner typed into so its junk doesn't commit, but do
-          // not steal focus — the consuming component decides where focus goes next.
+          // Reset the active input so barcode characters don't linger, and maintain focus if blurOnScan is false
           if (isInput && target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
-            target.blur();
+            target.value = '';
+            if (blurOnScan) {
+              target.blur();
+            } else {
+              target.focus();
+            }
           }
+          onScanRef.current(buffered);
         }
       }
       buffer.current = '';

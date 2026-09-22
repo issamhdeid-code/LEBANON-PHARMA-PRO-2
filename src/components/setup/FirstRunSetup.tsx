@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { getGoogleDriveClientId, restoreFromGoogleDrive, saveGoogleDriveClientId } from '../../services/googleDriveBackup';
+import { formatDateTime } from '../../utils/dateUtils';
 
 type Step = 'role' | 'secondary-wait' | 'identity' | 'admin';
 
@@ -74,7 +75,7 @@ export const FirstRunSetup: React.FC = () => {
       const { backupJson, modifiedTime } = await restoreFromGoogleDrive(clientId);
       const parsed = JSON.parse(backupJson) as { products?: unknown[]; sales?: unknown[] };
       const confirmed = window.confirm(
-        `Restore the latest backup from ${modifiedTime ? new Date(modifiedTime).toLocaleString() : 'Google Drive'}?\n\n` +
+        `Restore the latest backup from ${modifiedTime ? formatDateTime(modifiedTime) : 'Google Drive'}?\n\n` +
         `This will restore ${parsed.products?.length || 0} products and ${parsed.sales?.length || 0} sales and replace this PC's local data.`
       );
       if (!confirmed) return;

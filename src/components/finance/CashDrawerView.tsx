@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatTime, formatDateTime } from '../../utils/dateUtils';
 import {
   CashDrawerOpType,
   CashDrawerCategory,
@@ -570,7 +571,7 @@ export const CashDrawerView: React.FC = () => {
     ];
 
     const rows = filteredEntries.map((e) => [
-      `"${new Date(e.timestamp).toLocaleString()}"`,
+      `"${formatDateTime(e.timestamp)}"`,
       `"${e.referenceNumber}"`,
       `"${e.type === 'IN' ? 'CASH INFLOW (+)' : 'CASH OUTFLOW (-)'}"`,
       `"${e.categoryLabel}"`,
@@ -917,7 +918,7 @@ export const CashDrawerView: React.FC = () => {
                     >
                       {/* Date & Time */}
                       <td className="py-2 px-3 whitespace-nowrap text-slate-500 dark:text-slate-400">
-                        {new Date(e.timestamp).toLocaleDateString()} {new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {formatDateTime(e.timestamp)}
                       </td>
 
                       {/* Reference # */}
@@ -1077,11 +1078,7 @@ export const CashDrawerView: React.FC = () => {
                     return (
                       <tr key={rec.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/40 transition-colors">
                         <td className="py-2.5 px-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                          {new Date(rec.timestamp).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: true
-                          })}
+                          {formatTime(rec.timestamp)}
                           <span className="text-[10px] block text-slate-400">
                             {new Date(rec.timestamp).toLocaleDateString()}
                           </span>

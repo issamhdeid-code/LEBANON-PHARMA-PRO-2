@@ -89,6 +89,23 @@ export interface CartItem {
   selectedExpiryDate?: string;
 }
 
+export interface ParkedSale {
+  id: string;
+  timestamp: number;
+  label?: string;
+  customerId?: string;
+  customerName?: string;
+  isUnreal?: boolean;
+  items: CartItem[];
+  tenderedUSD: string;
+  tenderedLBP: string;
+  paymentMethod: 'cash_lbp' | 'cash_usd' | 'mixed' | 'credit_debt';
+  totalUSD: number;
+  totalLBP: number;
+  totalItems: number;
+  notes?: string;
+}
+
 export interface SaleTransaction {
   id: string;
   invoiceNumber: string;

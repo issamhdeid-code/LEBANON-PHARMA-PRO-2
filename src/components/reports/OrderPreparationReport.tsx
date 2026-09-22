@@ -29,6 +29,7 @@ import { usePharmacy } from '../../context/PharmacyContext';
 import { Product, ProductCategory } from '../../types/pharmacy';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { formatStockDisplay } from '../../utils/stockUtils';
+import { formatDateTime } from '../../utils/dateUtils';
 
 interface OrderItemRow {
   productId: string;
@@ -830,7 +831,7 @@ export const OrderPreparationReport: React.FC = () => {
             </p>
           </div>
           <div className="text-right text-xs">
-            <p className="font-bold">Printed: {new Date().toLocaleString('en-GB')}</p>
+            <p className="font-bold">Printed: {formatDateTime(new Date())}</p>
             <p className="text-slate-600">Period: {startDate} to {endDate}</p>
             <p className="text-slate-600">Supplier / Agent: {selectedAgent !== 'ALL' ? selectedAgent : 'All Suppliers'}</p>
           </div>

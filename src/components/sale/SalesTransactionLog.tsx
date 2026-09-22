@@ -21,6 +21,7 @@ import { ViewSaleModal } from './ViewSaleModal';
 import { EditSaleModal } from './EditSaleModal';
 import { ReceiptModal } from '../common/ReceiptModal';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatTime } from '../../utils/dateUtils';
 
 interface SalesTransactionLogProps {
   onSwitchToCatalog?: () => void;
@@ -286,7 +287,7 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
                         {isToday ? 'Today' : saleDate.toLocaleDateString([], { month: 'short', day: 'numeric' })}
                       </div>
                       <div className="text-[10px] text-gray-400">
-                        {saleDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {formatTime(saleDate)}
                       </div>
                     </td>
 
@@ -344,6 +345,81 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
                       <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
                         {formatLBPValue(sale.totalLBP)} LBP
                       </div>
+
+                      {/* When money received is more than invoice total, show exact amount received */}
+                      {(() => {
+                        const paidUSD = sale.amountPaidUSD || 0;
+                        const paidLBP = sale.amountPaidLBP || 0;
+                        const exchangeRate = sale.exchangeRate || 89500;
+                        const totalPaidInUSD = Number((paidUSD + (exchangeRate > 0 ? paidLBP / exchangeRate : 0)).toFixed(2));
+                        const totalPaidInLBP = Math.round(paidUSD * exchangeRate) + paidLBP;
+
+                        const hasReceivedMore =
+                          (sale.changeGivenUSD && sale.changeGivenUSD >= 0.01) ||
+                          (sale.changeGivenLBP && sale.changeGivenLBP > 0) ||
+                          (sale.retainedUSD && sale.retainedUSD >= 0.01) ||
+                          (sale.retainedLBP && sale.retainedLBP > 0) ||
+                          (totalPaidInUSD > sale.totalUSD + 0.009) ||
+                          (totalPaidInLBP > sale.totalLBP + 50);
+
+                        if (!hasReceivedMore) return null;
+
+                        const receivedList: string[] = [];
+                        if (paidUSD > 0) receivedList.push(`$${paidUSD.toFixed(2)}`);
+                        if (paidLBP > 0) receivedList.push(`${formatLBPValue(paidLBP)} LBP`);
+
+                        if (receivedList.length === 0 && (sale.changeGivenUSD || sale.changeGivenLBP)) {
+                          if (sale.changeGivenUSD && sale.changeGivenUSD > 0) {
+                            receivedList.push(`$${(sale.totalUSD + sale.changeGivenUSD).toFixed(2)}`);
+                          } else if (sale.changeGivenLBP && sale.changeGivenLBP > 0) {
+                            receivedList.push(`${formatLBPValue(sale.totalLBP + sale.changeGivenLBP)} LBP`);
+                          }
+                        }
+
+                        const receivedString = receivedList.join(' + ');
+
+                        const changeList: string[] = [];
+                        if (sale.changeGivenUSD && sale.changeGivenUSD >= 0.01) {
+                          changeList.push(`$${sale.changeGivenUSD.toFixed(2)}`);
+                        }
+                        if (sale.changeGivenLBP && sale.changeGivenLBP > 0) {
+                          changeList.push(`${formatLBPValue(sale.changeGivenLBP)} LBP`);
+                        }
+                        const changeString = changeList.join(' + ');
+
+                        const retainedList: string[] = [];
+                        if (sale.retainedUSD && sale.retainedUSD >= 0.01) {
+                          retainedList.push(`$${sale.retainedUSD.toFixed(2)}`);
+                        }
+                        if (sale.retainedLBP && sale.retainedLBP > 0) {
+                          retainedList.push(`${formatLBPValue(sale.retainedLBP)} LBP`);
+                        }
+                        const retainedString = retainedList.join(' + ');
+
+                        return (
+                          <div className="mt-1 pt-1 border-t border-dashed border-teal-200 dark:border-teal-900/60 text-right space-y-0.5">
+                            {receivedString && (
+                              <div className="text-[10px] font-extrabold text-teal-800 dark:text-teal-300">
+                                <span className="text-gray-400 dark:text-slate-500 font-normal text-[9px]">Received: </span>
+                                <span>{receivedString}</span>
+                              </div>
+                            )}
+                            {changeString && (
+                              <div className="text-[9px] font-semibold text-slate-500 dark:text-slate-400">
+                                <span className="text-gray-400 dark:text-slate-500 font-normal">Change: </span>
+                                <span>{changeString}</span>
+                              </div>
+                            )}
+                            {retainedString && (
+                              <div className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                <span className="text-emerald-500/70 font-normal">Retained: </span>
+                                <span>+{retainedString}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {(sale.writeOffUSD && sale.writeOffUSD >= 0.01) || (sale.writeOffLBP && sale.writeOffLBP > 0) ? (
                         <div className="text-[9px] font-extrabold text-rose-600 dark:text-rose-400">
                           Write-off: {sale.writeOffUSD && sale.writeOffUSD >= 0.01 ? `-$${sale.writeOffUSD.toFixed(2)}` : `-${formatLBPValue(sale.writeOffLBP || 0)} LBP`}

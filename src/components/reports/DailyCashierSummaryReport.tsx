@@ -22,6 +22,7 @@ import {
 import { usePharmacy } from '../../context/PharmacyContext';
 import { SaleTransaction } from '../../types/pharmacy';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatTime, formatDateTime } from '../../utils/dateUtils';
 
 export const DailyCashierSummaryReport: React.FC = () => {
   const { sales, customerPayments, settings, exchangeRate } = usePharmacy();
@@ -252,7 +253,7 @@ export const DailyCashierSummaryReport: React.FC = () => {
       const netUSD = (s.amountPaidUSD || 0) - changeUSD;
       const netLBP = (s.amountPaidLBP || 0) - changeLBP;
       return [
-        `"${new Date(s.timestamp || s.date).toLocaleTimeString()}"`,
+        `"${formatTime(s.timestamp || s.date)}"`,
         `"${s.invoiceNumber || s.receiptNumber || 'N/A'}"`,
         `"${(s.cashierName || 'Cashier').replace(/"/g, '""')}"`,
         `"${(s.customerName || 'Walk-in').replace(/"/g, '""')}"`,
@@ -612,7 +613,7 @@ export const DailyCashierSummaryReport: React.FC = () => {
                 {' • '}Rate: <span className="font-mono">1$ = {formatLBPValue(exchangeRate)} L.L.</span>
               </div>
               <div className="text-[9px] text-gray-400 dark:text-slate-500">
-                Audited: {new Date().toLocaleString()} • Dispenser: {selectedCashier}
+                Audited: {formatDateTime(new Date())} • Dispenser: {selectedCashier}
               </div>
             </div>
           </div>

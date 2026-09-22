@@ -13,6 +13,8 @@ import {
   Receipt,
   Info,
   AlertTriangle,
+  AlertCircle,
+  CheckCircle2,
   Sparkles,
   ShoppingBag,
   ArrowRight,
@@ -30,12 +32,13 @@ import {
   Barcode,
   Calendar,
   Layers,
-  Activity
+  Activity,
+  PauseCircle
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
 import { useDebounce } from '../../hooks/useDebounce';
-import { Product, CartItem, SaleTransaction, ProductCategory } from '../../types/pharmacy';
+import { Product, CartItem, SaleTransaction, ProductCategory, ParkedSale } from '../../types/pharmacy';
 import { formatStockDisplay } from '../../utils/stockUtils';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { filterProductsByMultiWordQuery } from '../../utils/searchUtils';
@@ -44,6 +47,7 @@ import { SalesTransactionLog } from './SalesTransactionLog';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { DrugDetailsModal } from '../stock/DrugDetailsModal';
+import { ParkedSalesModal } from './ParkedSalesModal';
 import { useWindowContext } from '../../context/WindowContext';
 
 interface SaleViewProps {
@@ -622,32 +626,48 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearchQuery = useDebounce(searchQuery, 250);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  useBarcodeScanner({
-    onScan: (barcode) => {
-      const cleanScan = barcode.toLowerCase();
-      // First check if it matches an individual pieceBarcode
-      const pieceMatch = products.find(
-        (p) => p.isDivisible && (p.pieceBarcode || '').toLowerCase() === cleanScan
-      );
-      if (pieceMatch) {
-        addToCart(pieceMatch, true);
-        setSearchQuery('');
-        return;
-      }
+  // Barcode scan feedback state
+  interface ScanFeedback {
+    type: 'idle' | 'success' | 'not-found' | 'out-of-stock';
+    message: string;
+    productName?: string;
+    barcode?: string;
+  }
 
-      const product = products.find(
-        (p) => (p.barcode || '').toLowerCase() === cleanScan || p.code.toLowerCase() === cleanScan
-      );
-      if (product) {
-        addToCart(product, false);
-        setSearchQuery('');
-      } else {
-        setErrorMessage(`Product with barcode "${barcode}" not found.`);
-        setTimeout(() => setErrorMessage(null), 3000);
-      }
-    }
+  const [scanFeedback, setScanFeedback] = useState<ScanFeedback>({
+    type: 'idle',
+    message: '',
   });
+  const scanFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerScanFeedback = useCallback((
+    type: 'success' | 'not-found' | 'out-of-stock',
+    message: string,
+    extra?: { productName?: string; barcode?: string }
+  ) => {
+    if (scanFeedbackTimeoutRef.current) {
+      clearTimeout(scanFeedbackTimeoutRef.current);
+    }
+    setScanFeedback({
+      type,
+      message,
+      productName: extra?.productName,
+      barcode: extra?.barcode,
+    });
+    scanFeedbackTimeoutRef.current = setTimeout(() => {
+      setScanFeedback({ type: 'idle', message: '' });
+    }, 2800);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scanFeedbackTimeoutRef.current) {
+        clearTimeout(scanFeedbackTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory | 'all'>('all');
   const getNumCols = useCallback((mode: 'pos' | 'advanced') => {
@@ -737,12 +757,239 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   const catalogContainerRef = useRef<HTMLDivElement>(null);
   const printAfterSaleRef = useRef(false);
 
+  // Parked / Held Sales State (persistent across reloads via localStorage)
+  const [parkedSales, setParkedSales] = useState<ParkedSale[]>(() => {
+    try {
+      const raw = localStorage.getItem('pos_parked_sales');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isParkedModalOpen, setIsParkedModalOpen] = useState<boolean>(false);
+  const holdCurrentSaleRef = useRef<((optionalNote?: string) => void) | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('pos_parked_sales', JSON.stringify(parkedSales));
+    } catch (err) {
+      console.warn('Failed to persist parked sales', err);
+    }
+  }, [parkedSales]);
+
   const [focusedItemIndex, setFocusedItemIndex] = useState<number>(-1);
-  const addToCartRef = useRef<((product: Product, isPiece?: boolean) => void) | null>(null);
+  const addToCartRef = useRef<((product: Product, isPiece?: boolean) => boolean | void) | null>(null);
+
+  // Cart operations
+  const addToCart = useCallback((product: Product, isPiece: boolean = false): boolean => {
+    if (!isUnrealInvoice && product.stockQuantity <= 0) {
+      setErrorMessage(`Cannot add "${product.name}": Out of stock!`);
+      setTimeout(() => setErrorMessage(null), 3000);
+      return false;
+    }
+
+    const requestedEquivalent = isPiece && product.piecesPerBox ? (1 / product.piecesPerBox) : 1;
+
+    // Synchronous check against current cart usage
+    if (!isUnrealInvoice) {
+      const currentUsage = cart
+        .filter((item) => item.product.id === product.id)
+        .reduce((sum, item) => sum + (item.isPiece && item.product.piecesPerBox ? item.quantity / item.product.piecesPerBox : item.quantity), 0);
+
+      if (currentUsage + requestedEquivalent > product.stockQuantity) {
+        setErrorMessage(`Only ${formatStockDisplay(product.stockQuantity, product.isDivisible, product.piecesPerBox, product.pieceName)} available in stock!`);
+        setTimeout(() => setErrorMessage(null), 3000);
+        return false;
+      }
+    }
+
+    setCart((prev) => {
+      if (!isUnrealInvoice) {
+        const currentUsage = prev
+          .filter((item) => item.product.id === product.id)
+          .reduce((sum, item) => sum + (item.isPiece && item.product.piecesPerBox ? item.quantity / item.product.piecesPerBox : item.quantity), 0);
+
+        if (currentUsage + requestedEquivalent > product.stockQuantity) {
+          return prev;
+        }
+      }
+
+      const existingIdx = prev.findIndex((item) => item.product.id === product.id && !!item.isPiece === !!isPiece && (!item.selectedBatchNumber || (item.product.batches && item.product.batches.length <= 1)));
+      if (existingIdx >= 0) {
+        const newCart = [...prev];
+        newCart[existingIdx] = { ...newCart[existingIdx], quantity: newCart[existingIdx].quantity + 1 };
+        return newCart;
+      }
+      
+      const divisor = isPiece && product.piecesPerBox ? product.piecesPerBox : 1;
+      
+      let initialUnitPriceUSD = 0;
+      let initialUnitPriceLBP = 0;
+      
+      if (isPiece && (product.piecePriceUSD != null || product.piecePriceLBP != null)) {
+        initialUnitPriceUSD = product.piecePriceUSD != null ? product.piecePriceUSD : Number(((product.piecePriceLBP ?? 0) / exchangeRate).toFixed(2));
+        initialUnitPriceLBP = product.piecePriceLBP != null ? product.piecePriceLBP : Math.round((product.piecePriceUSD ?? 0) * exchangeRate);
+      } else {
+        initialUnitPriceUSD = Number((product.priceUSD / divisor).toFixed(2));
+        initialUnitPriceLBP = Math.round(product.priceLBP / divisor);
+      }
+
+      return [
+        ...prev,
+        {
+          cartItemId: `cart-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          product,
+          quantity: 1,
+          discountPercent: 0,
+          unitPriceUSD: initialUnitPriceUSD,
+          unitPriceLBP: initialUnitPriceLBP,
+          isPiece,
+        },
+      ];
+    });
+
+    return true;
+  }, [isUnrealInvoice, cart, exchangeRate]);
 
   // Keep ref fresh so keydown handlers always use the latest
   useEffect(() => {
     addToCartRef.current = addToCart;
+  }, [addToCart]);
+
+  // Barcode scanning handler with visual feedback
+  const lastScannedBarcodeTimeRef = useRef<{ barcode: string; time: number }>({ barcode: '', time: 0 });
+
+  // Auto-clear and focus mechanism for continuous barcode scanning
+  const clearAndFocusSearchInput = useCallback(() => {
+    setSearchQuery('');
+    if (searchInputRef.current) {
+      searchInputRef.current.value = '';
+      searchInputRef.current.focus();
+    }
+    // Handle React state flush and virtualizer updates
+    requestAnimationFrame(() => {
+      if (searchInputRef.current) {
+        searchInputRef.current.value = '';
+        searchInputRef.current.focus();
+      }
+    });
+    setTimeout(() => {
+      if (searchInputRef.current) {
+        searchInputRef.current.value = '';
+        searchInputRef.current.focus();
+      }
+    }, 40);
+    setTimeout(() => {
+      if (searchInputRef.current) {
+        searchInputRef.current.value = '';
+        searchInputRef.current.focus();
+      }
+    }, 120);
+  }, []);
+
+  const handleBarcodeScan = useCallback((scannedCode: string) => {
+    const rawBarcode = scannedCode.trim();
+    const cleanScan = rawBarcode.toLowerCase();
+    if (!cleanScan) return;
+
+    // Prevent duplicate hardware bounce (< 180ms), but allow continuous scanning of identical items
+    const now = Date.now();
+    if (
+      lastScannedBarcodeTimeRef.current.barcode === cleanScan &&
+      now - lastScannedBarcodeTimeRef.current.time < 180
+    ) {
+      return;
+    }
+    lastScannedBarcodeTimeRef.current = { barcode: cleanScan, time: now };
+
+    if (leftPanelMode !== 'catalog') {
+      setLeftPanelMode('catalog');
+    }
+
+    // 1. Check piece barcode
+    const pieceMatch = products.find(
+      (p) => p.isDivisible && (p.pieceBarcode || '').toLowerCase() === cleanScan
+    );
+    if (pieceMatch) {
+      if (!isUnrealInvoice && pieceMatch.stockQuantity <= 0) {
+        triggerScanFeedback('out-of-stock', `"${pieceMatch.name} (${pieceMatch.pieceName || 'Piece'})" is not found in stock (0 available).`, {
+          productName: pieceMatch.name,
+          barcode: rawBarcode,
+        });
+        setErrorMessage(`Cannot add "${pieceMatch.name}": Out of stock!`);
+        setTimeout(() => setErrorMessage(null), 3000);
+        return;
+      }
+
+      const added = addToCart(pieceMatch, true);
+      if (added) {
+        triggerScanFeedback('success', `Valid barcode scanned: Added "${pieceMatch.name} (${pieceMatch.pieceName || 'Piece'})" to cart!`, {
+          productName: pieceMatch.name,
+          barcode: rawBarcode,
+        });
+        clearAndFocusSearchInput();
+      } else {
+        triggerScanFeedback('out-of-stock', `Cannot add "${pieceMatch.name}": Insufficient stock in inventory!`, {
+          productName: pieceMatch.name,
+          barcode: rawBarcode,
+        });
+        clearAndFocusSearchInput();
+      }
+      return;
+    }
+
+    // 2. Check full product barcode or product code
+    const product = products.find(
+      (p) => (p.barcode || '').toLowerCase() === cleanScan || (p.code || '').toLowerCase() === cleanScan
+    );
+    if (product) {
+      if (!isUnrealInvoice && product.stockQuantity <= 0) {
+        triggerScanFeedback('out-of-stock', `"${product.name}" is not found in stock (0 available).`, {
+          productName: product.name,
+          barcode: rawBarcode,
+        });
+        setErrorMessage(`Cannot add "${product.name}": Out of stock!`);
+        setTimeout(() => setErrorMessage(null), 3000);
+        return;
+      }
+
+      const added = addToCart(product, false);
+      if (added) {
+        triggerScanFeedback('success', `Valid barcode scanned: Added "${product.name}" to cart!`, {
+          productName: product.name,
+          barcode: rawBarcode,
+        });
+        clearAndFocusSearchInput();
+      } else {
+        triggerScanFeedback('out-of-stock', `Cannot add "${product.name}": Insufficient stock in inventory!`, {
+          productName: product.name,
+          barcode: rawBarcode,
+        });
+        clearAndFocusSearchInput();
+      }
+      return;
+    }
+
+    // 3. Barcode not related to any product in inventory
+    triggerScanFeedback('not-found', `Scanned barcode "${rawBarcode}" is not found in stock or related to any product.`, {
+      barcode: rawBarcode,
+    });
+    setErrorMessage(`Barcode "${rawBarcode}" is not related to any product in inventory.`);
+    setTimeout(() => setErrorMessage(null), 3000);
+    setSearchQuery(rawBarcode);
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    }, 50);
+  }, [leftPanelMode, products, isUnrealInvoice, addToCart, triggerScanFeedback, clearAndFocusSearchInput]);
+
+  // Global barcode scanner listener configured for continuous hand-scanning
+  useBarcodeScanner({
+    onScan: (barcode) => {
+      handleBarcodeScan(barcode);
+    },
+    cooldownMs: 180,
+    blurOnScan: false,
   });
 
   // Filtered products: search is expensive (multi-word + Arabic normalization), so it only
@@ -854,6 +1101,14 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
             addToCartRef.current(prod);
           }
         }
+      } else if (e.key === 'F8' || (e.altKey && (e.key === 'h' || e.key === 'H'))) {
+        e.preventDefault();
+        if (cart.length > 0) {
+          holdCurrentSaleRef.current?.();
+        } else {
+          restoreWindow('pos-parked-sales-modal');
+          setIsParkedModalOpen(true);
+        }
       }
     };
 
@@ -862,66 +1117,85 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   }, [leftPanelMode, filteredProducts, focusedItemIndex, isUnrealInvoice]);
 
 
-  // Global barcode scanner listener is handled by useBarcodeScanner hook at the top of the component
+  // Global key listener that detects rapid input sequences consistent with USB barcode scanners
+  // to automatically switch to catalog, focus the search input, and trigger search in SaleView
+  useEffect(() => {
+    let rapidBuffer = '';
+    let lastKeyTime = 0;
+    let rapidCount = 0;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Cart operations
-  const addToCart = (product: Product, isPiece: boolean = false) => {
-    if (!isUnrealInvoice && product.stockQuantity <= 0) {
-      setErrorMessage(`Cannot add "${product.name}": Out of stock!`);
-      setTimeout(() => setErrorMessage(null), 3000);
-      return;
-    }
+    const handleRapidScannerKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      if (showPaymentConfirmModal || isStockCardOpen || lastCompletedSale) return;
 
-    const requestedEquivalent = isPiece && product.piecesPerBox ? (1 / product.piecesPerBox) : 1;
+      const now = Date.now();
+      const timeDiff = now - lastKeyTime;
+      lastKeyTime = now;
 
-    setCart((prev) => {
-      // Calculate current cart usage of this product to prevent exceeding stock
-      if (!isUnrealInvoice) {
-        const currentUsage = prev
-          .filter((item) => item.product.id === product.id)
-          .reduce((sum, item) => sum + (item.isPiece && item.product.piecesPerBox ? item.quantity / item.product.piecesPerBox : item.quantity), 0);
+      const isPrintable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
 
-        if (currentUsage + requestedEquivalent > product.stockQuantity) {
-          setErrorMessage(`Only ${formatStockDisplay(product.stockQuantity, product.isDivisible, product.piecesPerBox, product.pieceName)} available in stock!`);
-          setTimeout(() => setErrorMessage(null), 3000);
-          return prev;
+      if (isPrintable) {
+        if (timeDiff <= 50) {
+          rapidCount++;
+          rapidBuffer += e.key;
+        } else {
+          rapidCount = 1;
+          rapidBuffer = e.key;
+        }
+
+        // Hardware scanners output characters at <= 50ms intervals.
+        // Once 2 consecutive rapid keys are detected, it's a USB barcode scanner.
+        if (rapidCount >= 2) {
+          // Switch to catalog if currently showing sales log
+          if (leftPanelMode !== 'catalog') {
+            setLeftPanelMode('catalog');
+          }
+
+          // Automatically focus the search input so subsequent keystrokes route directly to search
+          if (document.activeElement !== searchInputRef.current) {
+            searchInputRef.current?.focus();
+            setSearchQuery((prev) => {
+              if (!prev.includes(rapidBuffer)) {
+                return rapidBuffer;
+              }
+              return prev;
+            });
+          }
+        }
+
+        if (flushTimer) clearTimeout(flushTimer);
+        flushTimer = setTimeout(() => {
+          // If scanner does not emit Enter, process the scanned buffer through handleBarcodeScan
+          if (rapidCount >= 3 && rapidBuffer.length >= 3) {
+            const codeToScan = rapidBuffer;
+            rapidCount = 0;
+            rapidBuffer = '';
+            handleBarcodeScan(codeToScan);
+          } else {
+            rapidCount = 0;
+            rapidBuffer = '';
+          }
+        }, 80);
+      } else if (e.key === 'Enter') {
+        if (flushTimer) clearTimeout(flushTimer);
+        if (rapidCount >= 2 && rapidBuffer.length >= 3) {
+          e.preventDefault();
+          e.stopPropagation();
+          const scannedText = rapidBuffer;
+          rapidCount = 0;
+          rapidBuffer = '';
+          handleBarcodeScan(scannedText);
         }
       }
+    };
 
-      const existingIdx = prev.findIndex((item) => item.product.id === product.id && !!item.isPiece === !!isPiece && (!item.selectedBatchNumber || (item.product.batches && item.product.batches.length <= 1)));
-      if (existingIdx >= 0) {
-        const newCart = [...prev];
-        newCart[existingIdx] = { ...newCart[existingIdx], quantity: newCart[existingIdx].quantity + 1 };
-        return newCart;
-      }
-      
-      const divisor = isPiece && product.piecesPerBox ? product.piecesPerBox : 1;
-      
-      let initialUnitPriceUSD = 0;
-      let initialUnitPriceLBP = 0;
-      
-      if (isPiece && (product.piecePriceUSD != null || product.piecePriceLBP != null)) {
-        initialUnitPriceUSD = product.piecePriceUSD != null ? product.piecePriceUSD : Number(((product.piecePriceLBP ?? 0) / exchangeRate).toFixed(2));
-        initialUnitPriceLBP = product.piecePriceLBP != null ? product.piecePriceLBP : Math.round((product.piecePriceUSD ?? 0) * exchangeRate);
-      } else {
-        initialUnitPriceUSD = Number((product.priceUSD / divisor).toFixed(2));
-        initialUnitPriceLBP = Math.round(product.priceLBP / divisor);
-      }
-
-      return [
-        ...prev,
-        {
-          cartItemId: `cart-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-          product,
-          quantity: 1,
-          discountPercent: 0,
-          unitPriceUSD: initialUnitPriceUSD,
-          unitPriceLBP: initialUnitPriceLBP,
-          isPiece,
-        },
-      ];
-    });
-  };
+    window.addEventListener('keydown', handleRapidScannerKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener('keydown', handleRapidScannerKeyDown, { capture: true });
+      if (flushTimer) clearTimeout(flushTimer);
+    };
+  }, [leftPanelMode, showPaymentConfirmModal, isStockCardOpen, lastCompletedSale, handleBarcodeScan]);
 
   const updateBatch = (cartItemId: string, batchStr: string) => {
     setCart((prev) => {
@@ -1226,6 +1500,102 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   const retainedLBP = isOverpaid && !isChangeExceeding
     ? Math.max(0, Math.round(maxChangeLBP - totalChangeReturnedLBP))
     : 0;
+
+  // Hold / Park sale operations
+  const holdCurrentSale = useCallback((optionalNote?: string) => {
+    if (cart.length === 0) {
+      addNotification('alert', 'Cart is empty. Add items before holding a sale.');
+      return;
+    }
+    const custName = isUnrealInvoice
+      ? 'Unreal Invoice'
+      : selectedCust
+      ? selectedCust.name
+      : 'Cash Client';
+
+    const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+    const newParked: ParkedSale = {
+      id: `parked_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: Date.now(),
+      label: optionalNote || `${custName} (${totalItemsCount} ${totalItemsCount === 1 ? 'item' : 'items'})`,
+      customerId: selectedCustomerId,
+      customerName: custName,
+      isUnreal: isUnrealInvoice,
+      items: [...cart],
+      tenderedUSD,
+      tenderedLBP,
+      paymentMethod,
+      totalUSD,
+      totalLBP,
+      totalItems: totalItemsCount,
+      notes: optionalNote || '',
+    };
+
+    setParkedSales(prev => [newParked, ...prev]);
+
+    clearCart();
+    setSelectedCustomerId('');
+    addNotification('success', `Sale held: "${newParked.label}". Ready for next customer.`);
+  }, [cart, isUnrealInvoice, selectedCust, selectedCustomerId, tenderedUSD, tenderedLBP, paymentMethod, totalUSD, totalLBP, addNotification]);
+
+  useEffect(() => {
+    holdCurrentSaleRef.current = holdCurrentSale;
+  }, [holdCurrentSale]);
+
+  const resumeParkedSale = useCallback((parked: ParkedSale, swapCurrentCart: boolean) => {
+    if (swapCurrentCart && cart.length > 0) {
+      const custName = isUnrealInvoice
+        ? 'Unreal Invoice'
+        : selectedCust
+        ? selectedCust.name
+        : 'Cash Client';
+      const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+      const autoHeld: ParkedSale = {
+        id: `parked_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: Date.now(),
+        label: `${custName} (${totalItemsCount} ${totalItemsCount === 1 ? 'item' : 'items'})`,
+        customerId: selectedCustomerId,
+        customerName: custName,
+        isUnreal: isUnrealInvoice,
+        items: [...cart],
+        tenderedUSD,
+        tenderedLBP,
+        paymentMethod,
+        totalUSD,
+        totalLBP,
+        totalItems: totalItemsCount,
+      };
+
+      setParkedSales(prev => [autoHeld, ...prev.filter(p => p.id !== parked.id)]);
+    } else {
+      setParkedSales(prev => prev.filter(p => p.id !== parked.id));
+    }
+
+    setCart(parked.items || []);
+    setSelectedCustomerId(parked.customerId || '');
+    setTenderedUSD(parked.tenderedUSD || '');
+    setTenderedLBP(parked.tenderedLBP || '');
+    setPaymentMethod(parked.paymentMethod || 'cash_lbp');
+    setChangeCurrency('auto');
+    setCustomChangeUSD('');
+    setCustomChangeLBP('');
+    setIsCustomChange(false);
+    setWriteOffDifferences(false);
+    setErrorMessage(null);
+
+    addNotification('info', `Resumed sale: "${parked.label || parked.customerName}".`);
+  }, [cart, isUnrealInvoice, selectedCust, selectedCustomerId, tenderedUSD, tenderedLBP, paymentMethod, totalUSD, totalLBP, addNotification]);
+
+  const deleteParkedSale = useCallback((parkedId: string) => {
+    setParkedSales(prev => prev.filter(p => p.id !== parkedId));
+    addNotification('info', 'Parked sale discarded.');
+  }, [addNotification]);
+
+  const updateParkedNote = useCallback((parkedId: string, note: string) => {
+    setParkedSales(prev => prev.map(p => p.id === parkedId ? { ...p, notes: note } : p));
+  }, []);
 
   // Complete checkout
 
@@ -1685,38 +2055,87 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
           ) : (
             <div className="flex-1 overflow-hidden flex flex-col">
               {/* Search & Category Filter Toolbar */}
-              <div className="p-3 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/80 space-y-2.5 shrink-0">
+              <div className="p-3 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/80 space-y-2 shrink-0">
                 <div className="relative">
-                  <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
+                  {/* Status-aware left icon */}
+                  <div className="absolute left-3 top-2.5 flex items-center pointer-events-none transition-transform duration-200">
+                    {scanFeedback.type === 'success' ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 animate-bounce" />
+                    ) : scanFeedback.type === 'out-of-stock' ? (
+                      <AlertTriangle className="h-4 w-4 text-amber-500 dark:text-amber-400 animate-pulse" />
+                    ) : scanFeedback.type === 'not-found' ? (
+                      <AlertCircle className="h-4 w-4 text-red-500 dark:text-red-400 animate-pulse" />
+                    ) : (
+                      <Search className="h-3.5 w-3.5 text-gray-400" />
+                    )}
+                  </div>
+
                   <input
+                    ref={searchInputRef}
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && searchQuery.trim()) {
-                        const trimmed = searchQuery.trim().toLowerCase();
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const raw = searchQuery.trim();
+                        const trimmed = raw.toLowerCase();
                         const exactPiece = products.find(
                           p => p.isDivisible && (p.pieceBarcode || '').toLowerCase() === trimmed
                         );
                         if (exactPiece) {
-                          addToCart(exactPiece, true);
-                          setSearchQuery('');
+                          handleBarcodeScan(raw);
                           return;
                         }
                         const exactProduct = products.find(
                           p => (p.barcode || '').toLowerCase() === trimmed || (p.code || '').toLowerCase() === trimmed
                         );
                         if (exactProduct) {
-                          addToCart(exactProduct, false);
-                          setSearchQuery('');
-                        } else if (filteredProducts.length > 0) {
-                          addToCart(filteredProducts[0]);
-                          setSearchQuery('');
+                          handleBarcodeScan(raw);
+                          return;
+                        }
+                        if (filteredProducts.length > 0) {
+                          const topProduct = filteredProducts[0];
+                          if (!isUnrealInvoice && topProduct.stockQuantity <= 0) {
+                            triggerScanFeedback('out-of-stock', `"${topProduct.name}" is not found in stock (0 available).`, {
+                              productName: topProduct.name,
+                            });
+                            setErrorMessage(`Cannot add "${topProduct.name}": Out of stock!`);
+                            setTimeout(() => setErrorMessage(null), 3000);
+                            return;
+                          }
+                          const added = addToCart(topProduct);
+                          if (added) {
+                            triggerScanFeedback('success', `Added "${topProduct.name}" to cart!`, {
+                              productName: topProduct.name,
+                            });
+                            clearAndFocusSearchInput();
+                          }
+                        } else {
+                          triggerScanFeedback('not-found', `No product found matching "${raw}".`);
+                          setErrorMessage(`No product found matching "${raw}".`);
+                          setTimeout(() => setErrorMessage(null), 3000);
+                          if (searchInputRef.current) {
+                            searchInputRef.current.select();
+                          }
                         }
                       }
                     }}
-                    placeholder="Search by multi-word name (e.g. 'Panadol Advance', 'بنادول أدفانس'), Code, Barcode..."
-                    className="w-full rounded border border-gray-300 bg-white pl-9 pr-8 py-1.5 text-xs text-slate-800 placeholder-gray-400 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    onFocus={(e) => {
+                      // Select existing text on focus so any new scan or keystroke cleanly overwrites rather than appends
+                      e.target.select();
+                    }}
+                    placeholder="Search by multi-word name, Code, or scan Barcode..."
+                    className={`w-full rounded pl-9 pr-8 py-1.5 text-xs transition-all duration-200 focus:outline-hidden ${
+                      scanFeedback.type === 'success'
+                        ? 'border-2 border-emerald-500 bg-emerald-50/80 ring-2 ring-emerald-400/50 shadow-xs shadow-emerald-500/20 scan-success-anim text-emerald-950 placeholder-emerald-700 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100'
+                        : scanFeedback.type === 'out-of-stock'
+                        ? 'border-2 border-amber-500 bg-amber-50/80 ring-2 ring-amber-400/50 shadow-xs shadow-amber-500/20 scan-error-anim text-amber-950 placeholder-amber-700 dark:border-amber-500 dark:bg-amber-950/40 dark:text-amber-100'
+                        : scanFeedback.type === 'not-found'
+                        ? 'border-2 border-red-500 bg-red-50/80 ring-2 ring-red-400/50 shadow-xs shadow-red-500/20 scan-error-anim text-red-950 placeholder-red-700 dark:border-red-500 dark:bg-red-950/40 dark:text-red-100'
+                        : 'border border-gray-300 bg-white text-slate-800 placeholder-gray-400 focus:border-teal-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'
+                    }`}
                     autoFocus
                   />
                   {searchQuery && (
@@ -1813,20 +2232,45 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
       {/* RIGHT PANEL: Active Sale Cart & Lebanese Dual-Currency Checkout */}
       <div className={`flex w-full shrink-0 lg:w-[360px] xl:w-[450px] 2xl:w-[530px] flex-col ${cartPosition === 'right' ? 'border-l' : 'border-r'} border-gray-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 transition-all`}>
         {/* Cart Header */}
-        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-2.5 dark:border-slate-800 bg-gray-50 dark:bg-slate-900">
-          <div className="flex items-center space-x-2">
-            <ShoppingBag className="h-4 w-4 text-teal-600 dark:text-teal-400" />
-            <h2 className="font-bold text-xs uppercase tracking-wider text-gray-700 dark:text-slate-200">
-              Current Sale ({cart.reduce((sum, item) => sum + item.quantity, 0)} items)
+        <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2 dark:border-slate-800 bg-gray-50 dark:bg-slate-900">
+          <div className="flex items-center space-x-1.5 min-w-0">
+            <ShoppingBag className="h-4 w-4 text-teal-600 dark:text-teal-400 shrink-0" />
+            <h2 className="font-bold text-xs uppercase tracking-wider text-gray-700 dark:text-slate-200 truncate">
+              Sale ({cart.reduce((sum, item) => sum + item.quantity, 0)})
             </h2>
           </div>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2 shrink-0">
+            {parkedSales.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  restoreWindow('pos-parked-sales-modal');
+                  setIsParkedModalOpen(true);
+                }}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/70 dark:text-amber-200 dark:border-amber-700/60 text-[10px] font-bold hover:bg-amber-200 dark:hover:bg-amber-900/80 transition-colors cursor-pointer"
+                title="View Held Transactions"
+              >
+                <PauseCircle className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                <span>Held ({parkedSales.length})</span>
+              </button>
+            )}
+            {cart.length > 0 && (
+              <button
+                type="button"
+                onClick={() => holdCurrentSale()}
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-amber-700 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors cursor-pointer"
+                title="Hold current sale to assist another customer (F8)"
+              >
+                <PauseCircle className="h-3.5 w-3.5" />
+                <span>Hold</span>
+              </button>
+            )}
             {cart.length > 0 && (
               <button
                 onClick={clearCart}
                 className="text-xs font-semibold text-red-600 hover:underline dark:text-red-400 cursor-pointer"
               >
-                Clear Cart
+                Clear
               </button>
             )}
             <button
@@ -1842,6 +2286,53 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
             </button>
           </div>
         </div>
+
+        {/* Quick Held Sales Strip */}
+        {parkedSales.length > 0 && (
+          <div className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200/80 dark:border-amber-800/60 flex items-center justify-between text-xs gap-1.5">
+            <div className="flex items-center gap-1.5 overflow-hidden flex-1 min-w-0">
+              <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider shrink-0 flex items-center gap-1">
+                <PauseCircle className="h-3 w-3" />
+                Held:
+              </span>
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                {parkedSales.slice(0, 3).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      if (cart.length > 0) {
+                        restoreWindow('pos-parked-sales-modal');
+                        setIsParkedModalOpen(true);
+                      } else {
+                        resumeParkedSale(p, false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700/60 text-[10px] text-slate-800 dark:text-slate-200 font-medium hover:border-teal-500 hover:text-teal-700 dark:hover:text-teal-400 shadow-2xs shrink-0 cursor-pointer"
+                    title={`Click to resume ${p.label || p.customerName} ($${p.totalUSD.toFixed(2)})`}
+                  >
+                    <span className="font-bold text-amber-800 dark:text-amber-300 truncate max-w-[80px]">
+                      {p.label || p.customerName}
+                    </span>
+                    <span className="font-mono text-teal-700 dark:text-teal-400 font-semibold">
+                      ${p.totalUSD.toFixed(2)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                restoreWindow('pos-parked-sales-modal');
+                setIsParkedModalOpen(true);
+              }}
+              className="text-[10px] font-bold text-amber-800 hover:text-amber-950 dark:text-amber-300 dark:hover:text-amber-100 hover:underline shrink-0 cursor-pointer"
+            >
+              All ({parkedSales.length})
+            </button>
+          </div>
+        )}
 
         {/* Customer Selector */}
         <div className={`p-2.5 border-b transition-colors ${
@@ -2120,6 +2611,20 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
 {formatLBPValue(totalLBP)}
               </span>
             </div>
+
+            {/* When money received is more than invoice total, show exact amount received */}
+            {isOverpaid && (
+              <div className="flex items-baseline justify-between mt-1 pt-1 border-t border-dashed border-teal-300 dark:border-teal-800">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-teal-900 dark:text-teal-200">
+                  Received:
+                </span>
+                <span className="text-xs font-mono font-extrabold text-teal-800 dark:text-teal-300">
+                  {paidUSD > 0 ? `$${paidUSD.toFixed(2)} ` : ''}
+                  {paidUSD > 0 && paidLBP > 0 ? '+ ' : ''}
+                  {paidLBP > 0 ? `${formatLBPValue(paidLBP)} LBP` : ''}
+                </span>
+              </div>
+            )}
             
             {marginPercent > 0 && (
               <div className="flex items-baseline justify-between mt-0.5 pt-0.5 border-t border-teal-200/50 dark:border-teal-900/30">
@@ -2557,6 +3062,17 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
               </span>
               <ArrowRight className="h-3 w-3 shrink-0" />
             </button>
+
+            <button
+              type="button"
+              onClick={() => holdCurrentSale()}
+              disabled={cart.length === 0}
+              className="flex items-center justify-center space-x-1 rounded-lg px-2.5 text-[10px] font-bold shadow-xs transition-all cursor-pointer uppercase tracking-wider bg-amber-600 text-white hover:bg-amber-700 active:scale-[0.99] disabled:opacity-40 shrink-0"
+              title="Hold current sale to assist another customer (F8)"
+            >
+              <PauseCircle className="h-3 w-3 shrink-0" />
+              <span className="truncate">Hold</span>
+            </button>
             
             <button
               onClick={handlePrintClick}
@@ -2763,6 +3279,20 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         onClose={() => setIsStockCardOpen(false)}
         onViewScientific={onViewScientific}
         exchangeRate={exchangeRate}
+      />
+
+      {/* Held / Parked Transactions Modal */}
+      <ParkedSalesModal
+        isOpen={isParkedModalOpen}
+        onClose={() => setIsParkedModalOpen(false)}
+        parkedSales={parkedSales}
+        onResume={resumeParkedSale}
+        onDelete={deleteParkedSale}
+        onHoldCurrent={() => holdCurrentSale()}
+        hasActiveCart={cart.length > 0}
+        formatUSD={formatUSD}
+        formatLBP={formatLBP}
+        onUpdateNote={updateParkedNote}
       />
     </div>
   );

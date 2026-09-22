@@ -3,6 +3,7 @@ import { Bell, X, Check, Trash2, AlertTriangle, Info, CheckCircle2, ShieldAlert 
 import { usePharmacy } from '../../context/PharmacyContext';
 import { AppNotification } from '../../types/pharmacy';
 import { DesktopWindow } from './DesktopWindow';
+import { formatTime } from '../../utils/dateUtils';
 
 interface NotificationsModalProps {
   onClose: () => void;
@@ -63,7 +64,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({ onClose 
                       {notif.message}
                     </div>
                     <div className="mt-1 text-[10px] text-slate-400">
-                      {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {notif.type.toUpperCase()}
+                      {formatTime(notif.timestamp)} • {notif.type.toUpperCase()}
                     </div>
                   </div>
                 </div>

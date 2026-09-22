@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { DollarSign, Percent, TrendingUp, TrendingDown, Wallet, ArrowRightLeft, FileSpreadsheet, Building2, Calculator, Settings, Receipt, Banknote, Briefcase } from 'lucide-react';
 import { ProductCategory } from '../../types/pharmacy';
+import { formatDateTime } from '../../utils/dateUtils';
 import { CashDrawerView } from './CashDrawerView';
 import { ExpensesView } from './ExpensesView';
 
@@ -259,7 +260,7 @@ export const FinanceView: React.FC = () => {
                     {sales.slice().sort((a,b) => b.timestamp - a.timestamp).slice(0, 10).map(sale => (
                       <tr key={sale.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                         <td className="px-4 py-2.5 font-mono">{sale.invoiceNumber}</td>
-                        <td className="px-4 py-2.5 text-slate-500">{new Date(sale.timestamp).toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-slate-500">{formatDateTime(sale.timestamp)}</td>
                         <td className="px-4 py-2.5 text-right font-bold text-slate-900 dark:text-slate-100">{formatUSD(sale.totalUSD)}</td>
                       </tr>
                     ))}

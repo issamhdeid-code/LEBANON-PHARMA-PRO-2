@@ -16,6 +16,7 @@ import { usePharmacy } from '../../context/PharmacyContext';
 import { SaleTransaction, ProductCategory } from '../../types/pharmacy';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatDateTime } from '../../utils/dateUtils';
 import { CollectReportsView } from './CollectReportsView';
 import { ChartsReportsView } from './ChartsReportsView';
 
@@ -378,7 +379,7 @@ export const ReportsView: React.FC = () => {
                         {s.invoiceNumber || s.receiptNumber}
                       </td>
                       <td className="py-1.5 px-3 text-gray-600 dark:text-slate-300">
-                        {new Date(s.timestamp).toLocaleString()}
+                        {formatDateTime(s.timestamp)}
                       </td>
                       <td className="py-1.5 px-3 text-gray-600 dark:text-slate-300">
                         {s.cashierName}

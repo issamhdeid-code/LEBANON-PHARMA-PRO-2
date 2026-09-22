@@ -23,6 +23,7 @@ import {
 import { usePharmacy } from '../../context/PharmacyContext';
 import { ProductCategory } from '../../types/pharmacy';
 import { formatLBPValue } from '../../utils/priceUtils';
+import { formatTime, formatDateTime } from '../../utils/dateUtils';
 
 interface VatItemizedRow {
   saleId: string;
@@ -197,7 +198,7 @@ export const VatSalesValueReport: React.FC = () => {
       if (selectedCashier !== 'ALL' && sale.cashierName !== selectedCashier) return;
 
       const rateLBP = sale.exchangeRate || exchangeRate || 89500;
-      const timeStr = saleDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const timeStr = formatTime(saleDate);
 
       // Examine each sale item for VAT
       sale.items.forEach((item) => {
@@ -797,7 +798,7 @@ export const VatSalesValueReport: React.FC = () => {
                 Period: {startDate} to {endDate}
               </div>
               <div className="text-[10px] text-slate-400">
-                Generated on: {new Date().toLocaleString()}
+                Generated on: {formatDateTime(new Date())}
               </div>
             </div>
           </div>
