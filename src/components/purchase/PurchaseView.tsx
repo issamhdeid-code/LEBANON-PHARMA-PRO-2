@@ -1,4 +1,5 @@
 import { SupplierPaymentModal } from './SupplierPaymentModal';
+import { IDPInvoiceModal } from './IDPInvoiceModal';
 import { PurchaseReturnTab } from './PurchaseReturnTab';
 import { motion } from "motion/react";
 import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect, useImperativeHandle } from 'react';
@@ -833,6 +834,7 @@ export const PurchaseView: React.FC = () => {
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isIDPModalOpen, setIsIDPModalOpen] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'invoices' | 'payments' | 'returns'>('invoices');
   const [historySearchQuery, setHistorySearchQuery] = useState('');
@@ -2166,6 +2168,41 @@ export const PurchaseView: React.FC = () => {
     }, 100);
   };
 
+  const handleApplyIDPInvoice = (data: {
+    supplierId: string;
+    supplierName: string;
+    invoiceNumber: string;
+    invoiceDate: string;
+    currency: 'USD' | 'LBP';
+    invoiceDiscount: number;
+    items: PurchaseItem[];
+  }) => {
+    restoreWindow('purchase-invoice-window');
+    restoreWindow('new_purchase_invoice');
+    restoreWindow('Receive Supplier Shipment');
+    restoreSectionWindows('purchase');
+
+    setIsViewMode(false);
+    setIsCreateOpen(true);
+    setEditingPurchaseId(null);
+    setSelectedSupplierId(data.supplierId || '');
+    setSupplierSearchQuery(data.supplierName || '');
+    setInvoiceNumberInput(data.invoiceNumber || '');
+    setInvoiceDate(data.invoiceDate || new Date().toISOString().split('T')[0]);
+    setPurchaseCurrency(data.currency || 'USD');
+    setInvoiceDiscount((data.invoiceDiscount || 0).toString());
+    setInvoiceDiscountAmount('0');
+    setManualTotal('');
+    setItems(data.items);
+    addNotification(
+      'Invoice Imported (IDP)',
+      `Imported ${data.items.length} line items from invoice #${data.invoiceNumber || 'New'} into the purchase form.`,
+      'inventory',
+      'success'
+    );
+    showFeedback('success', `Autofilled purchase invoice with ${data.items.length} items from ${data.supplierName || 'invoice'}.`);
+  };
+
   const handleViewPurchase = (inv: PurchaseInvoice) => {
     restoreWindow('purchase-invoice-window');
     restoreWindow('view_purchase_invoice');
@@ -2262,13 +2299,24 @@ export const PurchaseView: React.FC = () => {
 
           <div className="flex items-center gap-2">
             {activeTab === 'invoices' && (
-              <button
-                onClick={handleOpenCreate}
-                className="flex items-center space-x-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-teal-700 shadow-2xs transition-colors cursor-pointer"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>New Purchase Invoice</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsIDPModalOpen(true)}
+                  className="flex items-center space-x-1.5 rounded bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-2xs transition-colors cursor-pointer"
+                  title="Scan or upload a paper/PDF invoice to extract items automatically"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-amber-300" />
+                  <span>Scan / IDP Invoice</span>
+                </button>
+                <button
+                  onClick={handleOpenCreate}
+                  className="flex items-center space-x-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-teal-700 shadow-2xs transition-colors cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>New Purchase Invoice</span>
+                </button>
+              </>
             )}
             {activeTab === 'payments' && (
               <button
@@ -2747,6 +2795,24 @@ export const PurchaseView: React.FC = () => {
             }}
             className="px-3 pt-2 pb-3 space-y-2 text-xs flex-1 flex flex-col justify-start overflow-auto min-h-0"
           >
+            {!isViewMode && !editingPurchaseId && (
+              <div className="flex items-center justify-between px-2.5 py-1.5 bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 rounded text-xs">
+                <div className="flex items-center space-x-2 text-indigo-900 dark:text-indigo-200">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="text-[11px] font-medium">
+                    Upload or scan a paper/PDF invoice to extract supplier, items, lots, expiry dates, and costs automatically.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsIDPModalOpen(true)}
+                  className="px-2.5 py-0.5 text-[11px] font-bold rounded bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs transition-colors shrink-0 cursor-pointer flex items-center gap-1"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-300" />
+                  <span>Scan / IDP Invoice</span>
+                </button>
+              </div>
+            )}
             <div className={`grid grid-cols-1 sm:grid-cols-2 ${isPaid ? 'lg:grid-cols-[1.8fr_1fr_0.8fr_1fr_1fr_1fr]' : 'lg:grid-cols-[2fr_1fr_1fr_1.2fr_1fr]'} gap-3`}>
               <div ref={supplierDropdownRef} className="relative">
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
@@ -4069,6 +4135,18 @@ export const PurchaseView: React.FC = () => {
           }}
           paymentToEdit={paymentToEdit}
           initialSupplierId={initialSupplierIdForModal}
+        />
+      )}
+
+      {/* IDP Invoice Extraction Modal */}
+      {isIDPModalOpen && (
+        <IDPInvoiceModal
+          isOpen={isIDPModalOpen}
+          onClose={() => setIsIDPModalOpen(false)}
+          products={products}
+          suppliers={suppliers}
+          exchangeRate={exchangeRate}
+          onApplyInvoice={handleApplyIDPInvoice}
         />
       )}
 

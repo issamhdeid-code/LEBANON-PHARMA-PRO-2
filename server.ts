@@ -154,7 +154,8 @@ io.on('connection', (socket) => {
   });
 });
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '32mb' }));
+app.use(express.urlencoded({ limit: '32mb', extended: true }));
 
 // Reject requests whose Host header isn't this machine or localhost. This blocks
 // DNS-rebinding against the plain-HTTP API (the Socket.IO transport has its own
@@ -204,10 +205,40 @@ app.get('/api/network/ipv4', rateLimit(30, 60_000), (_req, res) => {
 
 // Lazy initialize Gemini AI client
 let aiClient: GoogleGenAI | null = null;
+let lastUsedApiKey: string | undefined = undefined;
+
 function getAIClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  if (!aiClient) {
+  // Reload dotenv if file exists to pick up runtime edits to .env
+  try {
+    if (fs.existsSync('.env')) {
+      dotenv.config({ override: true });
+    }
+  } catch {
+    // ignore
+  }
+
+  // Scan environment variables for Gemini API keys
+  let apiKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.Apifromaccount ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.API_KEY ||
+    process.env.VITE_GEMINI_API_KEY;
+
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    // Check if any environment variable starts with Google API key prefix (AIzaSy...)
+    for (const [key, val] of Object.entries(process.env)) {
+      if (typeof val === 'string' && val.startsWith('AIzaSy')) {
+        apiKey = val;
+        break;
+      }
+    }
+  }
+
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') return null;
+
+  if (!aiClient || lastUsedApiKey !== apiKey) {
+    lastUsedApiKey = apiKey;
     aiClient = new GoogleGenAI({
       apiKey,
       httpOptions: {
@@ -240,7 +271,7 @@ app.post('/api/scientifics/enrich', rateLimit(12, 60_000), async (req, res) => {
 
     const ai = getAIClient();
     if (!ai) {
-      return res.status(503).json({
+      return res.status(422).json({
         error: 'Gemini API key is not configured on server',
         fallbackNeeded: true,
       });
@@ -293,7 +324,14 @@ Return ONLY valid JSON matching this schema:
   "identifiedIngredients": ["..."]
 }`;
 
-    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.6-flash', 'gemini-flash-latest'];
+    const candidateModels = [
+      'gemini-3.5-flash',
+      'gemini-3.6-flash',
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-flash-latest',
+      'gemini-3.1-flash-lite',
+    ];
     let response: any = null;
     let lastError: any = null;
 
@@ -307,21 +345,41 @@ Return ONLY valid JSON matching this schema:
       });
 
     for (const model of candidateModels) {
-      try {
-        response = await withTimeout(ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-          },
-        }), 45_000, model);
-        if (response && response.text) {
+      // Allow up to 2 attempts per candidate to gracefully absorb temporary 503 spikes
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          response = await withTimeout(ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+            },
+          }), 45_000, model);
+          if (response && response.text) {
+            break;
+          }
+        } catch (err: any) {
+          lastError = err;
+          const isQuota = String(err?.message || '').includes('429') ||
+            String(err?.message || '').includes('quota') ||
+            err?.status === 'RESOURCE_EXHAUSTED' ||
+            err?.code === 429;
+          const isHighDemand = String(err?.message || '').includes('503') || 
+            String(err?.message || '').includes('high demand') || 
+            err?.status === 'UNAVAILABLE' || 
+            err?.code === 503;
+
+          if (isHighDemand && attempt === 1) {
+            await new Promise((r) => setTimeout(r, 600));
+            continue;
+          }
+          console.info(`[Scientifics] Model ${model} unavailable (${isQuota ? '429 Quota' : isHighDemand ? '503 High Demand' : 'busy'}), switching candidate`);
           break;
         }
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`Model ${model} failed, trying next candidate:`, err?.message || err);
+      }
+      if (response && response.text) {
+        break;
       }
     }
 
@@ -367,10 +425,249 @@ Return ONLY valid JSON matching this schema:
       identifiedIngredients: identified,
     });
   } catch (err: any) {
-    console.error('Error enriching scientific data with AI:', err);
+    const isQuota = String(err?.message || '').includes('429') || 
+      String(err?.message || '').includes('quota') || 
+      err?.status === 'RESOURCE_EXHAUSTED' || 
+      err?.code === 429;
+    const isHighDemand = String(err?.message || '').includes('503') || 
+      String(err?.message || '').includes('high demand') || 
+      err?.status === 'UNAVAILABLE' || 
+      err?.code === 503;
+
+    if (isHighDemand || isQuota) {
+      console.info(`[Scientifics] Gemini model unavailable (${isQuota ? 'Free-tier Quota Exceeded' : 'High Demand Spikes'}).`);
+      return res.status(200).json({
+        success: false,
+        isHighDemand: true,
+        fallbackNeeded: true,
+        error: isQuota
+          ? 'Gemini API free-tier request limit reached. Please wait a moment before trying again.'
+          : 'Google Gemini is temporarily experiencing high demand. Please try again in a few moments.',
+      });
+    }
+
+    console.warn('[Scientifics] enrich error:', err?.message || err);
     return res.status(500).json({
       error: err?.message || 'Failed to enrich scientific data with AI',
       fallbackNeeded: true,
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// IDP (Intelligent Document Processing) for Supplier Purchase Invoices
+// ---------------------------------------------------------------------------
+app.post('/api/idp/process-invoice', rateLimit(20, 60_000), async (req, res) => {
+  try {
+    const rawData = req.body?.fileData;
+    let mimeType = req.body?.mimeType || 'image/jpeg';
+
+    if (!rawData || typeof rawData !== 'string') {
+      return res.status(400).json({ error: 'Invoice file data (base64) is required.' });
+    }
+
+    const ai = getAIClient();
+    if (!ai) {
+      return res.status(422).json({
+        error: 'Gemini API key is not configured on server. Please ensure GEMINI_API_KEY is configured in .env.',
+        fallbackNeeded: true,
+      });
+    }
+
+    // Strip Data URL prefix if passed (e.g. data:image/png;base64,...)
+    let base64Clean = rawData;
+    if (rawData.startsWith('data:')) {
+      const commaIdx = rawData.indexOf(',');
+      if (commaIdx !== -1) {
+        const header = rawData.slice(0, commaIdx);
+        const matchMime = header.match(/data:([^;]+);base64/);
+        if (matchMime && matchMime[1]) {
+          mimeType = matchMime[1];
+        }
+        base64Clean = rawData.slice(commaIdx + 1);
+      }
+    }
+    base64Clean = base64Clean.replace(/\s+/g, '');
+
+    const validMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
+    if (!validMimes.includes(mimeType.toLowerCase())) {
+      mimeType = 'image/jpeg';
+    }
+
+    const prompt = `You are an expert pharmaceutical document processing system specialized in parsing supplier and distributor purchase invoices for pharmacies in Lebanon (e.g., Mersaco, Omnipharma, Sadco, Benta, Droguerie de l'Union, Fattal, Phoenicia, etc.).
+
+Analyze this invoice image or document carefully and extract all header information and each line item accurately into structured JSON.
+
+Extraction Guidelines:
+1. supplierName: Extracted distributor or supplier company name (e.g. Mersaco, Omnipharma, Sadco, Benta, etc.).
+2. invoiceNumber: The invoice number or delivery note reference code.
+3. invoiceDate: The invoice issue date converted to YYYY-MM-DD format (if only month/year or DD/MM/YYYY, convert appropriately).
+4. currency: 'USD' or 'LBP' (often indicated by $, USD, L.L., LBP). Default to 'USD' if in doubt.
+5. exchangeRate: The official or market exchange rate printed on the invoice (e.g. 89500), or null if not indicated.
+6. invoiceDiscountPercent: Global discount percentage applied to the entire invoice, if any, or 0.
+7. totalAmount: Total invoice amount due after discounts and taxes.
+8. items: Array of every single invoiced line item. For each item:
+   - productName: Full medication or product name, including brand, strength/dosage, and form (e.g., 'Augmentin 1g 14 Tab', 'Panadol Extra 24 Tab').
+   - barcode: EAN/UPC barcode number if printed on the invoice, or null.
+   - itemCode: Distributor product reference code or item code if present, or null.
+   - quantity: Number of invoiced commercial units/boxes purchased (integer).
+   - freeQty: Number of free/bonus units ('Gratuit', 'Grat', 'Bonus', 'F.O.C.'), or 0.
+   - batchNumber: Batch or lot number ('Lot', 'N° Lot', 'Batch').
+   - expiryDate: Expiry date ('Exp', 'Pér', 'Peremption'). Format as MM/YYYY or YYYY-MM-DD.
+   - unitCost: Wholesale or invoice unit purchase cost before line discount.
+   - discount: Line discount percentage (e.g. 10 for 10%), or 0.
+   - sellingPrice: Recommended public retail price / MOPH public price if indicated on invoice, or null.
+   - isPiece: True if sold by individual ampoule/piece rather than standard box, otherwise false.
+
+Return ONLY valid JSON matching this schema:
+{
+  "supplierName": "...",
+  "invoiceNumber": "...",
+  "invoiceDate": "YYYY-MM-DD",
+  "currency": "USD",
+  "exchangeRate": 89500,
+  "invoiceDiscountPercent": 0,
+  "totalAmount": 120.50,
+  "items": [
+    {
+      "productName": "...",
+      "barcode": null,
+      "itemCode": null,
+      "quantity": 10,
+      "freeQty": 1,
+      "batchNumber": "...",
+      "expiryDate": "MM/YYYY",
+      "unitCost": 12.50,
+      "discount": 0,
+      "sellingPrice": 16.20,
+      "isPiece": false
+    }
+  ]
+}`;
+
+    const candidateModels = [
+      'gemini-3.5-flash',
+      'gemini-3.6-flash',
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-flash-latest',
+      'gemini-3.1-flash-lite',
+    ];
+    let response: any = null;
+    let lastError: any = null;
+
+    const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+      new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms);
+        promise.then(
+          (v) => { clearTimeout(timer); resolve(v); },
+          (e) => { clearTimeout(timer); reject(e); }
+        );
+      });
+
+    for (const model of candidateModels) {
+      // Allow up to 2 attempts per candidate with backoff on transient 503 spikes
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          response = await withTimeout(ai.models.generateContent({
+            model,
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType,
+                      data: base64Clean,
+                    },
+                  },
+                  {
+                    text: prompt,
+                  },
+                ],
+              },
+            ],
+            config: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+            },
+          }), 60_000, model);
+
+          if (response && response.text) {
+            break;
+          }
+        } catch (err: any) {
+          lastError = err;
+          const isQuota = String(err?.message || '').includes('429') ||
+            String(err?.message || '').includes('quota') ||
+            err?.status === 'RESOURCE_EXHAUSTED' ||
+            err?.code === 429;
+          const isHighDemand = String(err?.message || '').includes('503') || 
+            String(err?.message || '').includes('high demand') || 
+            err?.status === 'UNAVAILABLE' || 
+            err?.code === 503;
+
+          if (isHighDemand && attempt === 1) {
+            await new Promise((r) => setTimeout(r, 600));
+            continue;
+          }
+          console.info(`[IDP] Model ${model} unavailable (${isQuota ? '429 Quota' : isHighDemand ? '503 High Demand' : 'busy'}), switching candidate`);
+          break;
+        }
+      }
+      if (response && response.text) {
+        break;
+      }
+    }
+
+    if (!response || !response.text) {
+      throw lastError || new Error('All AI models failed to process the invoice');
+    }
+
+    const responseText = response.text || '';
+    let parsedData: any = null;
+    try {
+      parsedData = JSON.parse(responseText);
+    } catch {
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsedData = JSON.parse(jsonMatch[0]);
+      }
+    }
+
+    if (!parsedData || !Array.isArray(parsedData.items)) {
+      throw new Error('Could not parse valid invoice items from document');
+    }
+
+    return res.json({
+      success: true,
+      extracted: parsedData,
+    });
+  } catch (err: any) {
+    const isQuota = String(err?.message || '').includes('429') ||
+      String(err?.message || '').includes('quota') ||
+      err?.status === 'RESOURCE_EXHAUSTED' ||
+      err?.code === 429;
+    const isHighDemand = String(err?.message || '').includes('503') || 
+      String(err?.message || '').includes('high demand') || 
+      err?.status === 'UNAVAILABLE' || 
+      err?.code === 503;
+
+    if (isHighDemand || isQuota) {
+      console.info(`[IDP] Gemini model unavailable (${isQuota ? 'Free-tier Quota Exceeded' : 'High Demand Spikes'}).`);
+      return res.status(200).json({
+        success: false,
+        isHighDemand: true,
+        fallbackNeeded: true,
+        error: isQuota
+          ? 'Gemini API free-tier request limit reached. Please wait a moment before retrying, or use Demo Mode.'
+          : 'Google Gemini Vision is temporarily experiencing high demand from Google. Please retry in a few moments, or use Demo Mode.',
+      });
+    }
+
+    console.warn('[IDP] process-invoice error:', err?.message || err);
+    return res.status(500).json({
+      error: err?.message || 'Failed to extract invoice data using IDP',
     });
   }
 });
