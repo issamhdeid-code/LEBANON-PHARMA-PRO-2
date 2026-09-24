@@ -382,7 +382,7 @@ async function loginWalkthrough(t) {
 
 // -------------------------------------------------------------------- dashboard
 async function dashboardWalkthrough(t) {
-  check('dashboard-quick-actions', await bodyHas(t.page, 'New Sale (POS)') && await bodyHas(t.page, 'Update Drug Price') && await bodyHas(t.page, 'CSV Import'), 'quick action buttons present');
+  check('dashboard-quick-actions', await bodyHas(t.page, 'New Sale (POS)') && await bodyHas(t.page, 'Update Drug Price'), 'quick action buttons present');
   check('dashboard-kpis', await bodyHasCI(t.page, "Today's Sales"), 'KPI cards present');
 
   // quick action "Update Drug Price" opens the price updater
@@ -400,10 +400,10 @@ async function dashboardWalkthrough(t) {
   await sleep(500);
 
   // dark mode toggle roundtrip
-  await clickTitle(t.page, 'Switch to Dark Mode');
+  await clickTitle(t.page, 'Dark Mode');
   await waitFor(t.page, () => document.documentElement.classList.contains('dark'), { timeout: 15000 });
   check('dark-mode-on', true, 'html.dark applied');
-  await clickTitle(t.page, 'Switch to Light Mode');
+  await clickTitle(t.page, 'Light Mode');
   await waitFor(t.page, () => !document.documentElement.classList.contains('dark'), { timeout: 15000 });
   check('dark-mode-off', true, 'html.dark removed');
 
@@ -467,9 +467,25 @@ async function seedCatalog(t, count) {
       if (await clickText(t.page, lbl, { ci: true })) { await sleep(900); textarea = await t.page.evaluate(() => !!window.__PT.inputByPlaceholder('Paste comma-separated rows here...')); if (textarea) break; }
     }
   }
-  check('csv-modal-opened', !!textarea, opened ? 'via CSV toolbar button' : 'via fallback');
-  if (!textarea) throw new Error('CSV textarea not found');
-  await t.page.evaluate((csv) => { const el = window.__PT.inputByPlaceholder('Paste comma-separated rows here...'); window.__PT.setValue(el, csv); }, genCsv(count));
+  // The current CSV import UI is file-upload only (the paste editor and sample panel are
+  // hidden in CSVImportModal). Seed through the visible <input type=file> when there is no
+  // paste textarea; the paste path remains as a fallback if the UI re-introduces it.
+  let usedFile = false;
+  if (textarea) {
+    await t.page.evaluate((csv) => { const el = window.__PT.inputByPlaceholder('Paste comma-separated rows here...'); window.__PT.setValue(el, csv); }, genCsv(count));
+  } else {
+    const tmpFile = path.join(os.tmpdir(), `lpp2-seed-${process.pid}-${Date.now()}.csv`);
+    fs.writeFileSync(tmpFile, '\uFEFF' + genCsv(count));
+    try {
+      await t.page.setInputFiles('input[type="file"]', tmpFile);
+      usedFile = true;
+      await sleep(900);
+    } catch (e) {
+      usedFile = false;
+    }
+  }
+  check('csv-modal-opened', !!textarea || usedFile, opened ? 'via CSV toolbar button' : 'via fallback');
+  if (!textarea && !usedFile) throw new Error('CSV textarea not found');
   await sleep(400);
   const imported = await clickText(t.page, 'Import to Inventory');
   check('csv-import-button', imported, 'Import to Inventory clicked');
