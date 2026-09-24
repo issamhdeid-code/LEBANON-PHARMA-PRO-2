@@ -91,10 +91,9 @@ export function parseExpiryDateToObj(expiryStr: string | undefined | null): Date
  * Calculates calendar days remaining relative to a reference date (defaults to today midnight).
  */
 export function calculateDaysRemaining(expiryDateObj: Date, referenceDate: Date = new Date()): number {
-  const refStart = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
-  const expStart = new Date(expiryDateObj.getFullYear(), expiryDateObj.getMonth(), expiryDateObj.getDate());
-  const diffTime = expStart.getTime() - refStart.getTime();
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const refUtc = Date.UTC(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  const expUtc = Date.UTC(expiryDateObj.getFullYear(), expiryDateObj.getMonth(), expiryDateObj.getDate());
+  return Math.round((expUtc - refUtc) / (1000 * 60 * 60 * 24));
 }
 
 export const UpcomingExpiryWidget: React.FC<UpcomingExpiryWidgetProps> = ({
