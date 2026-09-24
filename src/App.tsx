@@ -24,10 +24,28 @@ import { Product } from './types/pharmacy';
 import { NotificationToastContainer } from './components/common/NotificationToastContainer';
 import { NotificationsModal } from './components/common/NotificationsModal';
 import { useWindowContext } from './context/WindowContext';
+import { useAutomatedLocalBackup } from './hooks/useAutomatedLocalBackup';
 
 const PharmacyAppContent: React.FC = () => {
-  const { currentUser, activeTab, setActiveTab, users, settings } = usePharmacy();
+  const {
+    currentUser,
+    activeTab,
+    setActiveTab,
+    users,
+    settings,
+    updateSettings,
+    exportBackup,
+    addNotification,
+  } = usePharmacy();
   const { restoreWindow } = useWindowContext();
+
+  // Run automated daily local backup in background
+  useAutomatedLocalBackup({
+    settings,
+    updateSettings,
+    exportBackup,
+    addNotification,
+  });
 
   // Global modals
   const [isPriceUpdaterOpen, setIsPriceUpdaterOpen] = useState(false);

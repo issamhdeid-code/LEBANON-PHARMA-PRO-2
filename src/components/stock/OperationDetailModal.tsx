@@ -19,6 +19,16 @@ import { formatLBPValue } from '../../utils/priceUtils';
 import { formatStockDisplay, parseExpiryDate } from '../../utils/stockUtils';
 import { usePharmacy } from '../../context/PharmacyContext';
 
+export interface OperationBatchBreakdown {
+  batchNumber?: string;
+  expiryDate?: string;
+  displayExpiry: string;
+  quantity: number;
+  formattedQuantity?: string;
+  isExpired?: boolean;
+  isNear?: boolean;
+}
+
 export interface ProductOperationItem {
   id: string; // ID assigned by the system
   referenceId: string;
@@ -30,6 +40,7 @@ export interface ProductOperationItem {
   expiry: string;
   rawExpiry?: string;
   batchNumber?: string;
+  batches?: OperationBatchBreakdown[];
   date: string;
   timestamp: number;
   purchase?: PurchaseInvoice;
@@ -134,14 +145,41 @@ export const OperationDetailModal: React.FC<OperationDetailModalProps> = ({
                 </span>
               </div>
               <div className="text-right">
-                <span className="text-[10px] text-slate-500 block">Operation Expiry</span>
-                <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                  {operation.expiry}
-                </span>
-                {operation.batchNumber && (
-                  <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                    Batch: {operation.batchNumber}
-                  </span>
+                <span className="text-[10px] text-slate-500 block">Operation Expiry & Batches</span>
+                {operation.batches && operation.batches.length > 1 ? (
+                  <div className="flex flex-col items-end gap-1 mt-1">
+                    {operation.batches.map((b, bIdx) => (
+                      <div key={bIdx} className="flex items-center gap-1.5 text-xs font-mono">
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded border border-slate-200 dark:border-slate-700">
+                          {b.formattedQuantity || `${b.quantity} qty`}
+                        </span>
+                        <span className={`font-bold ${b.isExpired ? 'text-red-600 dark:text-red-400' : b.isNear ? 'text-amber-600 dark:text-amber-400' : 'text-slate-800 dark:text-slate-200'}`}>
+                          {b.displayExpiry}
+                        </span>
+                        {b.batchNumber && (
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                            (Batch: {b.batchNumber})
+                          </span>
+                        )}
+                        {b.isExpired && (
+                          <span className="text-[8px] font-bold bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300 px-1 py-0.2 rounded">
+                            EXP
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                      {operation.expiry}
+                    </span>
+                    {operation.batchNumber && (
+                      <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                        Batch: {operation.batchNumber}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             </div>

@@ -12,6 +12,8 @@ interface DesktopWindowProps {
   children: React.ReactNode;
   width?: string;
   height?: string;
+  initialWidth?: number;
+  initialHeight?: number;
   minWidth?: number;
   minHeight?: number;
   maxWidth?: number;
@@ -616,13 +618,6 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
                 onPointerDown={(e) => handleResizeStart(e, 'n')}
                 className="absolute -top-1 left-6 right-6 h-3 cursor-n-resize z-20 hover:bg-teal-500/20 active:bg-teal-500/30 transition-colors touch-none select-none"
                 title="Resize height"
-              />
-
-              {/* Top-Right Corner Handle */}
-              <div
-                onPointerDown={(e) => handleResizeStart(e, 'ne')}
-                className="absolute top-0 right-0 w-7 h-7 cursor-ne-resize z-30 touch-none select-none hover:bg-teal-500/10 active:bg-teal-500/20 rounded-tr-xl transition-colors"
-                title="Drag to resize"
               />
 
               {/* Top-Left Corner Handle */}

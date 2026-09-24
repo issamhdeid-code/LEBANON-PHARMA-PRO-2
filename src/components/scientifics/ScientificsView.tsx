@@ -136,6 +136,7 @@ export const ScientificsView: React.FC<ScientificsViewProps> = ({
     estimateSize: () => 52,
     overscan: 8,
     getItemKey: (index) => filteredDrugs[index]?.id || index,
+    useFlushSync: false,
   });
 
   const handleSaveActiveIngredient = () => {

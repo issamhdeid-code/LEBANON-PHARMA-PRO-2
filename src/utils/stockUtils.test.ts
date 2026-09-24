@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { resolveProductBatches, splitProductMolecule } from './stockUtils';
+import {
+  resolveProductBatches,
+  splitProductMolecule,
+  isDateInRange,
+  matchesBatchAndExpiryFilter,
+  parseExpiryDate,
+} from './stockUtils';
 import { Product, PurchaseInvoice } from '../types/pharmacy';
 
 describe('splitProductMolecule', () => {
@@ -46,31 +52,31 @@ describe('splitProductMolecule', () => {
   });
 });
 
-describe('resolveProductBatches', () => {
-  const baseProduct: Product = {
-    id: 'prod-1',
-    code: 'PAN500',
-    barcode: '12345678',
-    name: 'Panadol Extra',
-    ingredients: 'Paracetamol 500mg, Caffeine 65mg',
-    dosage: '500mg',
-    presentation: 'Box of 24 tablets',
-    form: 'Tablet',
-    category: 'drug',
-    priceUSD: 2.5,
-    priceLBP: 225000,
-    costPriceUSD: 1.8,
-    pharmacistMarginProfit: 20,
-    stockQuantity: 20,
-    minStockAlert: 5,
-    expiryDate: '2026-06',
-    batchNumber: 'LOT-A',
-    isDivisible: false,
-    agent: 'Omnipharma',
-    version: 1,
-    updatedAt: Date.now(),
-  };
+const baseProduct: Product = {
+  id: 'prod-1',
+  code: 'PAN500',
+  barcode: '12345678',
+  name: 'Panadol Extra',
+  ingredients: 'Paracetamol 500mg, Caffeine 65mg',
+  dosage: '500mg',
+  presentation: 'Box of 24 tablets',
+  form: 'Tablet',
+  category: 'drug',
+  priceUSD: 2.5,
+  priceLBP: 225000,
+  costPriceUSD: 1.8,
+  pharmacistMarginProfit: 20,
+  stockQuantity: 20,
+  minStockAlert: 5,
+  expiryDate: '2026-06',
+  batchNumber: 'LOT-A',
+  isDivisible: false,
+  agent: 'Omnipharma',
+  version: 1,
+  updatedAt: Date.now(),
+};
 
+describe('resolveProductBatches', () => {
   it('resolves batches from purchase invoices and allocates FIFO quantities accurately', () => {
     const purchases: PurchaseInvoice[] = [
       {
@@ -303,3 +309,92 @@ describe('resolveProductBatches', () => {
     expect(resolved[0].quantity).toBe(4);
   });
 });
+
+describe('isDateInRange', () => {
+  const refDate = new Date(2026, 8, 15); // Sep 15, 2026
+
+  it('correctly identifies expired dates', () => {
+    const expiredDate = new Date(2026, 7, 31); // Aug 31, 2026
+    const futureDate = new Date(2026, 9, 1);   // Oct 1, 2026
+
+    expect(isDateInRange(expiredDate, 'expired', undefined, undefined, refDate)).toBe(true);
+    expect(isDateInRange(futureDate, 'expired', undefined, undefined, refDate)).toBe(false);
+  });
+
+  it('correctly checks 30 days preset', () => {
+    const within30 = new Date(2026, 8, 30); // 15 days out
+    const beyond30 = new Date(2026, 10, 1);  // 46 days out
+
+    expect(isDateInRange(within30, '30days', undefined, undefined, refDate)).toBe(true);
+    expect(isDateInRange(beyond30, '30days', undefined, undefined, refDate)).toBe(false);
+  });
+
+  it('correctly checks 90 days preset', () => {
+    const within90 = new Date(2026, 10, 15); // 61 days out
+    const beyond90 = new Date(2027, 0, 15);  // 122 days out
+
+    expect(isDateInRange(within90, '90days', undefined, undefined, refDate)).toBe(true);
+    expect(isDateInRange(beyond90, '90days', undefined, undefined, refDate)).toBe(false);
+  });
+
+  it('correctly handles custom date range', () => {
+    const d = new Date(2026, 11, 25); // Dec 25, 2026
+    expect(isDateInRange(d, 'custom', '2026-12-01', '2026-12-31', refDate)).toBe(true);
+    expect(isDateInRange(d, 'custom', '2027-01-01', '2027-01-31', refDate)).toBe(false);
+  });
+});
+
+describe('matchesBatchAndExpiryFilter', () => {
+  const refDate = new Date(2026, 8, 15); // Sep 15, 2026
+  const sampleProd: Product = {
+    ...baseProduct,
+    id: 'p1',
+    code: 'TEST1',
+    name: 'Test Product',
+    priceUSD: 10,
+    priceLBP: 890000,
+    stockQuantity: 5,
+    category: 'drug',
+    minStockAlert: 2,
+    batches: [
+      { batchNumber: 'LOT-A100', expiryDate: '2026-08', quantity: 2 }, // expired
+      { batchNumber: 'LOT-B200', expiryDate: '2027-05', quantity: 3 }, // future
+    ],
+  };
+
+  it('returns true when no filters are active', () => {
+    expect(matchesBatchAndExpiryFilter(sampleProd, false, '', false, 'all', undefined, undefined, undefined, refDate)).toBe(true);
+  });
+
+  it('filters by batch number case-insensitively', () => {
+    expect(matchesBatchAndExpiryFilter(sampleProd, true, 'a100', false, 'all', undefined, undefined, undefined, refDate)).toBe(true);
+    expect(matchesBatchAndExpiryFilter(sampleProd, true, 'b200', false, 'all', undefined, undefined, undefined, refDate)).toBe(true);
+    expect(matchesBatchAndExpiryFilter(sampleProd, true, 'nonexistent', false, 'all', undefined, undefined, undefined, refDate)).toBe(false);
+  });
+
+  it('filters by expiry preset', () => {
+    expect(matchesBatchAndExpiryFilter(sampleProd, false, '', true, 'expired', undefined, undefined, undefined, refDate)).toBe(true);
+    expect(matchesBatchAndExpiryFilter(sampleProd, false, '', true, '30days', undefined, undefined, undefined, refDate)).toBe(false);
+  });
+
+  it('filters by both batch number and expiry preset combined', () => {
+    // LOT-A100 is expired
+    expect(matchesBatchAndExpiryFilter(sampleProd, true, 'a100', true, 'expired', undefined, undefined, undefined, refDate)).toBe(true);
+    // LOT-B200 is not expired
+    expect(matchesBatchAndExpiryFilter(sampleProd, true, 'b200', true, 'expired', undefined, undefined, undefined, refDate)).toBe(false);
+  });
+
+  it('supports purchase invoice batches', () => {
+    const prodWithoutBatches: Product = {
+      ...sampleProd,
+      batches: [],
+      batchNumber: '',
+      expiryDate: '',
+    };
+    const purchaseBatches = [{ batchNumber: 'PUR-999', expiryDate: '2027-10' }];
+
+    expect(matchesBatchAndExpiryFilter(prodWithoutBatches, true, 'pur-999', false, 'all', undefined, undefined, purchaseBatches, refDate)).toBe(true);
+    expect(matchesBatchAndExpiryFilter(prodWithoutBatches, true, 'other', false, 'all', undefined, undefined, purchaseBatches, refDate)).toBe(false);
+  });
+});
+

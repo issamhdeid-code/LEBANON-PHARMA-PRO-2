@@ -7,6 +7,8 @@ import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { useWindowContext } from '../../context/WindowContext';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { ReturnOnSaleTab } from './ReturnOnSaleTab';
+import { CustomerLoyaltyModal } from './CustomerLoyaltyModal';
+import { pointsToUSD, getLoyaltyTier } from '../../utils/loyaltyUtils';
 
 const formatDateDDMMYYYY = (dateInput: string | Date | number): string => {
   if (!dateInput) return '';
@@ -39,6 +41,11 @@ export const CustomerView: React.FC = () => {
   const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
   const [selectedInvoices, setSelectedInvoices] = useState<string[]>([]);
   const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
+  const [selectedLoyaltyCustomer, setSelectedLoyaltyCustomer] = useState<Customer | null>(null);
+  const [isLoyaltyModalOpen, setIsLoyaltyModalOpen] = useState(false);
+  const [loyaltyFilterTier, setLoyaltyFilterTier] = useState<'ALL' | 'Bronze' | 'Silver' | 'Gold' | 'Platinum'>('ALL');
+  const [sortBy, setSortBy] = useState<'name' | 'points' | 'debt'>('name');
+  const [loyaltyPointsInput, setLoyaltyPointsInput] = useState<string>('10');
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('+961 ');
@@ -420,6 +427,7 @@ export const CustomerView: React.FC = () => {
     setBloodType('O+');
     setAllergies('');
     setChronicConditions('');
+    setLoyaltyPointsInput('10');
     setIsModalOpen(true);
   };
 
@@ -434,11 +442,13 @@ export const CustomerView: React.FC = () => {
     setBloodType(cust.bloodType || 'O+');
     setAllergies(cust.allergies || '');
     setChronicConditions(cust.chronicConditions || '');
+    setLoyaltyPointsInput(String(cust.loyaltyPoints ?? 0));
     setIsModalOpen(true);
   };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    const pts = Math.max(0, parseInt(loyaltyPointsInput, 10) || 0);
     if (editingCustomerId) {
       updateCustomer(editingCustomerId, {
         name,
@@ -447,6 +457,7 @@ export const CustomerView: React.FC = () => {
         bloodType,
         allergies,
         chronicConditions,
+        loyaltyPoints: pts,
       });
     } else {
       addCustomer({
@@ -458,23 +469,43 @@ export const CustomerView: React.FC = () => {
         chronicConditions,
         balanceUSD: 0,
         balanceLBP: 0,
-        loyaltyPoints: 10,
+        loyaltyPoints: pts,
         lastVisit: new Date().toISOString().split('T')[0],
       });
     }
     setIsModalOpen(false);
   };
 
-  const filteredCustomers = customers.filter((c) => {
+  const filteredCustomers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      c.name.toLowerCase().includes(q) ||
-      c.phone.toLowerCase().includes(q) ||
-      c.allergies?.toLowerCase().includes(q) ||
-      c.chronicConditions?.toLowerCase().includes(q)
-    );
-  });
+    const filtered = customers.filter((c) => {
+      const matchesSearch =
+        !q ||
+        c.name.toLowerCase().includes(q) ||
+        c.phone.toLowerCase().includes(q) ||
+        c.allergies?.toLowerCase().includes(q) ||
+        c.chronicConditions?.toLowerCase().includes(q);
+
+      if (!matchesSearch) return false;
+
+      if (loyaltyFilterTier !== 'ALL') {
+        const tier = getLoyaltyTier(c.loyaltyPoints || 0).tier;
+        if (tier !== loyaltyFilterTier) return false;
+      }
+
+      return true;
+    });
+
+    return filtered.sort((a, b) => {
+      if (sortBy === 'points') {
+        return (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0);
+      }
+      if (sortBy === 'debt') {
+        return b.balanceUSD - a.balanceUSD;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }, [customers, searchQuery, loyaltyFilterTier, sortBy]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[#f8fafc] dark:bg-slate-950 p-3.5 space-y-3 select-none">
@@ -490,6 +521,10 @@ export const CustomerView: React.FC = () => {
               </h2>
               <span className="rounded bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-teal-800 border border-teal-200 dark:bg-teal-950 dark:text-teal-300">
                 {customers.length} Patients
+              </span>
+              <span className="rounded bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 flex items-center gap-1 shadow-2xs">
+                <Star className="h-3 w-3 fill-amber-400 text-amber-500" />
+                {customers.reduce((sum, c) => sum + (c.loyaltyPoints || 0), 0).toLocaleString()} Loyalty Points
               </span>
             </div>
             <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
@@ -545,19 +580,56 @@ export const CustomerView: React.FC = () => {
 
       {activeTab === 'directory' && (
         <>
-          {/* Search Filter */}
-          <div className="rounded border border-gray-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search patient by name, phone number, or known allergy (e.g. Penicillin)..."
-            className="w-full rounded border border-gray-200 bg-gray-50 pl-8 pr-3 py-1 text-xs text-slate-800 focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-          />
-        </div>
-      </div>
+          {/* Search Filter & Loyalty Tier Filter */}
+          <div className="rounded border border-gray-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-900 shadow-2xs space-y-2">
+            <div className="flex flex-col sm:flex-row gap-2 items-center">
+              <div className="relative flex-1 w-full">
+                <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search patient by name, phone number, or known allergy (e.g. Penicillin)..."
+                  className="w-full rounded border border-gray-200 bg-gray-50 pl-8 pr-3 py-1 text-xs text-slate-800 focus:border-teal-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+
+              {/* Sort By Dropdown */}
+              <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto justify-end text-xs">
+                <span className="text-slate-400 text-[11px] font-semibold">Sort:</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as 'name' | 'points' | 'debt')}
+                  className="rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 px-2 py-1 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
+                >
+                  <option value="name">Name (A-Z)</option>
+                  <option value="points">⭐ Points (High to Low)</option>
+                  <option value="debt">Debt Balance</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Loyalty Tier Quick Filter Pills */}
+            <div className="flex items-center gap-1.5 flex-wrap text-[11px] pt-1 border-t border-slate-100 dark:border-slate-800">
+              <span className="text-slate-400 font-semibold mr-1 flex items-center gap-1">
+                <Star className="h-3 w-3 fill-amber-400 text-amber-500" /> Tier:
+              </span>
+              {(['ALL', 'Bronze', 'Silver', 'Gold', 'Platinum'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setLoyaltyFilterTier(t)}
+                  className={`px-2 py-0.5 rounded-full font-bold transition-colors cursor-pointer ${
+                    loyaltyFilterTier === t
+                      ? 'bg-amber-500 text-white shadow-2xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
 
       {/* Grid of Patients */}
       <div className="flex-1 overflow-y-auto">
@@ -615,10 +687,23 @@ export const CustomerView: React.FC = () => {
 
                     <div className="flex items-center justify-between text-[10px] text-gray-500 pt-0.5">
                       <span>Blood Type: <strong>{cust.bloodType || 'N/A'}</strong></span>
-                      <span className="flex items-center text-amber-600 dark:text-amber-400 font-semibold">
-                        <Star className="h-2.5 w-2.5 mr-1 fill-amber-400 text-amber-400" />
-                        {cust.loyaltyPoints} Loyalty Pts
-                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedLoyaltyCustomer(cust);
+                          restoreWindow(`cust_loyalty_${cust.id}`);
+                          setIsLoyaltyModalOpen(true);
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 font-bold transition-all cursor-pointer shadow-2xs"
+                        title="Click to view full loyalty ledger and manage points"
+                      >
+                        <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-500" />
+                        <span>{(cust.loyaltyPoints || 0).toLocaleString()} pts</span>
+                        <span className="text-[9px] font-normal opacity-75">
+                          (${pointsToUSD(cust.loyaltyPoints || 0, settings.loyaltyRedeemRatePoints, settings.loyaltyRedeemRateUSD).toFixed(2)})
+                        </span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1013,6 +1098,21 @@ export const CustomerView: React.FC = () => {
                 onChange={(e) => setAddress(e.target.value)}
                 placeholder="e.g. Hamra, Beirut"
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-amber-700 dark:text-amber-400 mb-1.5 flex items-center">
+                <Star className="mr-1.5 h-3.5 w-3.5 fill-amber-400 text-amber-500" />
+                Loyalty Points Balance
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={loyaltyPointsInput}
+                onChange={(e) => setLoyaltyPointsInput(e.target.value)}
+                placeholder="10"
+                className="w-full rounded-lg border border-amber-300/80 bg-amber-50/30 px-3 py-2 text-slate-800 dark:border-amber-900/60 dark:bg-slate-800 dark:text-slate-100 font-bold focus:ring-2 focus:ring-amber-500"
               />
             </div>
 
@@ -1486,6 +1586,26 @@ export const CustomerView: React.FC = () => {
             })()}
           </form>
         </DesktopWindow>
+      )}
+      {/* Customer Loyalty Studio Modal */}
+      {selectedLoyaltyCustomer && (
+        <CustomerLoyaltyModal
+          customer={selectedLoyaltyCustomer}
+          isOpen={isLoyaltyModalOpen}
+          onClose={() => {
+            setIsLoyaltyModalOpen(false);
+            setSelectedLoyaltyCustomer(null);
+          }}
+          sales={sales}
+          settings={settings}
+          exchangeRate={exchangeRate}
+          onUpdateCustomerPoints={(customerId, newPoints) => {
+            updateCustomer(customerId, { loyaltyPoints: newPoints });
+            setSelectedLoyaltyCustomer((prev) =>
+              prev && prev.id === customerId ? { ...prev, loyaltyPoints: newPoints } : prev
+            );
+          }}
+        />
       )}
     </div>
   );

@@ -380,3 +380,125 @@ export const generateRandomBarcode = (): string => {
   const checkDigit = (10 - (sum % 10)) % 10;
   return `${base12}${checkDigit}`;
 };
+
+export type ExpiryPreset = 'all' | 'expired' | '30days' | '60days' | '90days' | '6months' | '1year' | 'custom';
+
+/**
+ * Checks if a parsed expiry date matches an expiry preset or custom date range.
+ * Uses start/end of day boundaries.
+ */
+export const isDateInRange = (
+  expDate: Date | null,
+  preset: ExpiryPreset,
+  fromDateStr?: string,
+  toDateStr?: string,
+  referenceDate: Date = new Date()
+): boolean => {
+  if (!expDate || isNaN(expDate.getTime())) return false;
+  const expTime = expDate.getTime();
+
+  const startOfToday = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate()).getTime();
+
+  if (preset === 'expired') {
+    return expTime < startOfToday;
+  }
+  if (preset === '30days') {
+    return expTime >= startOfToday && expTime <= startOfToday + 30 * 86400000;
+  }
+  if (preset === '60days') {
+    return expTime >= startOfToday && expTime <= startOfToday + 60 * 86400000;
+  }
+  if (preset === '90days') {
+    return expTime >= startOfToday && expTime <= startOfToday + 90 * 86400000;
+  }
+  if (preset === '6months') {
+    return expTime >= startOfToday && expTime <= startOfToday + 182 * 86400000;
+  }
+  if (preset === '1year') {
+    return expTime >= startOfToday && expTime <= startOfToday + 365 * 86400000;
+  }
+  if (preset === 'custom' || fromDateStr || toDateStr) {
+    if (fromDateStr) {
+      const fromD = new Date(fromDateStr);
+      fromD.setHours(0, 0, 0, 0);
+      if (!isNaN(fromD.getTime()) && expTime < fromD.getTime()) {
+        return false;
+      }
+    }
+    if (toDateStr) {
+      const toD = new Date(toDateStr);
+      toD.setHours(23, 59, 59, 999);
+      if (!isNaN(toD.getTime()) && expTime > toD.getTime()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  return true;
+};
+
+/**
+ * Determines whether a product matches active batch number and expiry date range filters.
+ * Evaluates the product's tracked batches, default batch/expiry fields, and any purchase invoice lines.
+ */
+export const matchesBatchAndExpiryFilter = (
+  product: Product,
+  isBatchFilterActive: boolean,
+  batchQuery: string,
+  isExpiryFilterActive: boolean,
+  expiryPreset: ExpiryPreset,
+  expiryDateFrom?: string,
+  expiryDateTo?: string,
+  purchaseBatches?: { batchNumber?: string; expiryDate?: string }[],
+  referenceDate: Date = new Date()
+): boolean => {
+  if (!isBatchFilterActive && !isExpiryFilterActive) {
+    return true;
+  }
+
+  const batchesToCheck: { batchNumber?: string; expiryDate?: string }[] = [];
+
+  if (product.batches && Array.isArray(product.batches)) {
+    for (const b of product.batches) {
+      if (b.batchNumber || b.expiryDate) {
+        batchesToCheck.push({ batchNumber: b.batchNumber, expiryDate: b.expiryDate });
+      }
+    }
+  }
+
+  if (product.batchNumber || product.expiryDate) {
+    batchesToCheck.push({ batchNumber: product.batchNumber, expiryDate: product.expiryDate });
+  }
+
+  if (purchaseBatches && purchaseBatches.length > 0) {
+    for (const pb of purchaseBatches) {
+      if (pb.batchNumber || pb.expiryDate) {
+        batchesToCheck.push(pb);
+      }
+    }
+  }
+
+  if (batchesToCheck.length === 0) {
+    return false;
+  }
+
+  const q = batchQuery.trim().toLowerCase();
+
+  return batchesToCheck.some((b) => {
+    if (isBatchFilterActive) {
+      if (!b.batchNumber || !b.batchNumber.toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+    if (isExpiryFilterActive) {
+      if (!b.expiryDate) return false;
+      const { date } = parseExpiryDate(b.expiryDate);
+      if (!isDateInRange(date, expiryPreset, expiryDateFrom, expiryDateTo, referenceDate)) {
+        return false;
+      }
+    }
+    return true;
+  });
+};
+
