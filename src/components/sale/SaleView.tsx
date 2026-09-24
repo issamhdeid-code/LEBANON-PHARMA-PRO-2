@@ -33,15 +33,18 @@ import {
   Calendar,
   Layers,
   Activity,
-  PauseCircle
+  PauseCircle,
+  GripVertical
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
+import { playScanBeepSound } from '../../utils/soundEffects';
 import { useDebounce } from '../../hooks/useDebounce';
 import { Product, CartItem, SaleTransaction, ProductCategory, ParkedSale } from '../../types/pharmacy';
-import { formatStockDisplay } from '../../utils/stockUtils';
+import { formatStockDisplay, parseExpiryDate } from '../../utils/stockUtils';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { filterProductsByMultiWordQuery } from '../../utils/searchUtils';
+import { extractCleanMolecules } from '../../services/scientificDataService';
 import { ReceiptModal } from '../common/ReceiptModal';
 import { SalesTransactionLog } from './SalesTransactionLog';
 import { DesktopWindow } from '../common/DesktopWindow';
@@ -622,6 +625,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     formatUSD,
     settings,
     addNotification,
+    updateProduct,
   } = usePharmacy();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -647,6 +651,9 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     message: string,
     extra?: { productName?: string; barcode?: string }
   ) => {
+    if (type === 'success') {
+      playScanBeepSound();
+    }
     if (scanFeedbackTimeoutRef.current) {
       clearTimeout(scanFeedbackTimeoutRef.current);
     }
@@ -709,14 +716,75 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     setNumCols(getNumCols(mode));
   };
 
+  const DEFAULT_CART_WIDTH = 450;
+  const MIN_CART_WIDTH = 340;
+  const [cartWidth, setCartWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('pos_cart_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= MIN_CART_WIDTH && parsed <= 950) return parsed;
+      }
+    } catch {}
+    return DEFAULT_CART_WIDTH;
+  });
+  const [isDraggingCartResizer, setIsDraggingCartResizer] = useState<boolean>(false);
+  const [isDesktop, setIsDesktop] = useState<boolean>(() => typeof window !== 'undefined' ? window.innerWidth >= 1024 : true);
+
   useEffect(() => {
-    const updateCols = () => setNumCols(getNumCols(catalogViewMode));
-    updateCols();
-    window.addEventListener('resize', updateCols);
-    return () => window.removeEventListener('resize', updateCols);
+    const handleResize = () => {
+      setNumCols(getNumCols(catalogViewMode));
+      setIsDesktop(window.innerWidth >= 1024);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, [catalogViewMode, getNumCols]);
 
+  const handleResizerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingCartResizer(true);
+    const startX = e.clientX;
+    const startWidth = cartWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      moveEvent.preventDefault();
+      const deltaX = moveEvent.clientX - startX;
+      // When cart is positioned on the right: dragging left (negative deltaX) increases width
+      // When cart is positioned on the left: dragging right (positive deltaX) increases width
+      const newWidth = cartPosition === 'right' ? startWidth - deltaX : startWidth + deltaX;
+      const maxWidth = Math.min(900, Math.floor(window.innerWidth * 0.7));
+      const clamped = Math.max(MIN_CART_WIDTH, Math.min(maxWidth, Math.round(newWidth)));
+      setCartWidth(clamped);
+    };
+
+    const onMouseUp = (upEvent: MouseEvent) => {
+      setIsDraggingCartResizer(false);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      const deltaX = upEvent.clientX - startX;
+      const newWidth = cartPosition === 'right' ? startWidth - deltaX : startWidth + deltaX;
+      const maxWidth = Math.min(900, Math.floor(window.innerWidth * 0.7));
+      const clamped = Math.max(MIN_CART_WIDTH, Math.min(maxWidth, Math.round(newWidth)));
+      try {
+        localStorage.setItem('pos_cart_width', String(clamped));
+      } catch {}
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  const handleResizerDoubleClick = () => {
+    setCartWidth(DEFAULT_CART_WIDTH);
+    try {
+      localStorage.setItem('pos_cart_width', String(DEFAULT_CART_WIDTH));
+    } catch {}
+  };
+
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [editingQuantities, setEditingQuantities] = useState<Record<string, string>>({});
+  const [editingUnitPriceLBP, setEditingUnitPriceLBP] = useState<Record<string, string>>({});
   const [cartPosition, setCartPosition] = useState<'right' | 'left'>(() => {
     return (localStorage.getItem('pos_cart_position') as 'right' | 'left') || 'right';
   });
@@ -768,6 +836,78 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   });
   const [isParkedModalOpen, setIsParkedModalOpen] = useState<boolean>(false);
   const holdCurrentSaleRef = useRef<((optionalNote?: string) => void) | null>(null);
+
+  // Stock price change confirmation prompt state
+  interface PriceChangePrompt {
+    product: Product;
+    isPiece?: boolean;
+    oldPriceLBP: number;
+    newPriceLBP: number;
+    oldPriceUSD: number;
+    newPriceUSD: number;
+  }
+  const [priceChangePrompt, setPriceChangePrompt] = useState<PriceChangePrompt | null>(null);
+
+  const confirmUpdateStockPrice = () => {
+    if (!priceChangePrompt) return;
+    const { product, isPiece, newPriceLBP, newPriceUSD, oldPriceLBP, oldPriceUSD } = priceChangePrompt;
+
+    if (isPiece) {
+      updateProduct(product.id, {
+        piecePriceLBP: newPriceLBP,
+        piecePriceUSD: newPriceUSD,
+      });
+      // Also update the cart item's product reference so it reflects the updated base product
+      setCart((prev) =>
+        prev.map((it) =>
+          it.product.id === product.id
+            ? {
+                ...it,
+                product: {
+                  ...it.product,
+                  piecePriceLBP: newPriceLBP,
+                  piecePriceUSD: newPriceUSD,
+                },
+              }
+            : it
+        )
+      );
+    } else {
+      updateProduct(product.id, {
+        priceLBP: newPriceLBP,
+        priceUSD: newPriceUSD,
+        previousPriceLBP: oldPriceLBP,
+        previousPriceUSD: oldPriceUSD,
+        priceChangedAt: Date.now(),
+      });
+      // Also update the cart item's product reference
+      setCart((prev) =>
+        prev.map((it) =>
+          it.product.id === product.id
+            ? {
+                ...it,
+                product: {
+                  ...it.product,
+                  priceLBP: newPriceLBP,
+                  priceUSD: newPriceUSD,
+                  previousPriceLBP: oldPriceLBP,
+                  previousPriceUSD: oldPriceUSD,
+                  priceChangedAt: Date.now(),
+                },
+              }
+            : it
+        )
+      );
+    }
+
+    addNotification(
+      'Stock Price Updated',
+      `Updated stock selling price for "${product.name}"${isPiece ? ' (Piece)' : ''} to ${newPriceLBP.toLocaleString('en-US')} LBP ($${newPriceUSD.toFixed(2)}).`,
+      'inventory',
+      'info'
+    );
+    setPriceChangePrompt(null);
+  };
 
   useEffect(() => {
     try {
@@ -1270,6 +1410,11 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   };
 
   const removeFromCart = (cartItemId: string) => {
+    setEditingQuantities((prev) => {
+      const next = { ...prev };
+      delete next[cartItemId];
+      return next;
+    });
     setCart((prev) => prev.filter((item) => item.cartItemId !== cartItemId));
   };
 
@@ -1299,8 +1444,25 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     );
   };
 
+  const updateUnitPriceLBP = (cartItemId: string, newPriceLBP: number) => {
+    if (isNaN(newPriceLBP) || newPriceLBP < 0) return;
+    setCart((prev) =>
+      prev.map((item) =>
+        item.cartItemId === cartItemId
+          ? {
+              ...item,
+              unitPriceLBP: Math.round(newPriceLBP),
+              unitPriceUSD: exchangeRate > 0 ? Number((newPriceLBP / exchangeRate).toFixed(2)) : item.unitPriceUSD,
+            }
+          : item
+      )
+    );
+  };
+
   const clearCart = () => {
     setCart([]);
+    setEditingQuantities({});
+    setEditingUnitPriceLBP({});
     setTenderedUSD('');
     setTenderedLBP('');
     setChangeCurrency('auto');
@@ -1574,6 +1736,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     }
 
     setCart(parked.items || []);
+    setEditingQuantities({});
     setSelectedCustomerId(parked.customerId || '');
     setTenderedUSD(parked.tenderedUSD || '');
     setTenderedLBP(parked.tenderedLBP || '');
@@ -1598,6 +1761,93 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   }, []);
 
   // Complete checkout
+
+  const resolveCartItemBatches = (item: CartItem): { batchNumber?: string; expiryDate?: string; quantity: number }[] => {
+    const prod = item.product;
+    if (!prod.batches || prod.batches.length === 0) {
+      if (item.selectedBatchNumber || item.selectedExpiryDate) {
+        return [{
+          batchNumber: item.selectedBatchNumber || prod.batchNumber,
+          expiryDate: item.selectedExpiryDate || prod.expiryDate,
+          quantity: item.quantity,
+        }];
+      }
+      return [];
+    }
+
+    const qtyDeduct = item.isPiece && prod.piecesPerBox ? item.quantity / prod.piecesPerBox : item.quantity;
+    let remaining = qtyDeduct;
+    const result: { batchNumber?: string; expiryDate?: string; quantity: number }[] = [];
+
+    // 1. If explicit batch selected, match it first
+    if (item.selectedBatchNumber && item.selectedExpiryDate) {
+      const matching = prod.batches.find(
+        b => b.batchNumber === item.selectedBatchNumber && b.expiryDate === item.selectedExpiryDate
+      );
+      if (matching && (matching.quantity || 0) > 0) {
+        const take = Math.min(matching.quantity || 0, remaining);
+        result.push({
+          batchNumber: matching.batchNumber,
+          expiryDate: matching.expiryDate,
+          quantity: item.isPiece && prod.piecesPerBox ? Math.round(take * prod.piecesPerBox) : take,
+        });
+        remaining -= take;
+      }
+    }
+
+    // 2. FIFO across remaining available batches
+    if (remaining > 0) {
+      const sorted = [...prod.batches]
+        .filter(b => (b.quantity || 0) > 0)
+        .sort((a, b) => {
+          const tA = parseExpiryDate(a.expiryDate).timestamp;
+          const tB = parseExpiryDate(b.expiryDate).timestamp;
+          if (tA === 0 && tB === 0) return 0;
+          if (tA === 0) return 1;
+          if (tB === 0) return -1;
+          return tA - tB;
+        });
+
+      for (const b of sorted) {
+        if (remaining <= 0) break;
+        const alreadyTaken = result.find(r => r.batchNumber === b.batchNumber && r.expiryDate === b.expiryDate);
+        const alreadyTakenBox = alreadyTaken ? (item.isPiece && prod.piecesPerBox ? alreadyTaken.quantity / prod.piecesPerBox : alreadyTaken.quantity) : 0;
+        const available = Math.max(0, (b.quantity || 0) - alreadyTakenBox);
+        if (available > 0) {
+          const take = Math.min(available, remaining);
+          if (alreadyTaken) {
+            alreadyTaken.quantity += item.isPiece && prod.piecesPerBox ? Math.round(take * prod.piecesPerBox) : take;
+          } else {
+            result.push({
+              batchNumber: b.batchNumber,
+              expiryDate: b.expiryDate,
+              quantity: item.isPiece && prod.piecesPerBox ? Math.round(take * prod.piecesPerBox) : take,
+            });
+          }
+          remaining -= take;
+        }
+      }
+    }
+
+    // 3. Fallback for remaining (e.g. overselling or single batch)
+    if (remaining > 0) {
+      const fallbackBatch = item.selectedBatchNumber || prod.batchNumber || '';
+      const fallbackExp = item.selectedExpiryDate || prod.expiryDate || '';
+      const existing = result.find(r => r.batchNumber === fallbackBatch && r.expiryDate === fallbackExp);
+      const remQty = item.isPiece && prod.piecesPerBox ? Math.round(remaining * prod.piecesPerBox) : remaining;
+      if (existing) {
+        existing.quantity += remQty;
+      } else {
+        result.push({
+          batchNumber: fallbackBatch,
+          expiryDate: fallbackExp,
+          quantity: remQty,
+        });
+      }
+    }
+
+    return result;
+  };
 
   const handlePrintClick = () => {
     if (cart.length === 0) return;
@@ -1655,6 +1905,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
             isPiece: item.isPiece,
             selectedBatchNumber: item.selectedBatchNumber,
             selectedExpiryDate: item.selectedExpiryDate,
+            batches: resolveCartItemBatches(item),
           };
         }),
         totalUSD,
@@ -1793,6 +2044,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
             isPiece: item.isPiece,
             selectedBatchNumber: item.selectedBatchNumber,
             selectedExpiryDate: item.selectedExpiryDate,
+            batches: resolveCartItemBatches(item),
           };
         }),
         totalUSD,
@@ -1887,6 +2139,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
             isPiece: item.isPiece,
             selectedBatchNumber: item.selectedBatchNumber,
             selectedExpiryDate: item.selectedExpiryDate,
+            batches: resolveCartItemBatches(item),
           };
         }),
         totalUSD,
@@ -1947,6 +2200,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
             isPiece: item.isPiece,
             selectedBatchNumber: item.selectedBatchNumber,
             selectedExpiryDate: item.selectedExpiryDate,
+            batches: resolveCartItemBatches(item),
           };
         }),
         totalUSD,
@@ -2230,7 +2484,45 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
       </div>
 
       {/* RIGHT PANEL: Active Sale Cart & Lebanese Dual-Currency Checkout */}
-      <div className={`flex w-full shrink-0 lg:w-[360px] xl:w-[450px] 2xl:w-[530px] flex-col ${cartPosition === 'right' ? 'border-l' : 'border-r'} border-gray-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 transition-all`}>
+      <div
+        style={isDesktop ? { width: `${cartWidth}px` } : undefined}
+        className={`relative flex w-full shrink-0 flex-col ${
+          cartPosition === 'right' ? 'border-l' : 'border-r'
+        } border-gray-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 ${
+          isDraggingCartResizer ? 'transition-none select-none' : 'transition-[width] duration-75'
+        }`}
+      >
+        {/* Splitter / Resizer handle between Catalog and Sale Cart */}
+        <div
+          onMouseDown={handleResizerMouseDown}
+          onDoubleClick={handleResizerDoubleClick}
+          className={`absolute top-0 bottom-0 z-30 hidden lg:flex items-center justify-center cursor-col-resize select-none ${
+            cartPosition === 'right' ? '-left-2.5 w-5 hover:-left-2.5' : '-right-2.5 w-5 hover:-right-2.5'
+          } group`}
+          title="Drag left or right to increase/decrease Sale Cart width (Double-click to reset)"
+        >
+          {/* Subtle grab bar with grip icon */}
+          <div
+            className={`rounded-full transition-all flex items-center justify-center shadow-xs ${
+              isDraggingCartResizer
+                ? 'bg-teal-600 dark:bg-teal-500 w-3 h-16 ring-2 ring-teal-400/50'
+                : 'bg-gray-300 dark:bg-slate-600 w-2 h-10 group-hover:bg-teal-500 dark:group-hover:bg-teal-400 group-hover:w-3 group-hover:h-14'
+            }`}
+          >
+            <GripVertical className="h-3 w-3 text-white dark:text-slate-900 shrink-0" />
+          </div>
+        </div>
+
+        {/* Live Width Indicator while actively dragging */}
+        {isDraggingCartResizer && (
+          <div
+            className={`absolute top-2 z-40 bg-teal-800 dark:bg-teal-700 text-white text-[10px] font-mono font-bold px-2 py-0.5 rounded shadow-lg pointer-events-none whitespace-nowrap ${
+              cartPosition === 'right' ? 'left-3' : 'right-3'
+            }`}
+          >
+            Cart: {cartWidth}px
+          </div>
+        )}
         {/* Cart Header */}
         <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2 dark:border-slate-800 bg-gray-50 dark:bg-slate-900">
           <div className="flex items-center space-x-1.5 min-w-0">
@@ -2384,39 +2676,84 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
               <span>Cart is empty. Select medications or search items.</span>
             </div>
           ) : (
-            cart.map((item) => (
-              <div
-                key={item.cartItemId || `${item.product.id}-${item.isPiece ? 'piece' : 'box'}-${Math.random()}`}
-                className="flex flex-col md:flex-row md:items-center justify-between rounded border border-gray-200 bg-slate-50/50 p-1 text-xs dark:border-slate-800 dark:bg-slate-800/40 gap-1"
-              >
-                <div className="flex-1 pr-1 min-w-0">
-                  <div className="flex items-center gap-1 overflow-hidden">
-                    <span className="font-bold text-[10px] text-slate-900 dark:text-slate-100 truncate shrink-0 max-w-[120px] 2xl:max-w-[160px]" title={item.product.name}>
-                      {item.product.name}{item.isPiece && <span className="ml-1 bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-0.5 rounded text-[8px] font-bold uppercase tracking-wider">({item.product.pieceName || 'Pc'})</span>}
-                    </span>
-                    <span
-                      className="inline-flex items-center gap-0.5 rounded bg-teal-50 px-1 py-0 text-[8px] font-bold text-teal-800 border border-teal-200/80 dark:bg-teal-950/60 dark:text-teal-300 dark:border-teal-800/80 shrink-0"
-                      title="Pharmacist Margin Profit"
-                    >
-                      <span className="opacity-80">Mrg:</span>
-                      <span className="font-mono">{item.product.pharmacistMarginProfit ?? 0}%</span>
-                    </span>
-                  </div>
-                  {item.product.batches && item.product.batches.length > 0 && (
-                    <div className="mt-1 flex items-center w-full">
-                      <select
-                        value={item.selectedBatchNumber && item.selectedExpiryDate ? `${item.selectedBatchNumber}||${item.selectedExpiryDate}` : ''}
-                        onChange={(e) => updateBatch(item.cartItemId!, e.target.value)}
-                        style={{ minHeight: '22px', display: 'block' }}
-                        className="w-full max-w-[220px] appearance-auto text-[10px] bg-white border border-gray-300 rounded px-1.5 py-0.5 text-slate-700 focus:outline-hidden focus:border-teal-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 cursor-pointer shadow-2xs"
+            cart.map((item) => {
+              const isDrug = (item.product.category || '').toLowerCase() === 'drug';
+              const unitPriceLBP = item.unitPriceLBP ?? Math.round((item.unitPriceUSD || 0) * exchangeRate);
+              const unitPriceUSD = item.unitPriceUSD ?? (exchangeRate > 0 ? Number((unitPriceLBP / exchangeRate).toFixed(2)) : 0);
+              const lineTotalLBP = Math.round(unitPriceLBP * item.quantity * (1 - item.discountPercent / 100));
+              const lineTotalUSD = (unitPriceUSD * item.quantity * (1 - item.discountPercent / 100)).toFixed(2);
+              const originalLBP = Math.round(unitPriceLBP * item.quantity);
+              const originalUSD = (unitPriceUSD * item.quantity).toFixed(2);
+
+              const prodMoleculesCount =
+                (item.product.molecules && item.product.molecules.length > 0)
+                  ? item.product.molecules.length
+                  : (item.product.ingredients ? extractCleanMolecules(item.product.ingredients).length : 0);
+              const hasMultipleMolecules = prodMoleculesCount > 1;
+
+              const itemDosage = item.product.dosage?.trim();
+              const itemPresentation = item.product.presentation?.trim();
+              const itemForm = item.product.form?.trim();
+
+              return (
+                <div
+                  key={item.cartItemId || `${item.product.id}-${item.isPiece ? 'piece' : 'box'}-${Math.random()}`}
+                  className="flex flex-col md:flex-row md:items-center justify-between rounded border border-gray-200 bg-slate-50/50 p-1 text-xs dark:border-slate-800 dark:bg-slate-800/40 gap-1"
+                >
+                  <div className="flex-1 pr-1 min-w-0">
+                    <div className="flex items-center gap-1 overflow-hidden flex-wrap">
+                      <span className="font-bold text-[10px] text-slate-900 dark:text-slate-100 truncate shrink-0 max-w-[140px] 2xl:max-w-[180px]" title={item.product.name}>
+                        {item.product.name}
+                        {item.isPiece && (
+                          <span className="ml-1 bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-0.5 rounded text-[8px] font-bold uppercase tracking-wider">
+                            ({item.product.pieceName || 'Pc'})
+                          </span>
+                        )}
+                      </span>
+
+                      {/* Dosage (if single molecule/ingredient, not multi-molecule) */}
+                      {!hasMultipleMolecules && itemDosage && (
+                        <span className="text-[9px] font-semibold text-teal-700 dark:text-teal-400 shrink-0" title={`Dosage: ${itemDosage}`}>
+                          {itemDosage}
+                        </span>
+                      )}
+
+                      {/* Presentation */}
+                      {itemPresentation && (
+                        <span className="text-[9px] font-medium text-slate-700 dark:text-slate-300 shrink-0" title={`Presentation: ${itemPresentation}`}>
+                          {itemPresentation}
+                        </span>
+                      )}
+
+                      {/* Form */}
+                      {itemForm && (
+                        <span className="text-[9px] font-normal text-slate-500 dark:text-slate-400 shrink-0" title={`Form: ${itemForm}`}>
+                          {itemForm}
+                        </span>
+                      )}
+
+                      <span
+                        className="inline-flex items-center rounded bg-teal-50 px-1 py-0 text-[8px] font-bold text-teal-800 border border-teal-200/80 dark:bg-teal-950/60 dark:text-teal-300 dark:border-teal-800/80 shrink-0 font-mono"
+                        title="Pharmacist Margin Profit"
                       >
-                        <option value="">Auto-Select Expiry</option>
-                        {(() => {
-                          const seen = new Set<string>();
-                          const distinctBatches: typeof item.product.batches = [];
-                          for (const b of (item.product.batches || [])) {
-                            const pairKey = `${b.batchNumber || ''}||${b.expiryDate || ''}`;
-                            if (!seen.has(pairKey)) {
+                        {item.product.pharmacistMarginProfit ?? 0}%
+                      </span>
+                    </div>
+                    {item.product.batches && item.product.batches.length > 0 && (
+                      <div className="mt-1 flex items-center w-full">
+                        <select
+                          value={item.selectedBatchNumber && item.selectedExpiryDate ? `${item.selectedBatchNumber}||${item.selectedExpiryDate}` : ''}
+                          onChange={(e) => updateBatch(item.cartItemId!, e.target.value)}
+                          style={{ minHeight: '22px', display: 'block' }}
+                          className="w-full max-w-[220px] appearance-auto text-[10px] bg-white border border-gray-300 rounded px-1.5 py-0.5 text-slate-700 focus:outline-hidden focus:border-teal-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 cursor-pointer shadow-2xs"
+                        >
+                          <option value="">Auto-Select Expiry</option>
+                          {(() => {
+                            const seen = new Set<string>();
+                            const distinctBatches: typeof item.product.batches = [];
+                            for (const b of (item.product.batches || [])) {
+                              const pairKey = `${b.batchNumber || ''}||${b.expiryDate || ''}`;
+                              if (!seen.has(pairKey)) {
                               seen.add(pairKey);
                               distinctBatches.push(b);
                             }
@@ -2433,50 +2770,229 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                 </div>
 
                 <div className="flex items-center space-x-1 shrink-0">
-                  <button
-                    onClick={() => updateQuantity(item.cartItemId!, -1)}
-                    className="flex h-4 w-4 items-center justify-center rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                  >
-                    <Minus className="h-2.5 w-2.5" />
-                  </button>
-                  <input
-                    type="number"
-                    value={item.quantity === 0 ? '' : item.quantity}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === '') {
-                        setAbsoluteQuantity(item.cartItemId!, 0);
-                      } else {
-                        setAbsoluteQuantity(item.cartItemId!, parseInt(val, 10));
-                      }
-                    }}
-                    min="0"
-                    max={isUnrealInvoice ? undefined : (item.isPiece && item.product.piecesPerBox ? item.product.stockQuantity * item.product.piecesPerBox : item.product.stockQuantity)}
-                    className="w-7 text-center font-bold text-[10px] text-slate-800 dark:text-slate-100 bg-transparent border border-gray-300 dark:border-slate-700 rounded h-4 focus:outline-hidden focus:border-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  />
-                  <button
-                    onClick={() => updateQuantity(item.cartItemId!, 1)}
-                    className="flex h-4 w-4 items-center justify-center rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                  >
-                    <Plus className="h-2.5 w-2.5" />
-                  </button>
+                  {(() => {
+                    const isEditing = editingQuantities[item.cartItemId!] !== undefined;
+                    const displayVal = isEditing
+                      ? editingQuantities[item.cartItemId!]
+                      : (item.quantity === 0 ? '' : item.quantity);
+
+                    return (
+                      <input
+                        type="number"
+                        value={displayVal}
+                        placeholder="0"
+                        onFocus={(e) => e.currentTarget.select()}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          // If quantity is cleared by user, don't remove item directly; wait until user defines new quantity
+                          if (val === '') {
+                            setEditingQuantities((prev) => ({ ...prev, [item.cartItemId!]: '' }));
+                            return;
+                          }
+
+                          const parsed = parseInt(val, 10);
+                          if (isNaN(parsed)) {
+                            setEditingQuantities((prev) => ({ ...prev, [item.cartItemId!]: val }));
+                            return;
+                          }
+
+                          // If it's 0 then remove the item
+                          if (parsed === 0) {
+                            setEditingQuantities((prev) => {
+                              const next = { ...prev };
+                              delete next[item.cartItemId!];
+                              return next;
+                            });
+                            removeFromCart(item.cartItemId!);
+                            return;
+                          }
+
+                          // If it's more than 0, then keep it in the cart
+                          if (parsed > 0) {
+                            setEditingQuantities((prev) => ({ ...prev, [item.cartItemId!]: val }));
+                            setAbsoluteQuantity(item.cartItemId!, parsed);
+                          }
+                        }}
+                        onBlur={() => {
+                          const currentEdit = editingQuantities[item.cartItemId!];
+                          if (currentEdit !== undefined) {
+                            setEditingQuantities((prev) => {
+                              const next = { ...prev };
+                              delete next[item.cartItemId!];
+                              return next;
+                            });
+                            // If blurred while empty or 0, remove the item
+                            if (currentEdit === '' || parseInt(currentEdit, 10) === 0) {
+                              removeFromCart(item.cartItemId!);
+                            } else {
+                              const parsed = parseInt(currentEdit, 10);
+                              if (!isNaN(parsed) && parsed > 0) {
+                                setAbsoluteQuantity(item.cartItemId!, parsed);
+                              }
+                            }
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        min="0"
+                        max={isUnrealInvoice ? undefined : (item.isPiece && item.product.piecesPerBox ? item.product.stockQuantity * item.product.piecesPerBox : item.product.stockQuantity)}
+                        className="w-8 text-center font-bold text-[10px] text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded h-4 focus:outline-hidden focus:border-teal-500 focus:ring-1 focus:ring-teal-500 shadow-2xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    );
+                  })()}
 
                   {/* Unit Price Editor */}
-                  <div className="flex items-center rounded border border-gray-300 bg-white px-0.5 h-4 text-xs focus-within:border-teal-500 focus-within:ring-1 focus-within:ring-teal-500 dark:border-slate-700 dark:bg-slate-800 shadow-2xs" title="Unit Price (USD)">
-                    <span className="text-[9px] font-bold text-gray-400 select-none mr-0.5 dark:text-slate-500">$</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={item.unitPriceUSD === 0 ? '' : Number(item.unitPriceUSD.toString()) /* using string avoids trailing zeros changing randomly, but number is fine */}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        updateUnitPrice(item.cartItemId!, val === '' ? 0 : parseFloat(val));
-                      }}
-                      placeholder="0.00"
-                      className="w-9 text-center font-mono text-[9px] font-bold text-slate-800 bg-transparent focus:outline-hidden dark:text-slate-100 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    />
-                  </div>
+                  {isDrug ? (
+                    <div
+                      className="flex items-center rounded border border-gray-300 bg-white px-0.5 h-4 text-xs focus-within:border-teal-500 focus-within:ring-1 focus-within:ring-teal-500 dark:border-slate-700 dark:bg-slate-800 shadow-2xs"
+                      title="Unit Price (LBP)"
+                    >
+                      <span className="text-[8px] font-bold text-gray-400 select-none mr-0.5 dark:text-slate-500">LBP</span>
+                      {(() => {
+                        const isEditing = editingUnitPriceLBP[item.cartItemId!] !== undefined;
+                        const displayVal = isEditing
+                          ? editingUnitPriceLBP[item.cartItemId!]
+                          : unitPriceLBP === 0
+                          ? ''
+                          : unitPriceLBP.toLocaleString('en-US');
+
+                        const checkStockPriceChangeLBP = (enteredPriceLBP: number) => {
+                          const originalStockPriceLBP = item.isPiece && item.product.piecePriceLBP
+                            ? item.product.piecePriceLBP
+                            : item.product.priceLBP;
+                          const originalStockPriceUSD = item.isPiece && item.product.piecePriceUSD
+                            ? item.product.piecePriceUSD
+                            : item.product.priceUSD;
+
+                          if (
+                            enteredPriceLBP > 0 &&
+                            Math.round(enteredPriceLBP) !== Math.round(originalStockPriceLBP)
+                          ) {
+                            const newUSD = exchangeRate > 0 ? Number((enteredPriceLBP / exchangeRate).toFixed(2)) : 0;
+                            setPriceChangePrompt({
+                              product: item.product,
+                              isPiece: item.isPiece,
+                              oldPriceLBP: Math.round(originalStockPriceLBP),
+                              newPriceLBP: Math.round(enteredPriceLBP),
+                              oldPriceUSD: originalStockPriceUSD,
+                              newPriceUSD: newUSD,
+                            });
+                          }
+                        };
+
+                        return (
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={displayVal}
+                            onFocus={(e) => e.currentTarget.select()}
+                            onChange={(e) => {
+                              const rawVal = e.target.value.replace(/,/g, '');
+                              if (rawVal === '') {
+                                setEditingUnitPriceLBP((prev) => ({ ...prev, [item.cartItemId!]: '' }));
+                                updateUnitPriceLBP(item.cartItemId!, 0);
+                                return;
+                              }
+                              const parsed = parseInt(rawVal, 10);
+                              if (!isNaN(parsed) && parsed >= 0) {
+                                setEditingUnitPriceLBP((prev) => ({
+                                  ...prev,
+                                  [item.cartItemId!]: parsed.toLocaleString('en-US'),
+                                }));
+                                updateUnitPriceLBP(item.cartItemId!, parsed);
+                              }
+                            }}
+                            onBlur={() => {
+                              const currentEdit = editingUnitPriceLBP[item.cartItemId!];
+                              if (currentEdit !== undefined) {
+                                const parsed = parseInt(currentEdit.replace(/,/g, ''), 10);
+                                if (!isNaN(parsed) && parsed > 0) {
+                                  checkStockPriceChangeLBP(parsed);
+                                }
+                              }
+                              setEditingUnitPriceLBP((prev) => {
+                                const next = { ...prev };
+                                delete next[item.cartItemId!];
+                                return next;
+                              });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            placeholder="0"
+                            className="w-16 text-center font-mono text-[9px] font-bold text-slate-800 bg-transparent focus:outline-hidden dark:text-slate-100"
+                          />
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div
+                      className="flex items-center rounded border border-gray-300 bg-white px-0.5 h-4 text-xs focus-within:border-teal-500 focus-within:ring-1 focus-within:ring-teal-500 dark:border-slate-700 dark:bg-slate-800 shadow-2xs"
+                      title="Unit Price (USD)"
+                    >
+                      <span className="text-[9px] font-bold text-gray-400 select-none mr-0.5 dark:text-slate-500">$</span>
+                      {(() => {
+                        const checkStockPriceChangeUSD = (enteredPriceUSD: number) => {
+                          const originalStockPriceUSD = item.isPiece && item.product.piecePriceUSD
+                            ? item.product.piecePriceUSD
+                            : item.product.priceUSD;
+                          const originalStockPriceLBP = item.isPiece && item.product.piecePriceLBP
+                            ? item.product.piecePriceLBP
+                            : item.product.priceLBP;
+
+                          if (
+                            enteredPriceUSD > 0 &&
+                            Math.abs(enteredPriceUSD - originalStockPriceUSD) > 0.009
+                          ) {
+                            const newLBP = Math.round(enteredPriceUSD * exchangeRate);
+                            setPriceChangePrompt({
+                              product: item.product,
+                              isPiece: item.isPiece,
+                              oldPriceLBP: Math.round(originalStockPriceLBP),
+                              newPriceLBP: newLBP,
+                              oldPriceUSD: originalStockPriceUSD,
+                              newPriceUSD: enteredPriceUSD,
+                            });
+                          }
+                        };
+
+                        return (
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={unitPriceUSD === 0 ? '' : Number(unitPriceUSD.toString())}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              updateUnitPrice(item.cartItemId!, val === '' ? 0 : parseFloat(val));
+                            }}
+                            onBlur={(e) => {
+                              const val = e.target.value;
+                              if (val !== '') {
+                                const parsed = parseFloat(val);
+                                if (!isNaN(parsed) && parsed > 0) {
+                                  checkStockPriceChangeUSD(parsed);
+                                }
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            placeholder="0.00"
+                            className="w-9 text-center font-mono text-[9px] font-bold text-slate-800 bg-transparent focus:outline-hidden dark:text-slate-100 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        );
+                      })()}
+                    </div>
+                  )}
+
                   {/* Discount per item box */}
                   <div
                     className={`flex items-center rounded border px-0.5 h-4 text-xs transition-all shadow-2xs ${
@@ -2508,15 +3024,30 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                   </div>
 
                   {/* Line Total with applied discount display */}
-                  <div className="w-12 text-right font-mono font-bold text-blue-600 dark:text-blue-400 flex flex-col items-end justify-center leading-none">
-                    {item.discountPercent > 0 && (
-                      <span className="text-[8px] font-medium text-gray-400 line-through dark:text-slate-500">
-                        ${(item.unitPriceUSD * item.quantity).toFixed(2)}
-                      </span>
+                  <div className="min-w-[56px] text-right font-mono font-bold text-blue-600 dark:text-blue-400 flex flex-col items-end justify-center leading-none shrink-0">
+                    {isDrug ? (
+                      <>
+                        {item.discountPercent > 0 && (
+                          <span className="text-[8px] font-medium text-gray-400 line-through dark:text-slate-500 whitespace-nowrap">
+                            {formatLBPValue(originalLBP)} LBP
+                          </span>
+                        )}
+                        <span className={`text-[10px] whitespace-nowrap ${item.discountPercent > 0 ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
+                          {formatLBPValue(lineTotalLBP)} LBP
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        {item.discountPercent > 0 && (
+                          <span className="text-[8px] font-medium text-gray-400 line-through dark:text-slate-500 whitespace-nowrap">
+                            ${originalUSD}
+                          </span>
+                        )}
+                        <span className={`text-[10px] whitespace-nowrap ${item.discountPercent > 0 ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
+                          ${lineTotalUSD}
+                        </span>
+                      </>
                     )}
-                    <span className={`text-[10px] ${item.discountPercent > 0 ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
-                      ${(item.unitPriceUSD * item.quantity * (1 - item.discountPercent / 100)).toFixed(2)}
-                    </span>
                   </div>
 
                   <button
@@ -2527,9 +3058,10 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
                   </button>
                 </div>
               </div>
-            ))
-          )}
-        </div>
+            );
+          })
+        )}
+      </div>
 
         {/* Totals & Payment Drawer */}
         <div 
@@ -3294,6 +3826,91 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         formatLBP={formatLBP}
         onUpdateNote={updateParkedNote}
       />
+
+      {/* Stock Selling Price Change Confirmation Dialog */}
+      {priceChangePrompt && (
+        <DesktopWindow
+          id="pos-stock-price-change-modal"
+          title="Update Stock Selling Price?"
+          isOpen={true}
+          section="sale"
+          onClose={() => setPriceChangePrompt(null)}
+          width="460px"
+          height="auto"
+          minWidth={360}
+          minHeight={260}
+        >
+          <div className="p-4 flex flex-col justify-between h-full bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-teal-100 dark:bg-teal-950/80 p-2 text-teal-700 dark:text-teal-300 shrink-0">
+                  <AlertCircle className="h-6 w-6" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                    Update Original Price in Stock?
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
+                    You changed the selling price of{' '}
+                    <span className="font-semibold text-slate-900 dark:text-white">
+                      {priceChangePrompt.product.name}
+                      {priceChangePrompt.isPiece ? ' (Piece)' : ''}
+                    </span>{' '}
+                    in the sale cart.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-teal-200 dark:border-teal-800/60 bg-teal-50/50 dark:bg-teal-950/40 p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-600 dark:text-slate-400">Current Stock Price:</span>
+                  <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                    {priceChangePrompt.oldPriceLBP.toLocaleString('en-US')} LBP
+                    <span className="text-[10px] text-slate-500 font-normal ml-1">
+                      (${priceChangePrompt.oldPriceUSD.toFixed(2)})
+                    </span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-teal-200/60 dark:border-teal-800/40">
+                  <span className="font-semibold text-teal-900 dark:text-teal-200">New Price Entered:</span>
+                  <span className="font-mono font-bold text-teal-700 dark:text-teal-300 text-sm">
+                    {priceChangePrompt.newPriceLBP.toLocaleString('en-US')} LBP
+                    <span className="text-xs text-teal-600 dark:text-teal-400 font-semibold ml-1">
+                      (${priceChangePrompt.newPriceUSD.toFixed(2)})
+                    </span>
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Do you want to permanently update the product's selling price in stock to this new price, or keep it only for this sale?
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setPriceChangePrompt(null)}
+                className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shadow-2xs"
+              >
+                No, this sale only
+              </button>
+              <button
+                type="button"
+                onClick={confirmUpdateStockPrice}
+                className="px-3.5 py-1.5 rounded-md bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold cursor-pointer shadow-xs transition-colors"
+              >
+                Yes, update stock price
+              </button>
+            </div>
+          </div>
+        </DesktopWindow>
+      )}
+
+      {/* Global drag overlay to prevent text selection and ensure smooth dragging */}
+      {isDraggingCartResizer && (
+        <div className="fixed inset-0 z-50 cursor-col-resize select-none" />
+      )}
     </div>
   );
 };

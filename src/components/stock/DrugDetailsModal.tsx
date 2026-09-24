@@ -28,7 +28,7 @@ import { getPriceChangeInfoUSD, getPriceChangeInfoLBP, formatLBPValue } from '..
 import { resolveStraightforwardScientificInfo } from '../../services/scientificDataService';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { usePharmacy } from '../../context/PharmacyContext';
-import { OperationDetailModal, ProductOperationItem } from './OperationDetailModal';
+import { OperationDetailModal, ProductOperationItem, OperationBatchBreakdown } from './OperationDetailModal';
 
 interface DrugDetailsModalProps {
   product: Product | null;
@@ -74,58 +74,197 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
     // 1. Inbound purchases
     (purchases || []).forEach((p) => {
       if (!p.items || !Array.isArray(p.items)) return;
-      p.items.forEach((it, itIdx) => {
-        if (it.productId === product.id || (product.code && it.productCode === product.code)) {
-          const { displayMMYYYY } = parseExpiryDate(it.expiryDate);
-          const expLabel = displayMMYYYY !== 'N/A' ? displayMMYYYY : '—';
+      const matchingItems = p.items.filter(
+        it => it.productId === product.id || (product.code && it.productCode === product.code)
+      );
+      if (matchingItems.length === 0) return;
 
-          const qty = it.quantity || 0;
-          list.push({
-            id: `${p.id}-${itIdx}`,
-            referenceId: p.id,
-            invoiceNumber: p.invoiceNumber,
-            operationType: 'Purchase',
-            type: 'purchase',
-            quantity: qty,
-            formattedQuantity: `+${formatStockDisplay(qty, product.isDivisible, product.piecesPerBox, product.pieceName)}`,
-            expiry: expLabel,
-            rawExpiry: it.expiryDate,
-            batchNumber: it.batchNumber,
-            date: p.date,
-            timestamp: p.date ? new Date(p.date).getTime() : p.timestamp || 0,
-            purchase: p,
-          });
+      let totalQty = 0;
+      const batchMap = new Map<string, { batchNumber?: string; expiryDate?: string; quantity: number }>();
+
+      matchingItems.forEach((it) => {
+        const q = it.quantity || 0;
+        totalQty += q;
+        const bNum = it.batchNumber || '';
+        const exp = it.expiryDate || '';
+        const key = `${bNum}||${exp}`;
+        const existing = batchMap.get(key);
+        if (existing) {
+          existing.quantity += q;
+        } else {
+          batchMap.set(key, { batchNumber: bNum, expiryDate: exp, quantity: q });
         }
+      });
+
+      const batchBreakdown: OperationBatchBreakdown[] = Array.from(batchMap.values()).map(b => {
+        const { date: expDate, displayMMYYYY } = parseExpiryDate(b.expiryDate);
+        let isExpired = false;
+        let isNear = false;
+        if (expDate && !isNaN(expDate.getTime())) {
+          const now = new Date();
+          now.setHours(0, 0, 0, 0);
+          const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          isExpired = diffDays < 0;
+          isNear = diffDays >= 0 && diffDays <= 90;
+        }
+        return {
+          batchNumber: b.batchNumber,
+          expiryDate: b.expiryDate,
+          displayExpiry: displayMMYYYY !== 'N/A' ? displayMMYYYY : (b.expiryDate || '—'),
+          quantity: b.quantity,
+          formattedQuantity: `+${formatStockDisplay(b.quantity, product.isDivisible, product.piecesPerBox, product.pieceName)}`,
+          isExpired,
+          isNear,
+        };
+      });
+
+      const primaryBatch = batchBreakdown[0];
+      const expLabel = batchBreakdown.length === 1
+        ? primaryBatch?.displayExpiry || '—'
+        : batchBreakdown.map(b => `${b.formattedQuantity}: ${b.displayExpiry}`).join(', ');
+
+      list.push({
+        id: `purchase-${p.id}`,
+        referenceId: p.invoiceNumber ? `#${p.invoiceNumber}` : p.id,
+        invoiceNumber: p.invoiceNumber,
+        operationType: 'Purchase',
+        type: 'purchase',
+        quantity: totalQty,
+        formattedQuantity: `+${formatStockDisplay(totalQty, product.isDivisible, product.piecesPerBox, product.pieceName)}`,
+        expiry: expLabel,
+        rawExpiry: primaryBatch?.expiryDate,
+        batchNumber: batchBreakdown.length === 1 ? primaryBatch?.batchNumber : undefined,
+        batches: batchBreakdown,
+        date: p.date,
+        timestamp: p.date ? new Date(p.date).getTime() : p.timestamp || 0,
+        purchase: p,
       });
     });
 
     // 2. Outbound sales
     (sales || []).forEach((s) => {
       if (s.isUnreal || !s.items || !Array.isArray(s.items)) return;
-      s.items.forEach((it, itIdx) => {
-        if (it.productId === product.id || (product.code && it.productCode === product.code)) {
-          const expStr = it.selectedExpiryDate || product.expiryDate || '';
-          const { displayMMYYYY } = parseExpiryDate(expStr);
-          const batchNum = it.selectedBatchNumber || product.batchNumber || '';
-          const expLabel = displayMMYYYY !== 'N/A' ? displayMMYYYY : '—';
+      const matchingItems = s.items.filter(
+        it => it.productId === product.id || (product.code && it.productCode === product.code)
+      );
+      if (matchingItems.length === 0) return;
 
-          const qty = it.quantity || 0;
-          list.push({
-            id: `${s.id}-${itIdx}`,
-            referenceId: s.id,
-            invoiceNumber: s.invoiceNumber,
-            operationType: 'Sale',
-            type: 'sale',
-            quantity: qty,
-            formattedQuantity: `-${formatStockDisplay(qty, product.isDivisible, product.piecesPerBox, product.pieceName)}`,
-            expiry: expLabel,
-            rawExpiry: expStr,
-            batchNumber: batchNum,
-            date: s.date,
-            timestamp: s.timestamp || (s.date ? new Date(s.date).getTime() : 0),
-            sale: s,
+      let totalQty = 0;
+      const batchMap = new Map<string, { batchNumber?: string; expiryDate?: string; quantity: number }>();
+
+      matchingItems.forEach((it) => {
+        const itemQty = it.quantity || 0;
+        totalQty += itemQty;
+
+        if (it.batches && Array.isArray(it.batches) && it.batches.length > 0) {
+          it.batches.forEach((b) => {
+            const bNum = b.batchNumber || '';
+            const bExp = b.expiryDate || '';
+            const key = `${bNum}||${bExp}`;
+            const existing = batchMap.get(key);
+            if (existing) {
+              existing.quantity += (b.quantity || 0);
+            } else {
+              batchMap.set(key, { batchNumber: bNum, expiryDate: bExp, quantity: b.quantity || 0 });
+            }
           });
+        } else if (it.selectedBatchNumber || it.selectedExpiryDate) {
+          const bNum = it.selectedBatchNumber || '';
+          const bExp = it.selectedExpiryDate || '';
+          const key = `${bNum}||${bExp}`;
+          const existing = batchMap.get(key);
+          if (existing) {
+            existing.quantity += itemQty;
+          } else {
+            batchMap.set(key, { batchNumber: bNum, expiryDate: bExp, quantity: itemQty });
+          }
+        } else {
+          // If no specific batch was chosen, and product has batches in inventory
+          if (product.batches && product.batches.length > 1) {
+            let rem = itemQty;
+            const sortedBatches = [...product.batches].sort((a, b) => {
+              const tA = parseExpiryDate(a.expiryDate).timestamp;
+              const tB = parseExpiryDate(b.expiryDate).timestamp;
+              if (tA === 0 && tB === 0) return 0;
+              if (tA === 0) return 1;
+              if (tB === 0) return -1;
+              return tA - tB;
+            });
+            for (const pb of sortedBatches) {
+              if (rem <= 0) break;
+              const bCap = pb.quantity || 0;
+              const take = bCap > 0 ? Math.min(bCap, rem) : rem;
+              const key = `${pb.batchNumber || ''}||${pb.expiryDate || ''}`;
+              const existing = batchMap.get(key);
+              if (existing) {
+                existing.quantity += take;
+              } else {
+                batchMap.set(key, { batchNumber: pb.batchNumber, expiryDate: pb.expiryDate, quantity: take });
+              }
+              rem -= take;
+            }
+            if (rem > 0) {
+              const key = `${product.batchNumber || ''}||${product.expiryDate || ''}`;
+              const existing = batchMap.get(key);
+              if (existing) existing.quantity += rem;
+              else batchMap.set(key, { batchNumber: product.batchNumber, expiryDate: product.expiryDate, quantity: rem });
+            }
+          } else {
+            const bNum = product.batchNumber || '';
+            const bExp = product.expiryDate || '';
+            const key = `${bNum}||${bExp}`;
+            const existing = batchMap.get(key);
+            if (existing) {
+              existing.quantity += itemQty;
+            } else {
+              batchMap.set(key, { batchNumber: bNum, expiryDate: bExp, quantity: itemQty });
+            }
+          }
         }
+      });
+
+      const batchBreakdown: OperationBatchBreakdown[] = Array.from(batchMap.values()).map(b => {
+        const { date: expDate, displayMMYYYY } = parseExpiryDate(b.expiryDate);
+        let isExpired = false;
+        let isNear = false;
+        if (expDate && !isNaN(expDate.getTime())) {
+          const now = new Date();
+          now.setHours(0, 0, 0, 0);
+          const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          isExpired = diffDays < 0;
+          isNear = diffDays >= 0 && diffDays <= 90;
+        }
+        return {
+          batchNumber: b.batchNumber,
+          expiryDate: b.expiryDate,
+          displayExpiry: displayMMYYYY !== 'N/A' ? displayMMYYYY : (b.expiryDate || '—'),
+          quantity: b.quantity,
+          formattedQuantity: `-${formatStockDisplay(b.quantity, product.isDivisible, product.piecesPerBox, product.pieceName)}`,
+          isExpired,
+          isNear,
+        };
+      });
+
+      const primaryBatch = batchBreakdown[0];
+      const expLabel = batchBreakdown.length === 1
+        ? primaryBatch?.displayExpiry || '—'
+        : batchBreakdown.map(b => `${b.formattedQuantity}: ${b.displayExpiry}`).join(', ');
+
+      list.push({
+        id: `sale-${s.id}`,
+        referenceId: s.invoiceNumber ? `#${s.invoiceNumber}` : s.id,
+        invoiceNumber: s.invoiceNumber,
+        operationType: 'Sale',
+        type: 'sale',
+        quantity: totalQty,
+        formattedQuantity: `-${formatStockDisplay(totalQty, product.isDivisible, product.piecesPerBox, product.pieceName)}`,
+        expiry: expLabel,
+        rawExpiry: primaryBatch?.expiryDate,
+        batchNumber: batchBreakdown.length === 1 ? primaryBatch?.batchNumber : undefined,
+        batches: batchBreakdown,
+        date: s.date,
+        timestamp: s.timestamp || (s.date ? new Date(s.date).getTime() : 0),
+        sale: s,
       });
     });
 
@@ -140,10 +279,60 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
           ? l.details.newStock - l.details.previousStock
           : undefined;
         const newStock = l.details?.newStock ?? l.details?.stockQuantity;
-        const batchExp = l.details?.batches?.[0]?.expiryDate || l.details?.expiryDate || product.expiryDate;
-        const { displayMMYYYY } = parseExpiryDate(batchExp);
-        const batchNum = l.details?.batches?.[0]?.batchNumber || l.details?.batchNumber || product.batchNumber;
-        const expLabel = displayMMYYYY !== 'N/A' ? displayMMYYYY : '—';
+
+        let batchBreakdown: OperationBatchBreakdown[] = [];
+        if (l.details?.batches && Array.isArray(l.details.batches) && l.details.batches.length > 0) {
+          batchBreakdown = l.details.batches.map(b => {
+            const { date: expDate, displayMMYYYY } = parseExpiryDate(b.expiryDate);
+            let isExpired = false;
+            let isNear = false;
+            if (expDate && !isNaN(expDate.getTime())) {
+              const now = new Date();
+              now.setHours(0, 0, 0, 0);
+              const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+              isExpired = diffDays < 0;
+              isNear = diffDays >= 0 && diffDays <= 90;
+            }
+            const bQty = b.quantity ?? 0;
+            return {
+              batchNumber: b.batchNumber,
+              expiryDate: b.expiryDate,
+              displayExpiry: displayMMYYYY !== 'N/A' ? displayMMYYYY : (b.expiryDate || '—'),
+              quantity: bQty,
+              formattedQuantity: formatStockDisplay(bQty, product.isDivisible, product.piecesPerBox, product.pieceName),
+              isExpired,
+              isNear,
+            };
+          });
+        } else {
+          const batchExp = l.details?.expiryDate || product.expiryDate;
+          const { date: expDate, displayMMYYYY } = parseExpiryDate(batchExp);
+          let isExpired = false;
+          let isNear = false;
+          if (expDate && !isNaN(expDate.getTime())) {
+            const now = new Date();
+            now.setHours(0, 0, 0, 0);
+            const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+            isExpired = diffDays < 0;
+            isNear = diffDays >= 0 && diffDays <= 90;
+          }
+          const batchNum = l.details?.batchNumber || product.batchNumber;
+          const qtyVal = typeof delta === 'number' ? Math.abs(delta) : (typeof newStock === 'number' ? newStock : 0);
+          batchBreakdown = [{
+            batchNumber: batchNum,
+            expiryDate: batchExp,
+            displayExpiry: displayMMYYYY !== 'N/A' ? displayMMYYYY : '—',
+            quantity: qtyVal,
+            formattedQuantity: formatStockDisplay(qtyVal, product.isDivisible, product.piecesPerBox, product.pieceName),
+            isExpired,
+            isNear,
+          }];
+        }
+
+        const primaryBatch = batchBreakdown[0];
+        const expLabel = batchBreakdown.length === 1
+          ? primaryBatch?.displayExpiry || '—'
+          : batchBreakdown.map(b => `${b.formattedQuantity}: ${b.displayExpiry}`).join(', ');
 
         let qtyDisplay = '—';
         if (delta !== undefined) {
@@ -167,8 +356,9 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
           quantity: typeof delta === 'number' ? Math.abs(delta) : (typeof newStock === 'number' ? newStock : 0),
           formattedQuantity: qtyDisplay,
           expiry: expLabel,
-          rawExpiry: batchExp,
-          batchNumber: batchNum,
+          rawExpiry: primaryBatch?.expiryDate,
+          batchNumber: batchBreakdown.length === 1 ? primaryBatch?.batchNumber : undefined,
+          batches: batchBreakdown,
           date: new Date(l.timestamp).toISOString(),
           timestamp: l.timestamp || 0,
           log: l,
@@ -179,52 +369,80 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
     // 4. Returns on Purchase to suppliers (Cash Refund or Expiry Lot Swap)
     (purchaseReturns || []).forEach((r) => {
       if (!r.items || !Array.isArray(r.items)) return;
-      r.items.forEach((it, itIdx) => {
-        if (it.productId === product.id || (product.code && it.productCode === product.code)) {
-          const isReplaceExpiry = r.returnType === 'replace_expiry';
-          const oldExp = it.oldExpiryDate || '';
-          const newExp = it.newExpiryDate || '';
-          const { displayMMYYYY: oldDisplayExp } = parseExpiryDate(oldExp);
-          const { displayMMYYYY: newDisplayExp } = parseExpiryDate(newExp);
+      const matchingItems = r.items.filter(
+        it => it.productId === product.id || (product.code && it.productCode === product.code)
+      );
+      if (matchingItems.length === 0) return;
 
-          let expLabel = oldDisplayExp !== 'N/A' ? oldDisplayExp : '—';
-          if (isReplaceExpiry && newDisplayExp !== 'N/A') {
-            expLabel = `${oldDisplayExp !== 'N/A' ? oldDisplayExp : '—'} ➔ ${newDisplayExp}`;
-          }
+      const isReplaceExpiry = r.returnType === 'replace_expiry';
+      let totalQty = 0;
+      const batchBreakdown: OperationBatchBreakdown[] = [];
 
-          const qty = it.quantity || 0;
-          let formattedQty = `-${formatStockDisplay(qty, product.isDivisible, product.piecesPerBox, product.pieceName)}`;
-          if (isReplaceExpiry) {
-            const replQty = it.replacementQuantity ?? qty;
-            if (replQty === qty) {
-              formattedQty = `↻ ${formatStockDisplay(qty, product.isDivisible, product.piecesPerBox, product.pieceName)}`;
-            } else {
-              const delta = replQty - qty;
-              formattedQty = `${delta >= 0 ? '+' : ''}${formatStockDisplay(delta, product.isDivisible, product.piecesPerBox, product.pieceName)} (Swap)`;
-            }
-          }
+      matchingItems.forEach((it) => {
+        const qty = it.quantity || 0;
+        totalQty += qty;
+        const oldExp = it.oldExpiryDate || '';
+        const newExp = it.newExpiryDate || '';
+        const { date: oldExpDate, displayMMYYYY: oldDisplayExp } = parseExpiryDate(oldExp);
+        const { date: newExpDate, displayMMYYYY: newDisplayExp } = parseExpiryDate(newExp);
 
-          const batchLabel = isReplaceExpiry && it.newBatchNumber && it.oldBatchNumber && it.newBatchNumber !== it.oldBatchNumber
-            ? `${it.oldBatchNumber} ➔ ${it.newBatchNumber}`
-            : it.newBatchNumber || it.oldBatchNumber;
-
-          list.push({
-            id: `${r.id}-${itIdx}`,
-            referenceId: r.returnNumber ? `#${r.returnNumber}` : r.id,
-            invoiceNumber: r.returnNumber || r.id,
-            operationType: 'Purchase Return',
-            type: 'purchase_return',
-            quantity: qty,
-            formattedQuantity: formattedQty,
-            expiry: expLabel,
-            rawExpiry: it.newExpiryDate || it.oldExpiryDate,
-            batchNumber: batchLabel,
-            date: r.date,
-            timestamp: r.timestamp || (r.date ? new Date(r.date).getTime() : 0),
-            purchaseReturn: r,
-            purchaseReturnItem: it,
-          });
+        let isExpired = false;
+        let isNear = false;
+        const targetDate = isReplaceExpiry && newExpDate ? newExpDate : oldExpDate;
+        if (targetDate && !isNaN(targetDate.getTime())) {
+          const now = new Date();
+          now.setHours(0, 0, 0, 0);
+          const diffDays = Math.ceil((targetDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          isExpired = diffDays < 0;
+          isNear = diffDays >= 0 && diffDays <= 90;
         }
+
+        let expDisplay = oldDisplayExp !== 'N/A' ? oldDisplayExp : '—';
+        if (isReplaceExpiry && newDisplayExp !== 'N/A') {
+          expDisplay = `${oldDisplayExp !== 'N/A' ? oldDisplayExp : '—'} ➔ ${newDisplayExp}`;
+        }
+
+        const batchLabel = isReplaceExpiry && it.newBatchNumber && it.oldBatchNumber && it.newBatchNumber !== it.oldBatchNumber
+          ? `${it.oldBatchNumber} ➔ ${it.newBatchNumber}`
+          : it.newBatchNumber || it.oldBatchNumber;
+
+        batchBreakdown.push({
+          batchNumber: batchLabel,
+          expiryDate: isReplaceExpiry ? it.newExpiryDate : it.oldExpiryDate,
+          displayExpiry: expDisplay,
+          quantity: qty,
+          formattedQuantity: `-${formatStockDisplay(qty, product.isDivisible, product.piecesPerBox, product.pieceName)}`,
+          isExpired,
+          isNear,
+        });
+      });
+
+      const primaryBatch = batchBreakdown[0];
+      const expLabel = batchBreakdown.length === 1
+        ? primaryBatch?.displayExpiry || '—'
+        : batchBreakdown.map(b => `${b.formattedQuantity}: ${b.displayExpiry}`).join(', ');
+
+      let formattedQty = `-${formatStockDisplay(totalQty, product.isDivisible, product.piecesPerBox, product.pieceName)}`;
+      if (isReplaceExpiry) {
+        formattedQty = `↻ ${formatStockDisplay(totalQty, product.isDivisible, product.piecesPerBox, product.pieceName)}`;
+      }
+
+      list.push({
+        id: `return-${r.id}`,
+        referenceId: r.returnNumber ? `#${r.returnNumber}` : r.id,
+        invoiceNumber: r.returnNumber || r.id,
+        operationType: 'Purchase Return',
+        type: 'purchase_return',
+        quantity: totalQty,
+        formattedQuantity: formattedQty,
+        expiry: expLabel,
+        rawExpiry: primaryBatch?.expiryDate,
+        batchNumber: batchBreakdown.length === 1 ? primaryBatch?.batchNumber : undefined,
+        batches: batchBreakdown,
+        date: r.date,
+        timestamp: r.timestamp || (r.date ? new Date(r.date).getTime() : 0),
+        purchaseReturn: r,
+        purchaseReturnItem: matchingItems[0],
       });
     });
 
@@ -653,32 +871,79 @@ export const DrugDetailsModal: React.FC<DrugDetailsModalProps> = ({
 
                             {/* 3. Expiry */}
                             <td className="py-2 px-3">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span
-                                  className={`font-mono text-xs font-semibold ${
-                                    isExpired
-                                      ? 'text-red-600 dark:text-red-400 font-bold'
-                                      : isNear
-                                      ? 'text-amber-600 dark:text-amber-400'
-                                      : 'text-slate-800 dark:text-slate-200'
-                                  }`}
-                                >
-                                  {op.expiry}
-                                </span>
-                                {op.batchNumber && (
+                              {op.batches && op.batches.length > 1 ? (
+                                <div className="flex flex-col gap-1.5 py-0.5">
+                                  {op.batches.map((b, bIdx) => (
+                                    <div key={bIdx} className="flex items-center gap-1.5 flex-wrap">
+                                      <span
+                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-extrabold font-mono bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 shrink-0"
+                                        title={`Corresponding quantity: ${b.formattedQuantity || b.quantity}`}
+                                      >
+                                        {b.formattedQuantity || `${b.quantity} qty`}
+                                      </span>
+                                      <span
+                                        className={`font-mono text-xs font-semibold ${
+                                          b.isExpired
+                                            ? 'text-red-600 dark:text-red-400 font-bold'
+                                            : b.isNear
+                                            ? 'text-amber-600 dark:text-amber-400'
+                                            : 'text-slate-800 dark:text-slate-200'
+                                        }`}
+                                      >
+                                        {b.displayExpiry}
+                                      </span>
+                                      {b.batchNumber && (
+                                        <span
+                                          className="font-mono text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700"
+                                          title={`Batch / Lot Number: ${b.batchNumber}`}
+                                        >
+                                          Batch: {b.batchNumber}
+                                        </span>
+                                      )}
+                                      {b.isExpired && (
+                                        <span className="text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300 px-1 py-0.2 rounded">
+                                          EXP
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {op.batches && op.batches.length === 1 && op.batches[0].formattedQuantity && (
+                                    <span
+                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-extrabold font-mono bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 shrink-0"
+                                      title={`Corresponding quantity: ${op.batches[0].formattedQuantity}`}
+                                    >
+                                      {op.batches[0].formattedQuantity}
+                                    </span>
+                                  )}
                                   <span
-                                    className="font-mono text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700"
-                                    title={`Batch / Lot Number: ${op.batchNumber}`}
+                                    className={`font-mono text-xs font-semibold ${
+                                      isExpired
+                                        ? 'text-red-600 dark:text-red-400 font-bold'
+                                        : isNear
+                                        ? 'text-amber-600 dark:text-amber-400'
+                                        : 'text-slate-800 dark:text-slate-200'
+                                    }`}
                                   >
-                                    Batch: {op.batchNumber}
+                                    {op.expiry}
                                   </span>
-                                )}
-                                {isExpired && (
-                                  <span className="text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300 px-1 py-0.2 rounded">
-                                    EXP
-                                  </span>
-                                )}
-                              </div>
+                                  {op.batchNumber && (
+                                    <span
+                                      className="font-mono text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700"
+                                      title={`Batch / Lot Number: ${op.batchNumber}`}
+                                    >
+                                      Batch: {op.batchNumber}
+                                    </span>
+                                  )}
+                                  {isExpired && (
+                                    <span className="text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300 px-1 py-0.2 rounded">
+                                      EXP
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </td>
 
                             {/* 4. Reference */}

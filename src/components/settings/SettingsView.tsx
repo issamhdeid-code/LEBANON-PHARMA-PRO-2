@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import {
   Network,
@@ -27,6 +27,11 @@ import {
   Globe,
   RefreshCw,
   X,
+  Sun,
+  Moon,
+  Trash2,
+  Database,
+  ShieldCheck,
 } from 'lucide-react';
 import { UsersPanel } from './UsersPanel';
 import { StockSettingsPanel } from './StockSettingsPanel';
@@ -40,6 +45,11 @@ import {
   saveGoogleDriveClientId,
   getCurrentAppOrigin,
 } from '../../services/googleDriveBackup';
+import {
+  localBackupStorage,
+  LocalBackupRecord,
+  downloadBackupJsonFile,
+} from '../../services/localBackupService';
 
 import { DesktopWindow } from '../common/DesktopWindow';
 import { formatTime, formatDateTime } from '../../utils/dateUtils';
@@ -78,6 +88,12 @@ export const SettingsView: React.FC = () => {
     timestamp: string;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Local storage bucket backup states
+  const [localBackups, setLocalBackups] = useState<LocalBackupRecord[]>([]);
+  const [isLoadingLocalBackups, setIsLoadingLocalBackups] = useState(false);
+  const [isCreatingManualBackup, setIsCreatingManualBackup] = useState(false);
+  const [deletingBackupId, setDeletingBackupId] = useState<string | null>(null);
 
   const currentOrigin = getCurrentAppOrigin();
   const syncPort = (() => { try { return new URL(currentOrigin).port || '3000'; } catch { return '3000'; } })();
@@ -272,6 +288,89 @@ export const SettingsView: React.FC = () => {
     }
   };
 
+  const loadLocalBackups = useCallback(async () => {
+    setIsLoadingLocalBackups(true);
+    try {
+      const list = await localBackupStorage.listBackups();
+      setLocalBackups(list);
+    } catch (err) {
+      console.error('Failed to load local backups:', err);
+    } finally {
+      setIsLoadingLocalBackups(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLocalBackups();
+    const handleBackupsChanged = () => {
+      loadLocalBackups();
+    };
+    window.addEventListener('pharmalebanon_local_backups_changed', handleBackupsChanged);
+    return () => {
+      window.removeEventListener('pharmalebanon_local_backups_changed', handleBackupsChanged);
+    };
+  }, [loadLocalBackups]);
+
+  const handleCreateLocalBackupNow = async () => {
+    setIsCreatingManualBackup(true);
+    try {
+      const json = await exportBackup();
+      const retention = settings.localBackupRetentionCount || 7;
+      const record = await localBackupStorage.saveBackup(json, 'manual', retention);
+      updateSettings({
+        localBackupLastSuccess: record.createdAt,
+        localBackupLastStatus: 'success',
+        localBackupLastSummary: `${record.productCount} products, ${record.salesCount} sales, ${record.customerCount} customers (${record.formattedSize})`,
+      });
+      addNotification(
+        'Local Backup Saved',
+        `Saved snapshot with ${record.productCount} products and ${record.salesCount} sales records to local storage.`,
+        'system',
+        'success'
+      );
+      await loadLocalBackups();
+    } catch (err) {
+      console.error('Failed to create manual local backup:', err);
+      addNotification('Backup Failed', 'Could not create local backup snapshot.', 'system', 'error');
+    } finally {
+      setIsCreatingManualBackup(false);
+    }
+  };
+
+  const handleDeleteLocalBackup = async (id: string, name: string) => {
+    if (!window.confirm(`Delete local backup "${name}"? This action cannot be undone.`)) {
+      return;
+    }
+    setDeletingBackupId(id);
+    try {
+      await localBackupStorage.deleteBackup(id);
+      addNotification('Backup Deleted', `Removed local backup snapshot ${name}.`, 'system', 'info');
+      await loadLocalBackups();
+    } catch (err) {
+      console.error('Delete error:', err);
+      addNotification('Delete Failed', 'Could not delete local backup.', 'system', 'error');
+    } finally {
+      setDeletingBackupId(null);
+    }
+  };
+
+  const handleRestoreLocalRecord = (record: LocalBackupRecord) => {
+    setRestoreCandidate({
+      content: record.jsonContent,
+      fileName: record.name,
+      productCount: record.productCount,
+      salesCount: record.salesCount,
+      customerCount: record.customerCount,
+      supplierCount: record.supplierCount,
+      exportDate: formatDateTime(record.timestamp),
+    });
+  };
+
+  const handleDownloadLocalRecord = (record: LocalBackupRecord) => {
+    downloadBackupJsonFile(record.name, record.jsonContent);
+    addNotification('Backup Downloaded', `Downloaded ${record.name} to your device.`, 'system', 'success');
+  };
+
   useEffect(() => {
     setMode(settings.syncMode || 'main');
     setIp(settings.mainPcIp || '');
@@ -423,6 +522,7 @@ export const SettingsView: React.FC = () => {
             {isNotificationsActive ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />} Notifications
           </button>
           <button
+            id="tab-btn-backup"
             onClick={() => setSettingsTab('backup')}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'backup'
@@ -430,7 +530,7 @@ export const SettingsView: React.FC = () => {
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
           >
-            <CloudUpload className="h-4 w-4" /> Backup
+            <HardDrive className="h-4 w-4" /> Backup &amp; Restore
           </button>
           <button
             onClick={() => setSettingsTab('stock')}
@@ -458,13 +558,82 @@ export const SettingsView: React.FC = () => {
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
             <div className="p-5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
               <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                <Monitor className="h-5 w-5 text-teal-600" /> Display Settings
+                <Monitor className="h-5 w-5 text-teal-600" /> Display & Appearance Settings
               </h2>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                Adjust the text size and overall app zoom. Changes apply immediately to every screen.
+                Customize the application theme, font scale, and viewport zoom. All visual adjustments take effect immediately across all screens, tables, and dialog windows.
               </p>
             </div>
             <div className="p-6 space-y-6">
+              {/* Theme / Appearance (Light vs Dark Mode) */}
+              <div className="space-y-3 pb-6 border-b border-slate-200 dark:border-slate-700">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Color Theme Mode
+                  </label>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Select your preferred visual mode. Both themes are calibrated for optimal contrast across inventory tables, checkout POS, reports, and floating windows.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {/* Light Mode Option */}
+                  <button
+                    type="button"
+                    onClick={() => updateSettings({ darkMode: false })}
+                    className={`flex items-start gap-3.5 p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      !settings.darkMode
+                        ? 'border-teal-600 bg-teal-50/70 dark:bg-teal-950/30 ring-2 ring-teal-600/30 shadow-xs'
+                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/70 hover:border-slate-300 dark:hover:border-slate-600'
+                    }`}
+                  >
+                    <div className={`p-2 rounded-lg shrink-0 ${!settings.darkMode ? 'bg-amber-100 text-amber-700 shadow-2xs' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'}`}>
+                      <Sun className="h-5 w-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-sm text-slate-800 dark:text-slate-100">Light Mode</span>
+                        {!settings.darkMode && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider bg-teal-600 text-white rounded">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                        Bright, high-clarity daylight theme designed for well-lit pharmacy counters and standard daytime shifts.
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* Dark Mode Option */}
+                  <button
+                    type="button"
+                    onClick={() => updateSettings({ darkMode: true })}
+                    className={`flex items-start gap-3.5 p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      settings.darkMode
+                        ? 'border-teal-500 bg-teal-950/30 ring-2 ring-teal-500/40 shadow-xs'
+                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/70 hover:border-slate-300 dark:hover:border-slate-600'
+                    }`}
+                  >
+                    <div className={`p-2 rounded-lg shrink-0 ${settings.darkMode ? 'bg-teal-900/60 text-amber-300 shadow-2xs' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'}`}>
+                      <Moon className="h-5 w-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-sm text-slate-800 dark:text-slate-100">Dark Mode</span>
+                        {settings.darkMode && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider bg-teal-500 text-slate-950 rounded">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                        Deep slate palette engineered to minimize eye strain during night shifts and dim back-office environments.
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </div>
               <div>
                 <label htmlFor="app-font-size" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Font size</label>
                 <select
@@ -673,6 +842,233 @@ export const SettingsView: React.FC = () => {
 
         {settingsTab === 'backup' && (
           <div className="space-y-6">
+            {/* Automated Daily Local Backup & Local Storage Bucket (Recommended & 100% Offline) */}
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="p-5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                    <HardDrive className="h-5 w-5 text-teal-600" /> Automated Daily Local Backup
+                  </h2>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                    Automatically saves daily local snapshots of your current inventory and sales state directly on this PC. Works 100% offline.
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                  <ShieldCheck className="h-3.5 w-3.5" /> 100% Offline Bucket
+                </span>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* Schedule & Retention Controls */}
+                <div className="grid grid-cols-1 gap-4 rounded-lg border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/50 sm:grid-cols-2">
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Automated backup schedule
+                    <select
+                      id="select-local-backup-schedule"
+                      value={settings.localBackupSchedule || 'daily'}
+                      onChange={(event) =>
+                        updateSettings({
+                          localBackupSchedule: event.target.value as 'manual' | 'daily' | 'weekly',
+                        })
+                      }
+                      className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    >
+                      <option value="daily">Daily (Automated every 24 hours)</option>
+                      <option value="weekly">Weekly (Automated every 7 days)</option>
+                      <option value="manual">Manual only (On-demand snapshots)</option>
+                    </select>
+                  </label>
+
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Versions to keep in local bucket
+                    <select
+                      id="select-local-backup-retention"
+                      value={settings.localBackupRetentionCount || 7}
+                      onChange={(event) =>
+                        updateSettings({
+                          localBackupRetentionCount: Number(event.target.value),
+                        })
+                      }
+                      className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    >
+                      <option value={3}>3 versions</option>
+                      <option value={7}>7 versions (1 week history)</option>
+                      <option value={14}>14 versions (2 weeks history)</option>
+                      <option value={30}>30 versions (1 month history)</option>
+                    </select>
+                  </label>
+
+                  <div className="sm:col-span-2 rounded-md border border-slate-200 bg-white p-3 text-xs dark:border-slate-700 dark:bg-slate-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="leading-relaxed">
+                      <strong className="text-slate-700 dark:text-slate-200">Latest local backup status:</strong>{' '}
+                      {settings.localBackupLastSuccess ? (
+                        <span>
+                          {settings.localBackupLastStatus === 'failed' ? (
+                            <span className="text-rose-600 font-medium">Last automated backup failed. </span>
+                          ) : (
+                            <span className="text-emerald-600 font-medium">Verified saved. </span>
+                          )}
+                          {settings.localBackupLastSummary || ''} &bull; Recorded at{' '}
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">
+                            {formatDateTime(settings.localBackupLastSuccess)}
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-slate-500 dark:text-slate-400">
+                          No automated daily backup has run yet. Will back up automatically or click "Back Up Now".
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      id="btn-create-local-backup-now"
+                      type="button"
+                      onClick={handleCreateLocalBackupNow}
+                      disabled={isCreatingManualBackup}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white text-xs font-semibold rounded-md shadow-xs transition-colors shrink-0 disabled:opacity-50 cursor-pointer focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    >
+                      {isCreatingManualBackup ? (
+                        <>
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          <span>Saving Snapshot...</span>
+                        </>
+                      ) : (
+                        <>
+                          <HardDrive className="h-3.5 w-3.5" />
+                          <span>Back Up Now (Local Snapshot)</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Local Storage Bucket Snapshot List */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                        <Database className="h-4 w-4 text-teal-600" />
+                        Local Storage Bucket Snapshots ({localBackups.length})
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        Each snapshot contains complete inventory quantities, sales records, customer balances, and supplier invoices.
+                      </p>
+                    </div>
+                    <span className="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">
+                      Click <strong>Restore</strong> to rollback data
+                    </span>
+                  </div>
+
+                  {isLoadingLocalBackups ? (
+                    <div className="p-8 text-center text-xs text-slate-500 dark:text-slate-400 flex items-center justify-center gap-2">
+                      <RefreshCw className="h-4 w-4 animate-spin text-teal-600" />
+                      <span>Loading local snapshots...</span>
+                    </div>
+                  ) : localBackups.length === 0 ? (
+                    <div className="p-6 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 text-center">
+                      <HardDrive className="h-8 w-8 text-slate-400 mx-auto mb-2 opacity-60" />
+                      <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        No local backup snapshots in the bucket yet.
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        The app will automatically save a daily snapshot, or you can create one right now.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleCreateLocalBackupNow}
+                        disabled={isCreatingManualBackup}
+                        className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold rounded-md shadow-xs cursor-pointer transition-colors"
+                      >
+                        <HardDrive className="h-3.5 w-3.5" /> Create First Local Backup
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+                      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {localBackups.map((backup, idx) => (
+                          <div
+                            key={backup.id}
+                            className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          >
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-xs text-slate-900 dark:text-slate-100">
+                                  {formatDateTime(backup.timestamp)}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded ${
+                                    backup.type === 'automated'
+                                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                      : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                  }`}
+                                >
+                                  {backup.type === 'automated' ? 'Daily Automated' : 'Manual Snapshot'}
+                                </span>
+                                <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
+                                  {backup.formattedSize}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-3">
+                                <span>
+                                  Inventory:{' '}
+                                  <strong className="text-slate-800 dark:text-slate-200">{backup.productCount}</strong> items
+                                </span>
+                                <span>&bull;</span>
+                                <span>
+                                  Sales:{' '}
+                                  <strong className="text-slate-800 dark:text-slate-200">{backup.salesCount}</strong> records
+                                </span>
+                                <span>&bull;</span>
+                                <span>
+                                  Customers:{' '}
+                                  <strong className="text-slate-800 dark:text-slate-200">{backup.customerCount}</strong>
+                                </span>
+                              </div>
+                              <div className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate max-w-md">
+                                {backup.name}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                              <button
+                                id={`btn-restore-local-${idx}`}
+                                type="button"
+                                onClick={() => handleRestoreLocalRecord(backup)}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                                title="Restore current database state from this backup snapshot"
+                              >
+                                <Upload className="h-3.5 w-3.5" />
+                                <span>Restore</span>
+                              </button>
+                              <button
+                                id={`btn-download-local-${idx}`}
+                                type="button"
+                                onClick={() => handleDownloadLocalRecord(backup)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium rounded-md transition-colors cursor-pointer focus:ring-2 focus:ring-slate-400 focus:outline-none"
+                                title="Download as standalone JSON file"
+                              >
+                                <Download className="h-3.5 w-3.5 text-slate-500" />
+                                <span>Download JSON</span>
+                              </button>
+                              <button
+                                id={`btn-delete-local-${idx}`}
+                                type="button"
+                                disabled={deletingBackupId === backup.id}
+                                onClick={() => handleDeleteLocalBackup(backup.id, backup.name)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded transition-colors cursor-pointer disabled:opacity-50"
+                                title="Delete this local snapshot"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* Google Drive Cloud Backup */}
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
               <div className="p-5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
@@ -952,19 +1348,19 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
 
-            {/* Local JSON File Backup & Restore (Offline Guaranteed) */}
+            {/* Manual JSON File Backup & Restore */}
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
               <div className="p-5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                    <HardDrive className="h-5 w-5 text-teal-600" /> Local Database Backup & Restore
+                    <Upload className="h-5 w-5 text-teal-600" /> Manual File Backup &amp; Restore (.json)
                   </h2>
                   <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                    Export a standalone JSON database snapshot or restore existing records directly. Works 100% offline without any account setup.
+                    Export a standalone JSON database file to your computer or restore records from an external backup file.
                   </p>
                 </div>
                 <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-600">
-                  Offline
+                  File Import / Export
                 </span>
               </div>
 

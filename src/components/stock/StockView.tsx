@@ -22,7 +22,14 @@ import {
   ArrowUp,
   ArrowDown,
   Dices,
-  ChevronDown
+  ChevronDown,
+  ChevronUp,
+  Calendar,
+  Columns3,
+  Eye,
+  RotateCcw,
+  ArrowDownAZ,
+  ScanBarcode,
 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { usePharmacy } from '../../context/PharmacyContext';
@@ -30,12 +37,21 @@ import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
 import { useDebounce } from '../../hooks/useDebounce';
 import { Product, ProductCategory, ScientificDrugInfo, PurchaseInvoice, MoleculeStrength } from '../../types/pharmacy';
 import { getSubcategoryOptions, suggestSubcategory } from '../../constants/subcategories';
-import { formatStockDisplay, generateRandomBarcode, resolveProductBatches, splitProductMolecule } from '../../utils/stockUtils';
+import {
+  formatStockDisplay,
+  generateRandomBarcode,
+  resolveProductBatches,
+  splitProductMolecule,
+  ExpiryPreset,
+  isDateInRange,
+  matchesBatchAndExpiryFilter,
+} from '../../utils/stockUtils';
 import { resolveStraightforwardScientificInfo } from '../../services/scientificDataService';
 import { getPriceChangeInfoUSD, getPriceChangeInfoLBP, formatLBPValue } from '../../utils/priceUtils';
 import { PriceUpdaterModal } from './PriceUpdaterModal';
 import { DrugDetailsModal } from './DrugDetailsModal';
 import { BulkEditStockModal } from './BulkEditStockModal';
+import { BarcodeLabelGeneratorModal } from './BarcodeLabelGeneratorModal';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { useWindowContext } from '../../context/WindowContext';
@@ -48,6 +64,10 @@ import {
   getStandardPresentations,
   normalizePresentation,
 } from '../../utils/presentationUtils';
+import {
+  generateStockInventoryCsv,
+  downloadCsvFile,
+} from '../../utils/stockCsvExport';
 
 interface StockViewProps {
   onViewScientific: (product: Product) => void;
@@ -55,7 +75,17 @@ interface StockViewProps {
   onOpenMOPHUpdater: () => void;
 }
 
-type SortKey = 'code' | 'barcode' | 'name' | 'presentation' | 'category' | 'stockQuantity' | 'expiryDate' | 'priceUSD' | 'agent';
+export type SortKey = 'code' | 'barcode' | 'name' | 'presentation' | 'category' | 'stockQuantity' | 'expiryDate' | 'priceUSD' | 'agent';
+
+export interface StockSortConfig {
+  key: SortKey;
+  direction: 'asc' | 'desc';
+}
+
+export const DEFAULT_STOCK_SORT: StockSortConfig = {
+  key: 'name',
+  direction: 'asc',
+};
 
 // Helper to parse diverse date formats (DD-MM-YYYY, YYYY-MM-DD, MM-YYYY) and output MM-YYYY format
 const parseExpiryDate = (dateStr?: string): { date: Date | null; displayMMYYYY: string } => {
@@ -130,11 +160,61 @@ const DEFAULT_STOCK_COL_WIDTHS: Record<string, number> = {
   actions: 85,
 };
 
+export const DEFAULT_STOCK_COL_VISIBILITY: Record<string, boolean> = {
+  select: true,
+  code: true,
+  barcode: true,
+  name: true,
+  presentation: true,
+  category: true,
+  priceUSD: true,
+  priceLBP: true,
+  stockQuantity: true,
+  expiryDate: true,
+  agent: true,
+  actions: true,
+};
+
+export const ALL_STOCK_COLUMNS: { id: string; label: string; shortLabel?: string }[] = [
+  { id: 'select', label: 'Selection Checkbox', shortLabel: 'Select' },
+  { id: 'code', label: 'Item Code', shortLabel: 'Code' },
+  { id: 'barcode', label: 'Barcode', shortLabel: 'Barcode' },
+  { id: 'name', label: 'Medication Name', shortLabel: 'Name' },
+  { id: 'presentation', label: 'Presentation', shortLabel: 'Presentation' },
+  { id: 'category', label: 'Category', shortLabel: 'Category' },
+  { id: 'priceUSD', label: 'Price (USD $)', shortLabel: 'Price ($)' },
+  { id: 'priceLBP', label: 'Price (LBP)', shortLabel: 'Price (LBP)' },
+  { id: 'stockQuantity', label: 'Quantity / Stock', shortLabel: 'Qty' },
+  { id: 'expiryDate', label: 'Expiry Date', shortLabel: 'Expiry' },
+  { id: 'agent', label: 'Agent / Supplier', shortLabel: 'Agent' },
+  { id: 'actions', label: 'Action Buttons', shortLabel: 'Actions' },
+];
+
+export const STOCK_DATA_COLUMNS: {
+  id: string;
+  label: string;
+  sortKey?: SortKey;
+  align?: 'left' | 'center' | 'right';
+  elemId?: string;
+}[] = [
+  { id: 'code', label: 'Code', sortKey: 'code' },
+  { id: 'barcode', label: 'Barcode', sortKey: 'barcode' },
+  { id: 'name', label: 'Name', sortKey: 'name' },
+  { id: 'presentation', label: 'Presentation', sortKey: 'presentation', elemId: 'th-stock-presentation' },
+  { id: 'category', label: 'Category', sortKey: 'category' },
+  { id: 'priceUSD', label: 'Price ($)', sortKey: 'priceUSD', align: 'right' },
+  { id: 'priceLBP', label: 'Price (LBP)', align: 'right' },
+  { id: 'stockQuantity', label: 'Qty', sortKey: 'stockQuantity', align: 'center' },
+  { id: 'expiryDate', label: 'Expiry', sortKey: 'expiryDate' },
+  { id: 'agent', label: 'Agent', sortKey: 'agent' },
+];
+
 interface StockTableRowProps {
   prod: Product;
   index: number;
   isSelected: boolean;
   isRowSelected: boolean;
+  colVisibility?: Record<string, boolean>;
   changeUSD?: ReturnType<typeof getPriceChangeInfoUSD>;
   changeLBP?: ReturnType<typeof getPriceChangeInfoLBP>;
   onToggleRowSelect: (id: string, index: number, isShift: boolean) => void;
@@ -142,8 +222,13 @@ interface StockTableRowProps {
   onOpenPrice: (code: string) => void;
   onViewScientific: (prod: Product) => void;
   onEdit: (prod: Product) => void;
+  onPrintBarcode?: (prod: Product) => void;
   onFilterSubcategory?: (subcat: string) => void;
   purchases?: PurchaseInvoice[];
+  activeBatchFilter?: string;
+  activeExpiryPreset?: ExpiryPreset;
+  activeExpiryFrom?: string;
+  activeExpiryTo?: string;
 }
 
 const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTableRowProps & { dataIndex?: number; style?: React.CSSProperties }>(function StockTableRow({
@@ -151,6 +236,7 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
   index,
   isSelected,
   isRowSelected,
+  colVisibility = DEFAULT_STOCK_COL_VISIBILITY,
   changeUSD,
   changeLBP,
   onToggleRowSelect,
@@ -158,8 +244,13 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
   onOpenPrice,
   onViewScientific,
   onEdit,
+  onPrintBarcode,
   onFilterSubcategory,
   purchases,
+  activeBatchFilter,
+  activeExpiryPreset,
+  activeExpiryFrom,
+  activeExpiryTo,
   dataIndex,
   style,
 }, ref) {
@@ -173,13 +264,29 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
   const renderExpiryCellView = React.useCallback((targetProd: Product = prod) => {
     // Filter active batches with quantity > 0 (omit zero quantity batches)
     const activeBatches = resolvedBatches.filter((b) => (b.quantity || 0) > 0);
+    const candidateBatches = activeBatches.length > 0 ? activeBatches : resolvedBatches;
 
     // Primary expiry to display on the shelf/row:
-    // If there are active batches in stock, show the EARLIEST expiring active batch (FIFO/FEFO).
-    // If out of stock, fallback to the first resolved batch or targetProd.expiryDate.
-    const primaryBatch = activeBatches.length > 0
-      ? activeBatches[0]
-      : (resolvedBatches.length > 0 ? resolvedBatches[0] : null);
+    // If active batch or expiry filter is active, prioritize the matching batch so the user sees it directly!
+    let primaryBatch = candidateBatches.length > 0 ? candidateBatches[0] : null;
+
+    if (activeBatchFilter || (activeExpiryPreset && activeExpiryPreset !== 'all') || activeExpiryFrom || activeExpiryTo) {
+      const match = candidateBatches.find((b) => {
+        if (activeBatchFilter && activeBatchFilter.trim()) {
+          const q = activeBatchFilter.trim().toLowerCase();
+          if (!b.batchNumber || !b.batchNumber.toLowerCase().includes(q)) return false;
+        }
+        if ((activeExpiryPreset && activeExpiryPreset !== 'all') || activeExpiryFrom || activeExpiryTo) {
+          if (!b.expiryDate) return false;
+          const { date } = parseExpiryDate(b.expiryDate);
+          if (!isDateInRange(date, activeExpiryPreset || 'all', activeExpiryFrom, activeExpiryTo)) return false;
+        }
+        return true;
+      });
+      if (match) {
+        primaryBatch = match;
+      }
+    }
 
     const expiry = primaryBatch?.expiryDate || targetProd.expiryDate;
     if (!expiry || !expiry.trim()) {
@@ -255,6 +362,14 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
             </span>
           )}
         </div>
+        {primaryBatch?.batchNumber && (
+          <span
+            className="text-[9.5px] font-mono text-slate-500 dark:text-slate-400 truncate max-w-[85px] leading-tight"
+            title={`Batch: ${primaryBatch.batchNumber}`}
+          >
+            B: {primaryBatch.batchNumber}
+          </span>
+        )}
         {isExpired ? (
           <span className="text-[10px] font-bold text-red-600 dark:text-red-400 leading-tight">
             Expired
@@ -266,7 +381,7 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
         ) : null}
       </div>
     );
-  }, [prod, resolvedBatches]);
+  }, [prod, resolvedBatches, activeBatchFilter, activeExpiryPreset, activeExpiryFrom, activeExpiryTo]);
 
   return (
     <tr
@@ -283,193 +398,228 @@ const StockTableRow = React.memo(React.forwardRef<HTMLTableRowElement, StockTabl
           : 'bg-white dark:bg-slate-900'
       }`}
     >
-      <td
-        className="p-1 px-2 text-center border-r border-slate-200 dark:border-slate-700 whitespace-nowrap"
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleRowSelect(prod.id, index, e.shiftKey);
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={isRowSelected}
-          onChange={() => {}}
+      {colVisibility.select !== false && (
+        <td
+          className="p-1 px-2 text-center border-r border-slate-200 dark:border-slate-700 whitespace-nowrap"
           onClick={(e) => {
             e.stopPropagation();
             onToggleRowSelect(prod.id, index, e.shiftKey);
           }}
-          className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer align-middle"
-        />
-      </td>
-      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap font-mono text-slate-600 dark:text-slate-300">
-        {prod.code || '-'}
-      </td>
-      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap font-mono text-slate-600 dark:text-slate-300">
-        {prod.barcode || '-'}
-      </td>
-      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 font-semibold text-slate-800 dark:text-slate-100 min-w-0">
-        <div className="truncate">{prod.name}</div>
-        <div className="text-[10px] font-normal text-slate-400 dark:text-slate-500 truncate">
-          {prod.dosage} • {prod.form}
-        </div>
-      </td>
-      <td
-        id={`td-stock-presentation-${prod.id}`}
-        className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-0 truncate"
-        title={prod.presentation || ''}
-      >
-        {prod.presentation ? (
-          <span>{prod.presentation}</span>
-        ) : (
-          <span className="text-gray-400 dark:text-slate-500 italic">-</span>
-        )}
-      </td>
-      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">
-        <div className="flex flex-col gap-0.5 items-start">
-          <span
-            className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
-              prod.category === 'drug'
-                ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300'
-                : prod.category === 'vitamins'
-                ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/70 dark:text-orange-300'
-                : prod.category === 'cosmetics'
-                ? 'bg-pink-100 text-pink-800 dark:bg-pink-950/70 dark:text-pink-300'
-                : 'bg-teal-100 text-teal-800 dark:bg-teal-950/70 dark:text-teal-300'
+        >
+          <input
+            type="checkbox"
+            checked={isRowSelected}
+            onChange={() => {}}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleRowSelect(prod.id, index, e.shiftKey);
+            }}
+            className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer align-middle"
+          />
+        </td>
+      )}
+      {colVisibility.code !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap font-mono text-slate-600 dark:text-slate-300">
+          {prod.code || '-'}
+        </td>
+      )}
+      {colVisibility.barcode !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap font-mono text-slate-600 dark:text-slate-300">
+          {prod.barcode || '-'}
+        </td>
+      )}
+      {colVisibility.name !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 font-semibold text-slate-800 dark:text-slate-100 min-w-0">
+          <div className="truncate">{prod.name}</div>
+          <div className="text-[10px] font-normal text-slate-400 dark:text-slate-500 truncate">
+            {prod.dosage} • {prod.form}
+          </div>
+        </td>
+      )}
+      {colVisibility.presentation !== false && (
+        <td
+          id={`td-stock-presentation-${prod.id}`}
+          className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-0 truncate"
+          title={prod.presentation || ''}
+        >
+          {prod.presentation ? (
+            <span>{prod.presentation}</span>
+          ) : (
+            <span className="text-gray-400 dark:text-slate-500 italic">-</span>
+          )}
+        </td>
+      )}
+      {colVisibility.category !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">
+          <div className="flex flex-col gap-0.5 items-start">
+            <span
+              className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                prod.category === 'drug'
+                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300'
+                  : prod.category === 'vitamins'
+                  ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/70 dark:text-orange-300'
+                  : prod.category === 'cosmetics'
+                  ? 'bg-pink-100 text-pink-800 dark:bg-pink-950/70 dark:text-pink-300'
+                  : 'bg-teal-100 text-teal-800 dark:bg-teal-950/70 dark:text-teal-300'
+              }`}
+            >
+              {prod.category}
+            </span>
+            {prod.subcategory && (
+              <span
+                className="inline-block text-[9.5px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 px-1 py-0.2 rounded truncate max-w-[120px] cursor-pointer transition-colors"
+                title={`Subcategory: ${prod.subcategory} (Click to filter)`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFilterSubcategory?.(prod.subcategory!);
+                }}
+              >
+                {prod.subcategory}
+              </span>
+            )}
+          </div>
+        </td>
+      )}
+      {colVisibility.priceUSD !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-right font-medium text-slate-800 dark:text-slate-200">
+          <div className="flex items-center justify-end gap-1">
+            <span>${prod.priceUSD.toFixed(2)}</span>
+            {changeUSD && (
+              <span
+                className={`flex items-center text-[10px] font-semibold ${
+                  changeUSD.direction === 'up' ? 'text-green-500' : 'text-red-500'
+                }`}
+                title={
+                  changeUSD.isSkippedDecrease
+                    ? `Lower CSV price ($${changeUSD.importedPrice?.toFixed(2)}) was skipped to preserve selling price (-${changeUSD.percentFormatted}%)`
+                    : changeUSD.direction === 'up'
+                    ? `Price increased by ${changeUSD.percentFormatted}% (was $${prod.previousPriceUSD?.toFixed(2)})`
+                    : `Price decreased by ${changeUSD.percentFormatted}% (was $${prod.previousPriceUSD?.toFixed(2)})`
+                }
+              >
+                {changeUSD.direction === 'up' ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />}
+                {changeUSD.percentFormatted}%
+              </span>
+            )}
+          </div>
+        </td>
+      )}
+      {colVisibility.priceLBP !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-right font-medium text-slate-800 dark:text-slate-200">
+          <div className="flex items-center justify-end gap-1">
+            <span>{formatLBPValue(prod.priceLBP)}</span>
+            {changeLBP && (
+              <span
+                className={`flex items-center text-[10px] font-semibold ${
+                  changeLBP.direction === 'up' ? 'text-green-500' : 'text-red-500'
+                }`}
+                title={
+                  changeLBP.isSkippedDecrease
+                    ? `Lower CSV price (${formatLBPValue(changeLBP.importedPrice ?? 0)} LBP) was skipped to preserve selling price (-${changeLBP.percentFormatted}%)`
+                    : changeLBP.direction === 'up'
+                    ? `Price increased by ${changeLBP.percentFormatted}% (was ${formatLBPValue(prod.previousPriceLBP ?? 0)} LBP)`
+                    : `Price decreased by ${changeLBP.percentFormatted}% (was ${formatLBPValue(prod.previousPriceLBP ?? 0)} LBP)`
+                }
+              >
+                {changeLBP.direction === 'up' ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />}
+                {changeLBP.percentFormatted}%
+              </span>
+            )}
+          </div>
+        </td>
+      )}
+      {colVisibility.stockQuantity !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-center font-medium">
+          <div
+            className={`flex flex-col items-center leading-tight ${
+              prod.stockQuantity === 0
+                ? 'text-red-600 dark:text-red-400 font-extrabold'
+                : prod.stockQuantity <= 3
+                ? 'text-amber-600 dark:text-amber-400 font-bold'
+                : 'text-slate-800 dark:text-slate-200 font-bold'
             }`}
           >
-            {prod.category}
-          </span>
-          {prod.subcategory && (
-            <span
-              className="inline-block text-[9.5px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 px-1 py-0.2 rounded truncate max-w-[120px] cursor-pointer transition-colors"
-              title={`Subcategory: ${prod.subcategory} (Click to filter)`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onFilterSubcategory?.(prod.subcategory!);
-              }}
-            >
-              {prod.subcategory}
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-right font-medium text-slate-800 dark:text-slate-200">
-        <div className="flex items-center justify-end gap-1">
-          <span>${prod.priceUSD.toFixed(2)}</span>
-          {changeUSD && (
-            <span
-              className={`flex items-center text-[10px] font-semibold ${
-                changeUSD.direction === 'up' ? 'text-green-500' : 'text-red-500'
-              }`}
-              title={
-                changeUSD.isSkippedDecrease
-                  ? `Lower CSV price ($${changeUSD.importedPrice?.toFixed(2)}) was skipped to preserve selling price (-${changeUSD.percentFormatted}%)`
-                  : changeUSD.direction === 'up'
-                  ? `Price increased by ${changeUSD.percentFormatted}% (was $${prod.previousPriceUSD?.toFixed(2)})`
-                  : `Price decreased by ${changeUSD.percentFormatted}% (was $${prod.previousPriceUSD?.toFixed(2)})`
+            {(() => {
+              if (!prod.isDivisible || !prod.piecesPerBox || prod.piecesPerBox <= 1) {
+                const qty = Number.isInteger(prod.stockQuantity) ? prod.stockQuantity.toString() : prod.stockQuantity.toFixed(2);
+                return <span>{qty} box</span>;
               }
-            >
-              {changeUSD.direction === 'up' ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />}
-              {changeUSD.percentFormatted}%
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-right font-medium text-slate-800 dark:text-slate-200">
-        <div className="flex items-center justify-end gap-1">
-          <span>{formatLBPValue(prod.priceLBP)}</span>
-          {changeLBP && (
-            <span
-              className={`flex items-center text-[10px] font-semibold ${
-                changeLBP.direction === 'up' ? 'text-green-500' : 'text-red-500'
-              }`}
-              title={
-                changeLBP.isSkippedDecrease
-                  ? `Lower CSV price (${formatLBPValue(changeLBP.importedPrice ?? 0)} LBP) was skipped to preserve selling price (-${changeLBP.percentFormatted}%)`
-                  : changeLBP.direction === 'up'
-                  ? `Price increased by ${changeLBP.percentFormatted}% (was ${formatLBPValue(prod.previousPriceLBP ?? 0)} LBP)`
-                  : `Price decreased by ${changeLBP.percentFormatted}% (was ${formatLBPValue(prod.previousPriceLBP ?? 0)} LBP)`
-              }
-            >
-              {changeLBP.direction === 'up' ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />}
-              {changeLBP.percentFormatted}%
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-center font-medium">
-        <div
-          className={`flex flex-col items-center leading-tight ${
-            prod.stockQuantity === 0
-              ? 'text-red-600 dark:text-red-400 font-extrabold'
-              : prod.stockQuantity <= 3
-              ? 'text-amber-600 dark:text-amber-400 font-bold'
-              : 'text-slate-800 dark:text-slate-200 font-bold'
-          }`}
-        >
-          {(() => {
-            if (!prod.isDivisible || !prod.piecesPerBox || prod.piecesPerBox <= 1) {
-              const qty = Number.isInteger(prod.stockQuantity) ? prod.stockQuantity.toString() : prod.stockQuantity.toFixed(2);
-              return <span>{qty} box</span>;
-            }
-            
-            const totalPieces = Math.round(prod.stockQuantity * prod.piecesPerBox);
-            const boxes = Math.floor(totalPieces / prod.piecesPerBox);
-            const pieces = totalPieces % prod.piecesPerBox;
-            const pieceLabel = prod.pieceName || 'Piece';
-            const pieceLabelPlural = pieces > 1 || pieces === 0 ? 's' : '';
-            const boxLabel = `box${boxes > 1 || boxes === 0 ? 'es' : ''}`;
-            
-            if (boxes === 0 && pieces > 0) return <span>{pieces} {pieceLabel}{pieceLabelPlural}</span>;
-            if (pieces === 0) return <span>{boxes} {boxLabel}</span>;
-            
-            return (
-              <>
-                <span>{boxes} {boxLabel}</span>
-                <span className="text-[11px] text-teal-600 dark:text-teal-400 font-semibold">{pieces} {pieceLabel}{pieceLabelPlural}</span>
-              </>
-            );
-          })()}
-        </div>
-      </td>
-      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">
-        {renderExpiryCellView(prod)}
-      </td>
-      <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-0 truncate" title={prod.agent || ''}>
-        {prod.agent || '-'}
-      </td>
-      <td className="p-1 px-2 whitespace-nowrap text-right">
-        <div className="flex items-center justify-end space-x-1" onClick={(e) => e.stopPropagation()}>
-          {/* Quick Price Update by Code Button */}
-          <button
-            onClick={() => onOpenPrice(prod.code)}
-            className="rounded p-1 text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950/40 cursor-pointer transition-colors"
-            title="Update price for this drug"
-          >
-            <Tag className="h-3.5 w-3.5" />
-          </button>
-
-          {/* Scientific Info Button */}
-          {prod.category === 'drug' && (
+              
+              const totalPieces = Math.round(prod.stockQuantity * prod.piecesPerBox);
+              const boxes = Math.floor(totalPieces / prod.piecesPerBox);
+              const pieces = totalPieces % prod.piecesPerBox;
+              const pieceLabel = prod.pieceName || 'Piece';
+              const pieceLabelPlural = pieces > 1 || pieces === 0 ? 's' : '';
+              const boxLabel = `box${boxes > 1 || boxes === 0 ? 'es' : ''}`;
+              
+              if (boxes === 0 && pieces > 0) return <span>{pieces} {pieceLabel}{pieceLabelPlural}</span>;
+              if (pieces === 0) return <span>{boxes} {boxLabel}</span>;
+              
+              return (
+                <>
+                  <span>{boxes} {boxLabel}</span>
+                  <span className="text-[11px] text-teal-600 dark:text-teal-400 font-semibold">{pieces} {pieceLabel}{pieceLabelPlural}</span>
+                </>
+              );
+            })()}
+          </div>
+        </td>
+      )}
+      {colVisibility.expiryDate !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">
+          {renderExpiryCellView(prod)}
+        </td>
+      )}
+      {colVisibility.agent !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-0 truncate" title={prod.agent || ''}>
+          {prod.agent || '-'}
+        </td>
+      )}
+      {colVisibility.actions !== false && (
+        <td className="p-1 px-2 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap text-right">
+          <div className="flex items-center justify-end space-x-1" onClick={(e) => e.stopPropagation()}>
+            {/* Quick Barcode Label Print Button */}
             <button
-              onClick={() => onViewScientific(prod)}
-              className="rounded p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer transition-colors"
-              title="View Full Scientific Dossier"
+              id={`btn-print-barcode-${prod.id}`}
+              onClick={() => onPrintBarcode?.(prod)}
+              className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-teal-600 dark:hover:bg-slate-800 dark:hover:text-teal-400 cursor-pointer transition-colors"
+              title="Print Barcode Label for this item"
             >
-              <BookOpen className="h-3.5 w-3.5" />
+              <ScanBarcode className="h-3.5 w-3.5" />
             </button>
-          )}
 
-          {/* Edit Product */}
-          <button
-            onClick={() => onEdit(prod)}
-            className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200 cursor-pointer transition-colors"
-            title="Edit Item Details"
-          >
-            <Edit2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </td>
+            {/* Quick Price Update by Code Button */}
+            <button
+              onClick={() => onOpenPrice(prod.code)}
+              className="rounded p-1 text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950/40 cursor-pointer transition-colors"
+              title="Update price for this drug"
+            >
+              <Tag className="h-3.5 w-3.5" />
+            </button>
+
+            {/* Scientific Info Button */}
+            {prod.category === 'drug' && (
+              <button
+                onClick={() => onViewScientific(prod)}
+                className="rounded p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer transition-colors"
+                title="View Full Scientific Dossier"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+              </button>
+            )}
+
+            {/* Edit Product */}
+            <button
+              onClick={() => onEdit(prod)}
+              className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200 cursor-pointer transition-colors"
+              title="Edit Item Details"
+            >
+              <Edit2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </td>
+      )}
+      <td className="p-0 border-b border-slate-100 dark:border-slate-800/60" />
     </tr>
   );
 }));
@@ -494,11 +644,14 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     settings,
     updateSettings,
     addNotification,
+    activeTab,
   } = usePharmacy();
   const { restoreWindow, restoreSectionWindows } = useWindowContext();
 
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const parentRef = useRef<HTMLDivElement | null>(null);
+  const resetTableToTopRef = useRef<() => void>(() => {});
   const debouncedSearchQuery = useDebounce(searchQuery, 250);
 
   useBarcodeScanner({
@@ -507,7 +660,23 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     }
   });
 
-  const [sortConfig, setSortConfig] = useState<{ key: SortKey, direction: 'asc' | 'desc' } | null>(null);
+  // Table Sort State: Always defaults to alphabetical A-Z (Product name ascending)
+  const [sortConfig, setSortConfig] = useState<StockSortConfig>(() => {
+    try {
+      const saved = localStorage.getItem('stock_table_sort_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (
+          parsed &&
+          typeof parsed.key === 'string' &&
+          (parsed.direction === 'asc' || parsed.direction === 'desc')
+        ) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return DEFAULT_STOCK_SORT;
+  });
 
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
     try {
@@ -517,48 +686,399 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     return DEFAULT_STOCK_COL_WIDTHS;
   });
 
+  // Column resizing state & refs to avoid state-lag and prevent dragging from triggering sort
+  const isResizingRef = useRef(false);
+  const hasDraggedRef = useRef(false);
+  const justFinishedResizeRef = useRef(false);
+  const rafIdRef = useRef<number | null>(null);
+  const latestColWidthsRef = useRef(colWidths);
+  latestColWidthsRef.current = colWidths;
+
   const handleColResizeStart = (e: React.MouseEvent, col: string) => {
     e.preventDefault();
     e.stopPropagation();
-    const startX = e.pageX;
-    const startWidth = colWidths[col] || 100;
+
+    isResizingRef.current = true;
+    hasDraggedRef.current = false;
+    justFinishedResizeRef.current = false;
+
+    const startX = e.clientX;
+    const startWidth = colWidths[col] || DEFAULT_STOCK_COL_WIDTHS[col] || 100;
 
     const onMouseMove = (moveEvent: MouseEvent) => {
-      const delta = moveEvent.pageX - startX;
-      setColWidths((prev) => {
-        const updated = {
-          ...prev,
-          [col]: Math.max(35, startWidth + delta),
-        };
-        try {
-          localStorage.setItem('stock_table_col_widths', JSON.stringify(updated));
-        } catch {}
-        return updated;
+      const delta = moveEvent.clientX - startX;
+      if (Math.abs(delta) > 1) {
+        hasDraggedRef.current = true;
+      }
+
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = requestAnimationFrame(() => {
+        // Free resizing to the left without any arbitrary limitation (down to 15px floor so it remains interactive)
+        const newWidth = Math.max(15, Math.min(2000, Math.round(startWidth + delta)));
+        setColWidths((prev) => {
+          const updated = {
+            ...prev,
+            [col]: newWidth,
+          };
+          latestColWidthsRef.current = updated;
+          return updated;
+        });
       });
     };
 
     const onMouseUp = () => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
       document.body.style.cursor = 'default';
       document.body.style.userSelect = 'auto';
+
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+
+      // Persist to localStorage once upon drag completion
+      try {
+        localStorage.setItem('stock_table_col_widths', JSON.stringify(latestColWidthsRef.current));
+      } catch {}
+
+      if (hasDraggedRef.current) {
+        justFinishedResizeRef.current = true;
+        // Suppress any delayed or trailing click event on the header
+        setTimeout(() => {
+          justFinishedResizeRef.current = false;
+          isResizingRef.current = false;
+          hasDraggedRef.current = false;
+        }, 200);
+      } else {
+        setTimeout(() => {
+          isResizingRef.current = false;
+        }, 50);
+      }
     };
 
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
+    window.addEventListener('mouseup', onMouseUp);
   };
 
   const handleSort = (key: SortKey) => {
-    let direction: 'asc' | 'desc' = 'asc';
-    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
-      direction = 'desc';
+    // If resizing was in progress or just finished, block sorting
+    if (isResizingRef.current || hasDraggedRef.current || justFinishedResizeRef.current) {
+      return;
     }
-    setSortConfig({ key, direction });
+    let nextSort: StockSortConfig;
+    if (sortConfig.key === key) {
+      if (sortConfig.direction === 'asc') {
+        nextSort = { key, direction: 'desc' };
+      } else {
+        if (key !== 'name') {
+          // Reset to default alphabetical A-Z
+          nextSort = DEFAULT_STOCK_SORT;
+        } else {
+          nextSort = { key: 'name', direction: 'asc' };
+        }
+      }
+    } else {
+      nextSort = { key, direction: 'asc' };
+    }
+    setSortConfig(nextSort);
+    try {
+      localStorage.setItem('stock_table_sort_config', JSON.stringify(nextSort));
+    } catch {}
+    resetTableToTopRef.current();
   };
-  const [selectedCategory, setSelectedCategory] = useState<ProductCategory | 'all'>('all');
-  const [showLowStockOnly, setShowLowStockOnly] = useState(false);
+
+  const resetSortToDefault = useCallback(() => {
+    setSortConfig(DEFAULT_STOCK_SORT);
+    try {
+      localStorage.setItem('stock_table_sort_config', JSON.stringify(DEFAULT_STOCK_SORT));
+    } catch {}
+    resetTableToTopRef.current();
+  }, []);
+
+  // Column Visibility & Header Context Menu State
+  const [colVisibility, setColVisibility] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('stock_table_col_visibility');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const merged = { ...DEFAULT_STOCK_COL_VISIBILITY, ...parsed };
+        if (Object.values(merged).some(Boolean)) {
+          return merged;
+        }
+      }
+    } catch {}
+    return DEFAULT_STOCK_COL_VISIBILITY;
+  });
+
+  const [headerContextMenu, setHeaderContextMenu] = useState<{
+    isOpen: boolean;
+    x: number;
+    y: number;
+    targetColId?: string;
+  }>({
+    isOpen: false,
+    x: 0,
+    y: 0,
+  });
+
+  const headerContextMenuRef = useRef<HTMLDivElement>(null);
+
+  const toggleColumnVisibility = useCallback((colId: string) => {
+    setColVisibility((prev) => {
+      const isCurrentlyVisible = prev[colId] !== false;
+      const visibleCount = ALL_STOCK_COLUMNS.filter((c) => prev[c.id] !== false).length;
+      if (isCurrentlyVisible && visibleCount <= 1) {
+        return prev;
+      }
+      const updated = {
+        ...prev,
+        [colId]: !isCurrentlyVisible,
+      };
+      try {
+        localStorage.setItem('stock_table_col_visibility', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  }, []);
+
+  const showAllColumns = useCallback(() => {
+    setColVisibility(DEFAULT_STOCK_COL_VISIBILITY);
+    try {
+      localStorage.setItem('stock_table_col_visibility', JSON.stringify(DEFAULT_STOCK_COL_VISIBILITY));
+    } catch {}
+  }, []);
+
+  const resetColumnsDefault = useCallback(() => {
+    setColVisibility(DEFAULT_STOCK_COL_VISIBILITY);
+    try {
+      localStorage.removeItem('stock_table_col_visibility');
+    } catch {}
+  }, []);
+
+  const handleHeaderContextMenu = useCallback((e: React.MouseEvent, colId?: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const menuWidth = 260;
+    const menuHeight = 440;
+    const x = Math.max(10, Math.min(e.clientX, window.innerWidth - menuWidth - 10));
+    const y = Math.max(10, Math.min(e.clientY, window.innerHeight - menuHeight - 10));
+
+    setHeaderContextMenu({
+      isOpen: true,
+      x,
+      y,
+      targetColId: colId,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!headerContextMenu.isOpen) return;
+
+    const handlePointerDown = (e: MouseEvent | TouchEvent) => {
+      if (headerContextMenuRef.current && !headerContextMenuRef.current.contains(e.target as Node)) {
+        setHeaderContextMenu((prev) => ({ ...prev, isOpen: false }));
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setHeaderContextMenu((prev) => ({ ...prev, isOpen: false }));
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [headerContextMenu.isOpen]);
+
+  const visibleColumnCount = useMemo(() => {
+    return ALL_STOCK_COLUMNS.filter((col) => colVisibility[col.id] !== false).length + 1; // +1 for filler column
+  }, [colVisibility]);
+
+  const hiddenColumnsCount = useMemo(() => {
+    return ALL_STOCK_COLUMNS.filter((col) => colVisibility[col.id] === false).length;
+  }, [colVisibility]);
+
+  const [selectedCategory, setSelectedCategory] = useState<ProductCategory | 'all'>(() => {
+    try {
+      const saved = localStorage.getItem('stock_table_category');
+      if (saved) return saved as ProductCategory | 'all';
+    } catch {}
+    return 'all';
+  });
+
+  const handleFilterCategoryChange = useCallback((cat: ProductCategory | 'all' | string) => {
+    setSelectedCategory(cat as ProductCategory | 'all');
+    try {
+      localStorage.setItem('stock_table_category', cat);
+    } catch {}
+  }, []);
+
+  const [showLowStockOnly, setShowLowStockOnly] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('stock_table_low_stock');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return false;
+  });
+
+  const handleToggleLowStockOnly = useCallback(() => {
+    setShowLowStockOnly((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('stock_table_low_stock', String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  // Batch & Expiry Filters
+  const [isBatchExpiryFilterOpen, setIsBatchExpiryFilterOpen] = useState(false);
+  const [batchFilter, setBatchFilter] = useState<string>(() => {
+    try {
+      return localStorage.getItem('stock_table_batch_filter') || '';
+    } catch {}
+    return '';
+  });
+  const debouncedBatchFilter = useDebounce(batchFilter, 200);
+
+  const handleBatchFilterChange = useCallback((val: string) => {
+    setBatchFilter(val);
+    try {
+      localStorage.setItem('stock_table_batch_filter', val);
+    } catch {}
+  }, []);
+
+  const [expiryPreset, setExpiryPreset] = useState<ExpiryPreset>(() => {
+    try {
+      const saved = localStorage.getItem('stock_table_expiry_preset');
+      if (saved) return saved as ExpiryPreset;
+    } catch {}
+    return 'all';
+  });
+
+  const handleExpiryPresetChange = useCallback((preset: ExpiryPreset) => {
+    setExpiryPreset(preset);
+    try {
+      localStorage.setItem('stock_table_expiry_preset', preset);
+    } catch {}
+  }, []);
+
+  const [expiryDateFrom, setExpiryDateFrom] = useState<string>(() => {
+    try {
+      return localStorage.getItem('stock_table_expiry_from') || '';
+    } catch {}
+    return '';
+  });
+
+  const handleExpiryDateFromChange = useCallback((val: string) => {
+    setExpiryDateFrom(val);
+    try {
+      localStorage.setItem('stock_table_expiry_from', val);
+    } catch {}
+  }, []);
+
+  const [expiryDateTo, setExpiryDateTo] = useState<string>(() => {
+    try {
+      return localStorage.getItem('stock_table_expiry_to') || '';
+    } catch {}
+    return '';
+  });
+
+  const handleExpiryDateToChange = useCallback((val: string) => {
+    setExpiryDateTo(val);
+    try {
+      localStorage.setItem('stock_table_expiry_to', val);
+    } catch {}
+  }, []);
+
+  const isBatchFilterActive = debouncedBatchFilter.trim().length > 0;
+  const isExpiryFilterActive = expiryPreset !== 'all' || Boolean(expiryDateFrom) || Boolean(expiryDateTo);
+  const isAnyBatchExpiryFilterActive = isBatchFilterActive || isExpiryFilterActive;
+
+  const handleResetBatchExpiryFilter = useCallback(() => {
+    setBatchFilter('');
+    setExpiryPreset('all');
+    setExpiryDateFrom('');
+    setExpiryDateTo('');
+    try {
+      localStorage.removeItem('stock_table_batch_filter');
+      localStorage.removeItem('stock_table_expiry_preset');
+      localStorage.removeItem('stock_table_expiry_from');
+      localStorage.removeItem('stock_table_expiry_to');
+    } catch {}
+  }, []);
+
+  const availableBatchNumbers = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of products) {
+      if (p.batchNumber && p.batchNumber.trim()) {
+        set.add(p.batchNumber.trim());
+      }
+      if (p.batches && Array.isArray(p.batches)) {
+        for (const b of p.batches) {
+          if (b.batchNumber && b.batchNumber.trim()) {
+            set.add(b.batchNumber.trim());
+          }
+        }
+      }
+    }
+    for (const pur of purchases) {
+      if (pur.items && Array.isArray(pur.items)) {
+        for (const it of pur.items) {
+          if (it.batchNumber && it.batchNumber.trim()) {
+            set.add(it.batchNumber.trim());
+          }
+        }
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [products, purchases]);
+
+  const purchasesByProduct = useMemo(() => {
+    const byId = new Map<string, { batchNumber?: string; expiryDate?: string }[]>();
+    const byCode = new Map<string, { batchNumber?: string; expiryDate?: string }[]>();
+    for (const p of purchases) {
+      if (!p.items || !Array.isArray(p.items)) continue;
+      for (const it of p.items) {
+        const b = (it.batchNumber || '').trim();
+        const e = (it.expiryDate || '').trim();
+        if (!b && !e) continue;
+        if (it.productId) {
+          if (!byId.has(it.productId)) byId.set(it.productId, []);
+          byId.get(it.productId)!.push({ batchNumber: b, expiryDate: e });
+        }
+        if (it.productCode) {
+          if (!byCode.has(it.productCode)) byCode.set(it.productCode, []);
+          byCode.get(it.productCode)!.push({ batchNumber: b, expiryDate: e });
+        }
+      }
+    }
+    return { byId, byCode };
+  }, [purchases]);
+
+  const getExpiryPresetLabel = useCallback((preset: ExpiryPreset, from?: string, to?: string) => {
+    if (preset === 'expired') return 'Expired';
+    if (preset === '30days') return '≤ 30 Days';
+    if (preset === '60days') return '≤ 60 Days';
+    if (preset === '90days') return '≤ 90 Days';
+    if (preset === '6months') return '≤ 6 Months';
+    if (preset === '1year') return '≤ 1 Year';
+    if (preset === 'custom' || from || to) {
+      if (from && to) return `${from} to ${to}`;
+      if (from) return `From ${from}`;
+      if (to) return `Until ${to}`;
+      return 'Custom Range';
+    }
+    return 'All';
+  }, []);
   const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
   const [isDeleteAllModalOpen, setIsDeleteAllModalOpen] = useState(false);
   const [selectedProductCode, setSelectedProductCode] = useState<string>('');
@@ -572,14 +1092,31 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
   const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
 
+  // Barcode Label Generator Modal State
+  const [isBarcodeLabelModalOpen, setIsBarcodeLabelModalOpen] = useState(false);
+  const [barcodeModalProducts, setBarcodeModalProducts] = useState<Product[]>([]);
+
   // Add/Edit Product Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [isFetchingScientifics, setIsFetchingScientifics] = useState(false);
   const [showDiscardConfirmModal, setShowDiscardConfirmModal] = useState(false);
 
-  // Form State
-  const [selectedSubcategory, setSelectedSubcategory] = useState<string>('all');
+  // Table subcategory filter
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('stock_table_subcategory');
+      if (saved) return saved;
+    } catch {}
+    return 'all';
+  });
+
+  const handleFilterSubcategoryChange = useCallback((sub: string) => {
+    setSelectedSubcategory(sub);
+    try {
+      localStorage.setItem('stock_table_subcategory', sub);
+    } catch {}
+  }, []);
   const [formCode, setFormCode] = useState('');
   const [formBarcode, setFormBarcode] = useState('');
   const [formName, setFormName] = useState('');
@@ -893,42 +1430,91 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         rawExpiry.toLowerCase().includes(q) ||
         formattedExp.includes(q) ||
         matchBatch;
-      return matchCat && matchSubcat && matchLow && matchSearch;
+
+      if (!matchCat || !matchSubcat || !matchLow || !matchSearch) {
+        return false;
+      }
+
+      if (isAnyBatchExpiryFilterActive) {
+        const purList = [
+          ...(purchasesByProduct.byId.get(prod.id) || []),
+          ...(purchasesByProduct.byCode.get(prod.code || '') || []),
+        ];
+        const matchBatchExpiry = matchesBatchAndExpiryFilter(
+          prod,
+          isBatchFilterActive,
+          debouncedBatchFilter,
+          isExpiryFilterActive,
+          expiryPreset,
+          expiryDateFrom,
+          expiryDateTo,
+          purList
+        );
+        if (!matchBatchExpiry) {
+          return false;
+        }
+      }
+
+      return true;
     });
-  }, [products, selectedCategory, selectedSubcategory, showLowStockOnly, debouncedSearchQuery]);
+  }, [
+    products,
+    selectedCategory,
+    selectedSubcategory,
+    showLowStockOnly,
+    debouncedSearchQuery,
+    isAnyBatchExpiryFilterActive,
+    isBatchFilterActive,
+    debouncedBatchFilter,
+    isExpiryFilterActive,
+    expiryPreset,
+    expiryDateFrom,
+    expiryDateTo,
+    purchasesByProduct,
+  ]);
 
   const sortedProducts = useMemo(() => {
     let sortableItems = [...filteredProducts];
-    if (sortConfig !== null) {
-      sortableItems.sort((a, b) => {
-        if (sortConfig.key === 'expiryDate') {
-          const rawA = a.expiryDate || a.batches?.[0]?.expiryDate || '';
-          const rawB = b.expiryDate || b.batches?.[0]?.expiryDate || '';
-          const timeA = parseExpiryDate(rawA).date?.getTime() || 0;
-          const timeB = parseExpiryDate(rawB).date?.getTime() || 0;
-          return sortConfig.direction === 'asc' ? timeA - timeB : timeB - timeA;
-        }
+    const currentSort = sortConfig || DEFAULT_STOCK_SORT;
 
-        let aValue: any = a[sortConfig.key];
-        let bValue: any = b[sortConfig.key];
-        
+    sortableItems.sort((a, b) => {
+      if (currentSort.key === 'expiryDate') {
+        const rawA = a.expiryDate || a.batches?.[0]?.expiryDate || '';
+        const rawB = b.expiryDate || b.batches?.[0]?.expiryDate || '';
+        const timeA = parseExpiryDate(rawA).date?.getTime() || 0;
+        const timeB = parseExpiryDate(rawB).date?.getTime() || 0;
+        if (timeA !== timeB) {
+          return currentSort.direction === 'asc' ? timeA - timeB : timeB - timeA;
+        }
+      } else {
+        let aValue: any = a[currentSort.key];
+        let bValue: any = b[currentSort.key];
+
         // Handle undefined or null for safe comparison
         if (aValue === undefined || aValue === null) aValue = '';
         if (bValue === undefined || bValue === null) bValue = '';
 
         if (typeof aValue === 'string' && typeof bValue === 'string') {
-          return sortConfig.direction === 'asc' ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+          const cmp = aValue.localeCompare(bValue, undefined, { sensitivity: 'base', numeric: true });
+          if (cmp !== 0) {
+            return currentSort.direction === 'asc' ? cmp : -cmp;
+          }
+        } else {
+          if (aValue < bValue) {
+            return currentSort.direction === 'asc' ? -1 : 1;
+          }
+          if (aValue > bValue) {
+            return currentSort.direction === 'asc' ? 1 : -1;
+          }
         }
-        
-        if (aValue < bValue) {
-          return sortConfig.direction === 'asc' ? -1 : 1;
-        }
-        if (aValue > bValue) {
-          return sortConfig.direction === 'asc' ? 1 : -1;
-        }
-        return 0;
-      });
-    }
+      }
+
+      // Secondary tie-breaker: always sort alphabetically A-Z by product name
+      const nameA = a.name || '';
+      const nameB = b.name || '';
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base', numeric: true });
+    });
+
     return sortableItems;
   }, [filteredProducts, sortConfig]);
 
@@ -936,6 +1522,21 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   const selectedProductsList = useMemo(() => {
     return products.filter((p) => selectedProductIds.has(p.id));
   }, [products, selectedProductIds]);
+
+  const handleOpenBarcodeLabels = useCallback(
+    (targetProducts?: Product[]) => {
+      if (targetProducts && targetProducts.length > 0) {
+        setBarcodeModalProducts(targetProducts);
+      } else if (selectedProductIds.size > 0) {
+        setBarcodeModalProducts(products.filter((p) => selectedProductIds.has(p.id)));
+      } else {
+        setBarcodeModalProducts(sortedProducts.slice(0, 100));
+      }
+      restoreWindow('stock_barcode_label_printer');
+      setIsBarcodeLabelModalOpen(true);
+    },
+    [products, selectedProductIds, sortedProducts, restoreWindow]
+  );
 
   // Pre-compute price change info per product (avoids running inside every row render)
   const priceChangeInfo = useMemo(() => {
@@ -947,13 +1548,91 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
   }, [sortedProducts]);
 
   // Virtualization for the stock table (renders only visible rows)
-  const parentRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: sortedProducts.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 44,
     overscan: 10,
   });
+
+  // Comprehensive table scroll and virtualizer top reset
+  const resetTableToTop = useCallback(() => {
+    try {
+      sessionStorage.removeItem('stock_table_scroll_top');
+    } catch {}
+    if (parentRef.current) {
+      parentRef.current.scrollTop = 0;
+      try {
+        parentRef.current.scrollTo({ top: 0, behavior: 'instant' as any });
+      } catch {}
+      try {
+        parentRef.current.dispatchEvent(new Event('scroll'));
+      } catch {}
+    }
+    try {
+      (rowVirtualizer as any).scrollOffset = 0;
+      (rowVirtualizer as any)._intendedScrollOffset = 0;
+      (rowVirtualizer as any).scrollState = null;
+      (rowVirtualizer as any).calculateRange();
+      (rowVirtualizer as any).notify(true);
+    } catch {}
+  }, [rowVirtualizer]);
+
+  useEffect(() => {
+    resetTableToTopRef.current = resetTableToTop;
+  }, [resetTableToTop]);
+
+  // When jumping to another section in the app and returning back, make sure the list of items is at its top
+  useEffect(() => {
+    resetTableToTop();
+    if (activeTab === 'stock') {
+      const raf1 = requestAnimationFrame(() => {
+        resetTableToTop();
+        const raf2 = requestAnimationFrame(() => {
+          resetTableToTop();
+        });
+        return () => cancelAnimationFrame(raf2);
+      });
+      const t1 = setTimeout(resetTableToTop, 30);
+      const t2 = setTimeout(resetTableToTop, 100);
+      const t3 = setTimeout(resetTableToTop, 250);
+      return () => {
+        cancelAnimationFrame(raf1);
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    }
+  }, [activeTab, resetTableToTop]);
+
+  // Observer to detect when the table container transitions between hidden and visible across app sections
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let prevHeight = el.clientHeight;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const height = entry.contentRect.height;
+        if (prevHeight === 0 && height > 0) {
+          // Transitioned from hidden to visible (e.g. jumped back to stock section)
+          resetTableToTop();
+        } else if (height === 0 && prevHeight > 0) {
+          // Transitioned from visible to hidden (e.g. jumped away from stock section)
+          resetTableToTop();
+        }
+        prevHeight = height;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [resetTableToTop]);
+
+  // When sorting table column or filtering, also ensure list view of items is scrolled to its top
+  useEffect(() => {
+    resetTableToTop();
+    const rafId = requestAnimationFrame(resetTableToTop);
+    return () => cancelAnimationFrame(rafId);
+  }, [sortConfig, selectedCategory, selectedSubcategory, resetTableToTop]);
 
   const rowVirtualItems = rowVirtualizer.getVirtualItems();
 
@@ -1450,6 +2129,33 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     URL.revokeObjectURL(url);
   }, [products]);
 
+  const handleExportFilteredToExcel = useCallback(() => {
+    if (sortedProducts.length === 0) {
+      addNotification(
+        'No Items to Export',
+        'No inventory items match the current filter criteria.',
+        'inventory',
+        'warning'
+      );
+      return;
+    }
+
+    const csvContent = generateStockInventoryCsv(sortedProducts);
+    const dateStr = new Date().toISOString().split('T')[0];
+    const filterTag = selectedCategory !== 'all' ? `_${selectedCategory.toLowerCase().replace(/[^a-z0-9]/g, '_')}` : '';
+    const lowStockTag = showLowStockOnly ? '_lowstock' : '';
+    const filename = `stock_inventory${filterTag}${lowStockTag}_${dateStr}.csv`;
+
+    downloadCsvFile(csvContent, filename);
+
+    addNotification(
+      'Export Complete',
+      `Exported ${sortedProducts.length} visible items matching current filters to Excel CSV.`,
+      'inventory',
+      'success'
+    );
+  }, [sortedProducts, selectedCategory, showLowStockOnly, addNotification]);
+
   return (
     <div className="flex h-full w-full overflow-hidden bg-[#f8fafc] dark:bg-slate-950 select-none">
       {/* Main Inventory Table Section */}
@@ -1467,6 +2173,24 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
+            <button
+              id="btn-stock-barcode-labels"
+              onClick={() => handleOpenBarcodeLabels()}
+              className={`text-xs border px-2.5 py-1 rounded cursor-pointer font-medium flex items-center gap-1.5 transition-colors shadow-2xs ${
+                selectedProductIds.size > 0
+                  ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 font-bold'
+                  : 'border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-200'
+              }`}
+              title="Generate and print custom barcode price labels with name, price, and barcode"
+            >
+              <ScanBarcode className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
+              <span>
+                {selectedProductIds.size > 0
+                  ? `Barcode Labels (${selectedProductIds.size})`
+                  : 'Barcode Labels'}
+              </span>
+            </button>
+
             <button
               onClick={() => {
                 if (selectedProductIds.size === 0) {
@@ -1525,6 +2249,16 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             >
               <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
               Export CSV
+            </button>
+            <button
+              type="button"
+              id="btn-stock-top-export-excel"
+              onClick={handleExportFilteredToExcel}
+              className="text-xs border border-emerald-300 dark:border-emerald-700/60 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded cursor-pointer font-medium text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+              title="Export visible/filtered inventory to Excel CSV file using current filter settings"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+              Export to Excel
             </button>
             <button
               onClick={() => {
@@ -1602,8 +2336,8 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                 <button
                   key={cat}
                   onClick={() => {
-                    setSelectedCategory(cat);
-                    setSelectedSubcategory('all');
+                    handleFilterCategoryChange(cat);
+                    handleFilterSubcategoryChange('all');
                   }}
                   className={`px-2.5 py-0.5 rounded text-[11px] font-bold uppercase transition-colors ${
                     selectedCategory === cat
@@ -1620,7 +2354,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             <div className="flex items-center gap-1">
               <select
                 value={selectedSubcategory}
-                onChange={(e) => setSelectedSubcategory(e.target.value)}
+                onChange={(e) => handleFilterSubcategoryChange(e.target.value)}
                 className={`border rounded px-2 py-0.5 text-[11px] font-medium transition-colors focus:outline-hidden focus:ring-1 focus:ring-teal-500 max-w-[170px] truncate ${
                   selectedSubcategory !== 'all'
                     ? 'border-teal-500 bg-teal-50 text-teal-900 dark:bg-teal-950 dark:text-teal-200 font-bold'
@@ -1640,7 +2374,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
               {selectedSubcategory !== 'all' && (
                 <button
                   type="button"
-                  onClick={() => setSelectedSubcategory('all')}
+                  onClick={() => handleFilterSubcategoryChange('all')}
                   className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-0.5 cursor-pointer"
                   title="Clear subcategory filter"
                 >
@@ -1650,7 +2384,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             </div>
 
             <button
-              onClick={() => setShowLowStockOnly(!showLowStockOnly)}
+              onClick={handleToggleLowStockOnly}
               className={`px-2.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${
                 showLowStockOnly
                   ? 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-300'
@@ -1659,8 +2393,264 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             >
               Low Stock Only
             </button>
+
+            <button
+              type="button"
+              id="btn-stock-batch-expiry-toggle"
+              onClick={() => setIsBatchExpiryFilterOpen(!isBatchExpiryFilterOpen)}
+              className={`px-2.5 py-0.5 rounded text-[11px] font-bold border transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                isAnyBatchExpiryFilterActive
+                  ? 'bg-teal-600 text-white border-teal-700 dark:bg-teal-700 dark:border-teal-600'
+                  : isBatchExpiryFilterOpen
+                  ? 'bg-slate-100 dark:bg-slate-800 text-teal-700 dark:text-teal-300 border-teal-500'
+                  : 'border-gray-200 text-gray-600 dark:border-slate-700 dark:text-gray-300 hover:bg-gray-50'
+              }`}
+              title="Filter inventory by specific batch numbers or expiry date ranges"
+            >
+              <Filter className={`h-3 w-3 ${isAnyBatchExpiryFilterActive ? 'text-white' : 'text-teal-600 dark:text-teal-400'}`} />
+              <span>Batch & Expiry</span>
+              {isAnyBatchExpiryFilterActive && (
+                <span className="bg-white text-teal-700 text-[10px] font-extrabold px-1 rounded-full leading-tight">
+                  {(isBatchFilterActive ? 1 : 0) + (isExpiryFilterActive ? 1 : 0)}
+                </span>
+              )}
+            </button>
+
+            {/* Sort Status & Reset to Default (Alphabetical A-Z) */}
+            <button
+              type="button"
+              id="btn-stock-sort-toggle"
+              onClick={() => {
+                if (sortConfig.key !== 'name' || sortConfig.direction !== 'asc') {
+                  resetSortToDefault();
+                } else {
+                  handleSort('name');
+                }
+              }}
+              className={`px-2 py-0.5 rounded text-[11px] font-bold border transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                sortConfig.key === 'name' && sortConfig.direction === 'asc'
+                  ? 'border-gray-200 text-gray-600 dark:border-slate-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  : 'bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700 hover:bg-teal-100'
+              }`}
+              title={
+                sortConfig.key === 'name' && sortConfig.direction === 'asc'
+                  ? 'Default view: Sorted alphabetically A-Z. Click to reverse (Z-A)'
+                  : `Sorted by ${ALL_STOCK_COLUMNS.find((c) => c.id === sortConfig.key)?.shortLabel || sortConfig.key} (${sortConfig.direction === 'asc' ? 'Ascending' : 'Descending'}). Click to reset to Default A-Z`
+              }
+            >
+              <ArrowDownAZ className="h-3 w-3 text-teal-600 dark:text-teal-400" />
+              <span>
+                {sortConfig.key === 'name'
+                  ? sortConfig.direction === 'asc'
+                    ? 'Sort: A-Z'
+                    : 'Sort: Z-A'
+                  : `Sort: ${ALL_STOCK_COLUMNS.find((c) => c.id === sortConfig.key)?.shortLabel || sortConfig.key} ${sortConfig.direction === 'asc' ? '↑' : '↓'}`}
+              </span>
+              {!(sortConfig.key === 'name' && sortConfig.direction === 'asc') && (
+                <RotateCcw className="h-2.5 w-2.5 text-teal-600 dark:text-teal-400 opacity-70 hover:opacity-100" />
+              )}
+            </button>
+
+            {/* Column Visibility Trigger Button */}
+            <button
+              type="button"
+              id="btn-stock-columns-toggle"
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setHeaderContextMenu({
+                  isOpen: true,
+                  x: Math.max(10, Math.min(rect.left, window.innerWidth - 270)),
+                  y: Math.min(rect.bottom + 4, window.innerHeight - 450),
+                });
+              }}
+              className={`px-2 py-0.5 rounded text-[11px] font-bold border transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                hiddenColumnsCount > 0
+                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700'
+                  : 'border-gray-200 text-gray-600 dark:border-slate-700 dark:text-gray-300 hover:bg-gray-50'
+              }`}
+              title="Configure visible columns (or right-click any column header)"
+            >
+              <Columns3 className="h-3 w-3 text-teal-600 dark:text-teal-400" />
+              <span>Columns</span>
+              {hiddenColumnsCount > 0 && (
+                <span className="bg-amber-200 text-amber-800 dark:bg-amber-800 dark:text-amber-100 text-[10px] font-extrabold px-1 rounded-full leading-tight">
+                  {ALL_STOCK_COLUMNS.length - hiddenColumnsCount}/{ALL_STOCK_COLUMNS.length}
+                </span>
+              )}
+            </button>
+
+            {/* Export to Excel (Filtered / Visible Inventory) Button */}
+            <button
+              type="button"
+              id="btn-stock-export-excel"
+              onClick={handleExportFilteredToExcel}
+              className="px-2.5 py-0.5 rounded text-[11px] font-bold border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+              title="Export visible/filtered inventory to Excel CSV file using current filter settings"
+            >
+              <FileSpreadsheet className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+              <span>Export to Excel</span>
+              <span className="text-[10px] bg-emerald-200 dark:bg-emerald-800/80 text-emerald-900 dark:text-emerald-100 font-extrabold px-1.5 rounded-full leading-tight">
+                {sortedProducts.length}
+              </span>
+            </button>
           </div>
         </div>
+
+        {/* Batch & Expiry Filter Panel */}
+        {(isBatchExpiryFilterOpen || isAnyBatchExpiryFilterActive) && (
+          <div className="px-3 py-2 bg-slate-50 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 text-xs shrink-0 flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Batch Filter Input with Datalist */}
+              <div className="flex items-center gap-1.5">
+                <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1 text-[11px]">
+                  <Tag className="h-3 w-3 text-teal-600 dark:text-teal-400" />
+                  Batch:
+                </span>
+                <div className="relative">
+                  <input
+                    type="text"
+                    id="input-stock-batch-filter"
+                    list="stock-available-batches"
+                    value={batchFilter}
+                    onChange={(e) => handleBatchFilterChange(e.target.value)}
+                    placeholder="Search batch #..."
+                    className="border border-slate-300 dark:border-slate-700 rounded pl-2 pr-6 py-0.5 text-xs w-36 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                  />
+                  <datalist id="stock-available-batches">
+                    {availableBatchNumbers.map((bn) => (
+                      <option key={bn} value={bn} />
+                    ))}
+                  </datalist>
+                  {batchFilter && (
+                    <button
+                      type="button"
+                      onClick={() => handleBatchFilterChange('')}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 cursor-pointer"
+                      title="Clear batch filter"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Expiry Presets Group */}
+              <div className="flex items-center gap-1">
+                <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1 text-[11px] mr-0.5">
+                  <Calendar className="h-3 w-3 text-teal-600 dark:text-teal-400" />
+                  Expiry:
+                </span>
+                {(
+                  [
+                    { id: 'all', label: 'All' },
+                    { id: 'expired', label: 'Expired', badgeColor: 'text-red-600 dark:text-red-400' },
+                    { id: '30days', label: '≤ 30d', badgeColor: 'text-amber-600 dark:text-amber-400' },
+                    { id: '60days', label: '≤ 60d' },
+                    { id: '90days', label: '≤ 90d' },
+                    { id: '6months', label: '≤ 6m' },
+                    { id: '1year', label: '≤ 1y' },
+                  ] as { id: ExpiryPreset; label: string; badgeColor?: string }[]
+                ).map((preset) => {
+                  const isActive = expiryPreset === preset.id && !expiryDateFrom && !expiryDateTo;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => {
+                        handleExpiryPresetChange(preset.id);
+                        if (preset.id !== 'custom') {
+                          handleExpiryDateFromChange('');
+                          handleExpiryDateToChange('');
+                        }
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors cursor-pointer border ${
+                        isActive
+                          ? 'bg-teal-600 text-white border-teal-600 shadow-2xs'
+                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                      }`}
+                    >
+                      <span className={isActive ? 'text-white' : preset.badgeColor || ''}>
+                        {preset.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom Date Range */}
+              <div className="flex items-center gap-1 text-[11px]">
+                <span className="text-slate-500 dark:text-slate-400 font-medium">From:</span>
+                <input
+                  type="date"
+                  value={expiryDateFrom}
+                  onChange={(e) => {
+                    handleExpiryDateFromChange(e.target.value);
+                    handleExpiryPresetChange('custom');
+                  }}
+                  className={`border rounded px-1.5 py-0.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-hidden focus:ring-1 focus:ring-teal-500 ${
+                    expiryDateFrom ? 'border-teal-500 font-bold' : 'border-slate-300 dark:border-slate-700'
+                  }`}
+                  title="Expiry start date"
+                />
+                <span className="text-slate-500 dark:text-slate-400 font-medium">To:</span>
+                <input
+                  type="date"
+                  value={expiryDateTo}
+                  onChange={(e) => {
+                    handleExpiryDateToChange(e.target.value);
+                    handleExpiryPresetChange('custom');
+                  }}
+                  className={`border rounded px-1.5 py-0.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-hidden focus:ring-1 focus:ring-teal-500 ${
+                    expiryDateTo ? 'border-teal-500 font-bold' : 'border-slate-300 dark:border-slate-700'
+                  }`}
+                  title="Expiry end date"
+                />
+                {(expiryDateFrom || expiryDateTo) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleExpiryDateFromChange('');
+                      handleExpiryDateToChange('');
+                      handleExpiryPresetChange('all');
+                    }}
+                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 cursor-pointer"
+                    title="Clear date range"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Active summary & reset button */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                {isAnyBatchExpiryFilterActive
+                  ? `${filteredProducts.length} items match`
+                  : `${availableBatchNumbers.length} unique batches`}
+              </span>
+              {isAnyBatchExpiryFilterActive && (
+                <button
+                  type="button"
+                  onClick={handleResetBatchExpiryFilter}
+                  className="text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Reset batch and expiry filters"
+                >
+                  <X className="h-3 w-3" />
+                  <span>Reset Filter</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsBatchExpiryFilterOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 cursor-pointer ml-1"
+                title="Collapse filter bar"
+              >
+                <ChevronUp className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Bulk Selection Notification Bar */}
         {selectedProductIds.size > 0 && (
@@ -1684,6 +2674,17 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                id="btn-bulk-print-barcodes"
+                onClick={() => handleOpenBarcodeLabels(selectedProductsList)}
+                className="bg-white dark:bg-slate-800 hover:bg-teal-50 dark:hover:bg-slate-700 text-teal-700 dark:text-teal-300 border border-teal-300 dark:border-teal-700 px-3 py-1 rounded font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
+                title="Generate and print barcode labels for all selected inventory items"
+              >
+                <ScanBarcode className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
+                <span>Print Labels ({selectedProductIds.size})</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setIsBulkEditModalOpen(true)}
@@ -1714,88 +2715,160 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
           </div>
         )}
 
-        {/* High-Density Stock Table - Purchase View Style */}
-        <div className="p-3 flex-1 flex flex-col min-h-0 overflow-hidden">
-          <div className="flex-1 w-full overflow-hidden border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900/40 shadow-sm flex flex-col">
+        {/* High-Density Stock Table - Expanded to fit container div */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex-1 w-full overflow-hidden bg-white dark:bg-slate-900/40 flex flex-col">
             <div ref={parentRef} className="flex-1 w-full overflow-auto">
-              <table className="w-max min-w-full text-left border-collapse table-fixed">
+              <table className="w-full min-w-full text-left border-collapse table-fixed">
                 <colgroup>
-                  <col style={{ width: colWidths.select }} />
-                  <col style={{ width: colWidths.code }} />
-                  <col style={{ width: colWidths.barcode }} />
-                  <col style={{ width: colWidths.name }} />
-                  <col style={{ width: colWidths.presentation }} />
-                  <col style={{ width: colWidths.category }} />
-                  <col style={{ width: colWidths.priceUSD }} />
-                  <col style={{ width: colWidths.priceLBP }} />
-                  <col style={{ width: colWidths.stockQuantity }} />
-                  <col style={{ width: colWidths.expiryDate }} />
-                  <col style={{ width: colWidths.agent }} />
-                  <col style={{ width: colWidths.actions }} />
+                  {colVisibility.select !== false && <col style={{ width: colWidths.select }} />}
+                  {colVisibility.code !== false && <col style={{ width: colWidths.code }} />}
+                  {colVisibility.barcode !== false && <col style={{ width: colWidths.barcode }} />}
+                  {colVisibility.name !== false && <col style={{ width: colWidths.name }} />}
+                  {colVisibility.presentation !== false && <col style={{ width: colWidths.presentation }} />}
+                  {colVisibility.category !== false && <col style={{ width: colWidths.category }} />}
+                  {colVisibility.priceUSD !== false && <col style={{ width: colWidths.priceUSD }} />}
+                  {colVisibility.priceLBP !== false && <col style={{ width: colWidths.priceLBP }} />}
+                  {colVisibility.stockQuantity !== false && <col style={{ width: colWidths.stockQuantity }} />}
+                  {colVisibility.expiryDate !== false && <col style={{ width: colWidths.expiryDate }} />}
+                  {colVisibility.agent !== false && <col style={{ width: colWidths.agent }} />}
+                  {colVisibility.actions !== false && <col style={{ width: colWidths.actions }} />}
+                  <col />
                 </colgroup>
-                <thead className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 shadow-2xs">
+                <thead
+                  onContextMenu={(e) => handleHeaderContextMenu(e)}
+                  className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 shadow-2xs"
+                >
                   <tr>
-                    <th className="p-1 pb-1.5 px-2 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap relative group border-r border-slate-200 dark:border-slate-800 select-none">
-                      <input
-                        type="checkbox"
-                        title={allFilteredSelected ? 'Deselect all in view' : 'Select all in view'}
-                        checked={allFilteredSelected}
-                        ref={headerCheckboxRef}
-                        onChange={handleToggleSelectAll}
-                        className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer align-middle"
-                      />
-                      <div
-                        onMouseDown={(e) => handleColResizeStart(e, 'select')}
-                        className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-500/80 transition-colors z-10"
-                        title="Drag to resize"
-                      />
-                    </th>
-                    {[
-                      { id: 'code', label: 'Code', sortKey: 'code' as SortKey },
-                      { id: 'barcode', label: 'Barcode', sortKey: 'barcode' as SortKey },
-                      { id: 'name', label: 'Name', sortKey: 'name' as SortKey },
-                      { id: 'presentation', label: 'Presentation', sortKey: 'presentation' as SortKey, elemId: 'th-stock-presentation' },
-                      { id: 'category', label: 'Category', sortKey: 'category' as SortKey },
-                      { id: 'priceUSD', label: 'Price ($)', sortKey: 'priceUSD' as SortKey, align: 'right' },
-                      { id: 'priceLBP', label: 'Price (LBP)', align: 'right' },
-                      { id: 'stockQuantity', label: 'Qty', sortKey: 'stockQuantity' as SortKey, align: 'center' },
-                      { id: 'expiryDate', label: 'Expiry', sortKey: 'expiryDate' as SortKey },
-                      { id: 'agent', label: 'Agent', sortKey: 'agent' as SortKey },
-                    ].map((col) => (
+                    {colVisibility.select !== false && (
+                      <th
+                        onContextMenu={(e) => handleHeaderContextMenu(e, 'select')}
+                        className="p-1 pb-1.5 px-2 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap relative group border-r border-slate-200 dark:border-slate-800 select-none"
+                      >
+                        <input
+                          type="checkbox"
+                          title={allFilteredSelected ? 'Deselect all in view' : 'Select all in view'}
+                          checked={allFilteredSelected}
+                          ref={headerCheckboxRef}
+                          onChange={handleToggleSelectAll}
+                          className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer align-middle"
+                        />
+                        <div
+                          onMouseDown={(e) => handleColResizeStart(e, 'select')}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          className="absolute top-0 -right-1.5 w-3 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-600 transition-colors z-20"
+                          title="Drag to resize column"
+                        />
+                      </th>
+                    )}
+                    {STOCK_DATA_COLUMNS.filter((col) => colVisibility[col.id] !== false).map((col) => (
                       <th
                         key={col.id}
                         id={col.elemId}
-                        className={`p-1 pb-1.5 px-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide whitespace-nowrap relative group border-r border-slate-200 dark:border-slate-800 select-none ${
+                        onContextMenu={(e) => handleHeaderContextMenu(e, col.id)}
+                        className={`p-1 pb-1.5 px-2 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap relative group border-r border-slate-200 dark:border-slate-800 select-none ${
+                          col.id === 'expiryDate' && isAnyBatchExpiryFilterActive
+                            ? 'bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-200'
+                            : 'text-slate-500 dark:text-slate-400'
+                        } ${
                           col.sortKey ? 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors' : ''
                         } ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'}`}
-                        onClick={col.sortKey ? () => handleSort(col.sortKey!) : undefined}
+                        onClick={
+                          col.sortKey
+                            ? (e) => {
+                                if (isResizingRef.current || hasDraggedRef.current || justFinishedResizeRef.current) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  return;
+                                }
+                                handleSort(col.sortKey!);
+                              }
+                            : undefined
+                        }
                       >
                         <div className={`flex items-center gap-1 ${col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : 'justify-start'}`}>
-                          {col.align === 'right' && col.sortKey && <ArrowUpDown className="h-2.5 w-2.5 shrink-0 opacity-60" />}
+                          {col.align === 'right' && col.sortKey && (
+                            sortConfig.key === col.sortKey ? (
+                              sortConfig.direction === 'asc' ? (
+                                <ArrowUp className="h-2.5 w-2.5 shrink-0 text-teal-600 dark:text-teal-400 font-bold" />
+                              ) : (
+                                <ArrowDown className="h-2.5 w-2.5 shrink-0 text-teal-600 dark:text-teal-400 font-bold" />
+                              )
+                            ) : (
+                              <ArrowUpDown className="h-2.5 w-2.5 shrink-0 opacity-40 hover:opacity-80" />
+                            )
+                          )}
                           <span className="truncate">{col.label}</span>
-                          {col.align !== 'right' && col.sortKey && <ArrowUpDown className="h-2.5 w-2.5 shrink-0 opacity-60" />}
+                          {col.id === 'expiryDate' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setIsBatchExpiryFilterOpen((prev) => !prev);
+                              }}
+                              className={`p-0.5 rounded cursor-pointer transition-colors ml-0.5 ${
+                                isAnyBatchExpiryFilterActive
+                                  ? 'text-teal-600 dark:text-teal-300 hover:text-teal-800'
+                                  : 'text-slate-400 hover:text-teal-600 dark:hover:text-teal-400'
+                              }`}
+                              title={isAnyBatchExpiryFilterActive ? 'Batch/Expiry filter active - click to edit' : 'Filter by batch number or expiry date'}
+                            >
+                              <Filter className={`h-2.5 w-2.5 ${isAnyBatchExpiryFilterActive ? 'fill-current' : ''}`} />
+                            </button>
+                          )}
+                          {col.align !== 'right' && col.sortKey && (
+                            sortConfig.key === col.sortKey ? (
+                              sortConfig.direction === 'asc' ? (
+                                <ArrowUp className="h-2.5 w-2.5 shrink-0 text-teal-600 dark:text-teal-400 font-bold" />
+                              ) : (
+                                <ArrowDown className="h-2.5 w-2.5 shrink-0 text-teal-600 dark:text-teal-400 font-bold" />
+                              )
+                            ) : (
+                              <ArrowUpDown className="h-2.5 w-2.5 shrink-0 opacity-40 hover:opacity-80" />
+                            )
+                          )}
                         </div>
                         <div
                           onMouseDown={(e) => handleColResizeStart(e, col.id)}
-                          className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-500/80 transition-colors z-10"
-                          title="Drag to resize"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          className="absolute top-0 -right-1.5 w-3 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-600 transition-colors z-20"
+                          title="Drag to resize column"
                         />
                       </th>
                     ))}
-                    <th className="p-1 pb-1.5 px-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide whitespace-nowrap text-right relative group select-none">
-                      <span className="truncate">Actions</span>
-                      <div
-                        onMouseDown={(e) => handleColResizeStart(e, 'actions')}
-                        className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-500/80 transition-colors z-10"
-                        title="Drag to resize"
-                      />
-                    </th>
+                    {colVisibility.actions !== false && (
+                      <th
+                        onContextMenu={(e) => handleHeaderContextMenu(e, 'actions')}
+                        className="p-1 pb-1.5 px-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide whitespace-nowrap text-right relative group border-r border-slate-200 dark:border-slate-800 select-none"
+                      >
+                        <span className="truncate">Actions</span>
+                        <div
+                          onMouseDown={(e) => handleColResizeStart(e, 'actions')}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          className="absolute top-0 -right-1.5 w-3 h-full cursor-col-resize hover:bg-teal-500/50 active:bg-teal-600 transition-colors z-20"
+                          title="Drag to resize column"
+                        />
+                      </th>
+                    )}
+                    <th
+                      onContextMenu={(e) => handleHeaderContextMenu(e)}
+                      className="p-0 border-b border-slate-200 dark:border-slate-800"
+                    />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {sortedProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-12 text-center text-gray-400 text-xs">
+                  <td colSpan={visibleColumnCount} className="py-12 text-center text-gray-400 text-xs">
                     No items found matching the current criteria.
                   </td>
                 </tr>
@@ -1803,7 +2876,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                 <>
                   {rowVirtualItems.length > 0 && rowVirtualItems[0].start > 0 && (
                     <tr>
-                      <td style={{ height: `${rowVirtualItems[0].start}px`, padding: 0, border: 'none' }} colSpan={12} />
+                      <td style={{ height: `${rowVirtualItems[0].start}px`, padding: 0, border: 'none' }} colSpan={visibleColumnCount} />
                     </tr>
                   )}
                   {rowVirtualItems.map((virtualRow) => {
@@ -1816,7 +2889,12 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                         dataIndex={virtualRow.index}
                         prod={prod}
                         purchases={purchases}
+                        activeBatchFilter={debouncedBatchFilter}
+                        activeExpiryPreset={expiryPreset}
+                        activeExpiryFrom={expiryDateFrom}
+                        activeExpiryTo={expiryDateTo}
                         index={virtualRow.index}
+                        colVisibility={colVisibility}
                         isSelected={selectedStockProduct?.id === prod.id}
                         isRowSelected={selectedProductIds.has(prod.id)}
                         changeUSD={change?.usd}
@@ -1836,6 +2914,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                         }}
                         onViewScientific={onViewScientific}
                         onEdit={openEditModal}
+                        onPrintBarcode={(prod) => handleOpenBarcodeLabels([prod])}
                         onFilterSubcategory={(subcat) => setSelectedSubcategory(subcat)}
                       />
                     );
@@ -1849,7 +2928,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
                           padding: 0,
                           border: 'none',
                         }}
-                        colSpan={12}
+                        colSpan={visibleColumnCount}
                       />
                     </tr>
                   )}
@@ -1861,6 +2940,107 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
       </div>
     </div>
   </div>
+
+      {/* Floating Context Menu for Column Visibility */}
+      {headerContextMenu.isOpen && (
+        <div
+          ref={headerContextMenuRef}
+          style={{ top: headerContextMenu.y, left: headerContextMenu.x }}
+          className="fixed z-50 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden text-xs select-none animate-in fade-in zoom-in-95 duration-100"
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-100">
+              <Columns3 className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
+              <span>Stock Columns</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                {ALL_STOCK_COLUMNS.length - hiddenColumnsCount}/{ALL_STOCK_COLUMNS.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => setHeaderContextMenu((prev) => ({ ...prev, isOpen: false }))}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 rounded cursor-pointer transition-colors"
+                title="Close menu (Esc)"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50/50 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800 text-[11px]">
+            <button
+              type="button"
+              onClick={showAllColumns}
+              className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:text-teal-800 dark:hover:text-teal-300 font-semibold cursor-pointer transition-colors"
+              title="Make all columns visible"
+            >
+              <Eye className="h-3 w-3" />
+              <span>Show All</span>
+            </button>
+            <button
+              type="button"
+              onClick={resetColumnsDefault}
+              className="flex items-center gap-1 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer transition-colors"
+              title="Reset column visibility to default"
+            >
+              <RotateCcw className="h-3 w-3" />
+              <span>Reset</span>
+            </button>
+          </div>
+
+          {/* Column Toggle Checklist */}
+          <div className="max-h-72 overflow-y-auto p-1.5 space-y-0.5">
+            {ALL_STOCK_COLUMNS.map((col) => {
+              const isVisible = colVisibility[col.id] !== false;
+              const isLastVisible = isVisible && ALL_STOCK_COLUMNS.filter((c) => colVisibility[c.id] !== false).length <= 1;
+
+              return (
+                <label
+                  key={col.id}
+                  className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg transition-colors ${
+                    isLastVisible
+                      ? 'opacity-60 cursor-not-allowed bg-slate-50 dark:bg-slate-800/30'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer'
+                  }`}
+                  title={isLastVisible ? 'At least one column must remain visible' : undefined}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isVisible}
+                    disabled={isLastVisible}
+                    onChange={() => toggleColumnVisibility(col.id)}
+                    className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer accent-teal-600 disabled:cursor-not-allowed"
+                  />
+                  <span
+                    className={`flex-1 truncate ${
+                      isVisible
+                        ? 'font-medium text-slate-800 dark:text-slate-200'
+                        : 'text-slate-400 dark:text-slate-500 line-through'
+                    }`}
+                  >
+                    {col.label}
+                  </span>
+                  {isVisible ? (
+                    <span className="text-[10px] text-teal-600 dark:text-teal-400 font-semibold uppercase">ON</span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase">OFF</span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Footer tip */}
+          <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-400 dark:text-slate-500 text-center">
+            Right-click any table header anytime
+          </div>
+        </div>
+      )}
 
       {/* Price Updater Modal */}
       {isPriceModalOpen && (
@@ -3387,6 +4567,15 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
           onSuccess={() => {
             handleClearSelection();
           }}
+        />
+      )}
+
+      {/* Barcode Label Generator Studio Modal */}
+      {isBarcodeLabelModalOpen && (
+        <BarcodeLabelGeneratorModal
+          isOpen={isBarcodeLabelModalOpen}
+          onClose={() => setIsBarcodeLabelModalOpen(false)}
+          initialProducts={barcodeModalProducts}
         />
       )}
 

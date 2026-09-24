@@ -127,13 +127,29 @@ export const TopRibbon: React.FC = () => {
             )}
           </button>
 
-          {/* Dark Mode Toggle */}
+          {/* Dark Mode Theme Toggle */}
           <button
+            type="button"
             onClick={toggleDarkMode}
-            className="rounded p-1.5 text-teal-100 hover:bg-teal-600 hover:text-white transition-colors"
-            title={settings.darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            aria-label={settings.darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            title={settings.darkMode ? 'Theme: Dark Mode (Click to switch to Light Mode)' : 'Theme: Light Mode (Click to switch to Dark Mode)'}
+            className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold transition-all cursor-pointer select-none ${
+              settings.darkMode
+                ? 'bg-teal-900/80 text-amber-300 ring-1 ring-amber-400/40 hover:bg-teal-900 shadow-2xs'
+                : 'bg-teal-800/60 text-teal-100 hover:bg-teal-600 hover:text-white'
+            }`}
           >
-            {settings.darkMode ? <Sun className="h-4 w-4 text-amber-300" /> : <Moon className="h-4 w-4" />}
+            {settings.darkMode ? (
+              <>
+                <Sun className="h-4 w-4 text-amber-300" />
+                <span className="hidden md:inline text-[11px] font-bold text-amber-200">Dark</span>
+              </>
+            ) : (
+              <>
+                <Moon className="h-4 w-4" />
+                <span className="hidden md:inline text-[11px] font-bold">Light</span>
+              </>
+            )}
           </button>
 
           {/* User Profile Badge */}

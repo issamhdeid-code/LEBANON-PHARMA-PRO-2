@@ -128,6 +128,7 @@ export interface SaleTransaction {
     isPiece?: boolean;
     selectedBatchNumber?: string;
     selectedExpiryDate?: string;
+    batches?: { batchNumber?: string; expiryDate?: string; quantity: number }[];
   }[];
   totalUSD: number;
   totalLBP: number;
@@ -234,6 +235,12 @@ export interface PharmacySettings {
   backupLastSuccess?: string;
   backupLastStatus?: 'success' | 'failed';
   backupLastSummary?: string;
+  localBackupEnabled?: boolean;
+  localBackupSchedule?: 'daily' | 'weekly' | 'manual';
+  localBackupRetentionCount?: number;
+  localBackupLastSuccess?: string;
+  localBackupLastStatus?: 'success' | 'failed';
+  localBackupLastSummary?: string;
   layoutStyle: 'standard' | 'compact' | 'touch';
   enableLowStockAlerts?: boolean;
   lowStockThreshold: number;

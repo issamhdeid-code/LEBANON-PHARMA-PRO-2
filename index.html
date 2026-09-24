@@ -34,6 +34,12 @@
             e.preventDefault();
           }
         }, true);
+        try {
+          var savedSettings = localStorage.getItem('pharmalebanon_settings_v1');
+          if (savedSettings && JSON.parse(savedSettings).darkMode) {
+            document.documentElement.classList.add('dark');
+          }
+        } catch (e) {}
       })();
     </script>
     <meta name="description" content="A high-performance pharmacy management solution with real-time sync, dual-currency POS, and intelligent inventory tracking." />

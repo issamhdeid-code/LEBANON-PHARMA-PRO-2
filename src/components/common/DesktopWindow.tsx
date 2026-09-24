@@ -618,13 +618,6 @@ export const DesktopWindow: React.FC<DesktopWindowProps> = ({
                 title="Resize height"
               />
 
-              {/* Top-Right Corner Handle */}
-              <div
-                onPointerDown={(e) => handleResizeStart(e, 'ne')}
-                className="absolute top-0 right-0 w-7 h-7 cursor-ne-resize z-30 touch-none select-none hover:bg-teal-500/10 active:bg-teal-500/20 rounded-tr-xl transition-colors"
-                title="Drag to resize"
-              />
-
               {/* Top-Left Corner Handle */}
               <div
                 onPointerDown={(e) => handleResizeStart(e, 'nw')}
