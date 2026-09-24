@@ -188,6 +188,8 @@ export const WindowProvider: React.FC<{children: ReactNode}> = ({ children }) =>
   const updateWindowPosition = useCallback((id: string, x: number, y: number) => {
     setWindows(prev => {
       if (!prev[id]) return prev;
+      const current = prev[id].position;
+      if (current && current.x === x && current.y === y) return prev;
       return { ...prev, [id]: { ...prev[id], position: { x, y } } };
     });
   }, []);
@@ -195,6 +197,8 @@ export const WindowProvider: React.FC<{children: ReactNode}> = ({ children }) =>
   const updateWindowSize = useCallback((id: string, width: number, height: number) => {
     setWindows(prev => {
       if (!prev[id]) return prev;
+      const current = prev[id].size;
+      if (current && current.width === width && current.height === height) return prev;
       return { ...prev, [id]: { ...prev[id], size: { width, height } } };
     });
   }, []);
@@ -202,6 +206,8 @@ export const WindowProvider: React.FC<{children: ReactNode}> = ({ children }) =>
   const updatePillPosition = useCallback((id: string, x: number, y: number) => {
     setWindows(prev => {
       if (!prev[id]) return prev;
+      const current = prev[id].pillPosition;
+      if (current && current.x === x && current.y === y) return prev;
       return { ...prev, [id]: { ...prev[id], pillPosition: { x, y } } };
     });
   }, []);

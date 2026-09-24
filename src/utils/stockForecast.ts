@@ -45,6 +45,15 @@ export function calculateStockForecast(
   // Pre-aggregate product sales to optimize performance across large transaction histories
   const salesMap = new Map<string, { sold30d: number; sold90d: number }>();
 
+  // Lookup of pieces-per-box keyed by product id (avoids O(sale items × products)
+  // repeated linear scans for piece conversion inside the per-item loop)
+  const piecesPerBoxByProduct = new Map<string, number>();
+  for (const product of products) {
+    if (product.piecesPerBox && product.piecesPerBox > 1) {
+      piecesPerBoxByProduct.set(product.id, product.piecesPerBox);
+    }
+  }
+
   for (const sale of sales) {
     if (sale.isUnreal) continue; // Exclude fictitious/unreal invoices
     const saleTime = sale.timestamp || new Date(sale.date).getTime();
@@ -58,8 +67,7 @@ export function calculateStockForecast(
       let qtyBoxes = item.quantity;
       if (item.isPiece) {
         // Pieces sold: convert to box fraction if piecesPerBox > 1
-        const prod = products.find((p) => p.id === item.productId);
-        const pieces = prod?.piecesPerBox && prod.piecesPerBox > 1 ? prod.piecesPerBox : 1;
+        const pieces = piecesPerBoxByProduct.get(item.productId) || 1;
         qtyBoxes = item.quantity / pieces;
       }
 

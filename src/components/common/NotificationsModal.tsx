@@ -1,6 +1,6 @@
 import React from 'react';
 import { Bell, X, Check, Trash2, AlertTriangle, Info, CheckCircle2, ShieldAlert } from 'lucide-react';
-import { usePharmacy } from '../../context/PharmacyContext';
+import { usePharmacyUi } from '../../context/PharmacyContext';
 import { AppNotification } from '../../types/pharmacy';
 import { DesktopWindow } from './DesktopWindow';
 import { formatTime } from '../../utils/dateUtils';
@@ -10,7 +10,7 @@ interface NotificationsModalProps {
 }
 
 export const NotificationsModal: React.FC<NotificationsModalProps> = ({ onClose }) => {
-  const { notifications, dismissNotification, markAllNotificationsRead } = usePharmacy();
+  const { notifications, dismissNotification, markAllNotificationsRead } = usePharmacyUi();
 
   const getIcon = (type: AppNotification['type'], severity: AppNotification['severity']) => {
     if (severity === 'warning' || severity === 'error') {

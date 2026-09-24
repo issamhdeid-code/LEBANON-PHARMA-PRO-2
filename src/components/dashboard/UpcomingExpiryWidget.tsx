@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import {
   Calendar,
   AlertOctagon,
@@ -111,11 +111,14 @@ export const UpcomingExpiryWidget: React.FC<UpcomingExpiryWidgetProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
 
   // Parse all expiring items across products and batch arrays
+  // Deferred products keep this full-catalog parse from blocking the main thread
+  // during bursts of product/sales changes while the dashboard is open.
+  const deferredProducts = useDeferredValue(products);
   const allExpiringItems = useMemo(() => {
     const items: ExpiringItem[] = [];
     const today = new Date();
 
-    products.forEach((prod) => {
+    deferredProducts.forEach((prod) => {
       // If product has structured batches array with entries
       if (prod.batches && prod.batches.length > 0) {
         prod.batches.forEach((b) => {
@@ -179,7 +182,7 @@ export const UpcomingExpiryWidget: React.FC<UpcomingExpiryWidgetProps> = ({
 
     // Sort by days remaining ascending (earliest expiring / expired first)
     return items.sort((a, b) => a.daysRemaining - b.daysRemaining);
-  }, [products, exchangeRate]);
+  }, [deferredProducts, exchangeRate]);
 
   // Distinct list of agents for dropdown filter
   const uniqueAgents = useMemo(() => {

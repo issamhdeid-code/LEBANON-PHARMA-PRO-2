@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import {
   TrendingDown,
   AlertTriangle,
@@ -51,9 +51,13 @@ export const LowStockForecastWidget: React.FC<LowStockForecastWidgetProps> = ({
   const [isOrderPreparationOpen, setIsOrderPreparationOpen] = useState<boolean>(false);
 
   // Compute forecast with memoization
+  // Deferred values keep the (expensive) forecast from blocking the main thread during
+  // bursts of product/sales changes (e.g. live sync while the dashboard is open).
+  const deferredProducts = useDeferredValue(products);
+  const deferredSales = useDeferredValue(sales);
   const forecast = useMemo(() => {
-    return calculateStockForecast(products, sales, exchangeRate, targetDaysBuffer);
-  }, [products, sales, exchangeRate, targetDaysBuffer]);
+    return calculateStockForecast(deferredProducts, deferredSales, exchangeRate, targetDaysBuffer);
+  }, [deferredProducts, deferredSales, exchangeRate, targetDaysBuffer]);
 
   // Filtered forecast items
   const filteredItems = useMemo(() => {

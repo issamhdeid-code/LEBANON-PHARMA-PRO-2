@@ -330,6 +330,62 @@ interface PharmacyContextType {
 
 const PharmacyContext = createContext<PharmacyContextType | undefined>(undefined);
 
+// --- Performance split (F6) -------------------------------------------------
+// The monolithic PharmacyContext re-renders every consumer on ANY state change.
+// These two granular contexts let UI-only consumers (ribbon, notifications, logs)
+// subscribe without re-rendering on catalog/POS data churn, and vice-versa.
+// PharmacyContext remains as the combined facade — existing call sites are unchanged.
+
+/** Business/catalog/POS data only (products, sales, purchases, customers, …). */
+type PharmacyDataContextType = Pick<
+  PharmacyContextType,
+  | 'exchangeRate' | 'setExchangeRate' | 'toLBP' | 'toUSD' | 'formatLBP' | 'formatUSD'
+  | 'products' | 'addProduct' | 'updateProduct' | 'bulkUpdateProducts' | 'bulkDeleteProducts'
+  | 'deleteProduct' | 'deleteAllProducts' | 'updateDrugPriceByCode' | 'clearPriceChangeIndicators'
+  | 'importProductsFromCSV' | 'searchScientificDataOnline' | 'enrichProductWithOnlineScientifics'
+  | 'enrichAllProductsOnline' | 'isSearchingScientifics' | 'standardizeAllScientifics'
+  | 'sales' | 'recordSale' | 'updateSale' | 'deleteSale'
+  | 'purchases' | 'purchaseReturns' | 'supplierPayments' | 'recordSupplierPayment'
+  | 'updateSupplierPayment' | 'deleteSupplierPayment' | 'recordPurchase' | 'updatePurchase'
+  | 'deletePurchase' | 'recordPurchaseReturn' | 'deletePurchaseReturn'
+  | 'expenses' | 'recordExpense' | 'updateExpense' | 'deleteExpense'
+  | 'suppliers' | 'addSupplier' | 'bulkAddSuppliers' | 'updateSupplier' | 'deleteSupplier'
+  | 'customers' | 'customerPayments' | 'saleReturns' | 'recordCustomerPayment'
+  | 'updateCustomerPayment' | 'deleteCustomerPayment' | 'recordSaleReturn' | 'deleteSaleReturn'
+  | 'addCustomer' | 'updateCustomer'
+>;
+
+/** UI / session / settings / notifications / logs state (no business data). */
+type PharmacyUiContextType = Pick<
+  PharmacyContextType,
+  | 'currentUser' | 'login' | 'logout' | 'users' | 'addUser' | 'updateUser' | 'deleteUser'
+  | 'activeTab' | 'setActiveTab'
+  | 'settings' | 'updateSettings' | 'toggleDarkMode'
+  | 'notifications' | 'unreadCount' | 'dismissNotification' | 'markAllNotificationsRead' | 'addNotification'
+  | 'syncStatus' | 'reconnectSync' | 'activeSessions'
+  | 'logs' | 'addLog' | 'deleteLog' | 'clearLogs' | 'exportLogs'
+  | 'exportBackup' | 'restoreBackup' | 'resetDemoData' | 'clearAllData'
+>;
+
+const PharmacyDataContext = createContext<PharmacyDataContextType | undefined>(undefined);
+const PharmacyUiContext = createContext<PharmacyUiContextType | undefined>(undefined);
+
+export const usePharmacyData = () => {
+  const context = useContext(PharmacyDataContext);
+  if (!context) {
+    throw new Error('usePharmacyData must be used within a PharmacyProvider');
+  }
+  return context;
+};
+
+export const usePharmacyUi = () => {
+  const context = useContext(PharmacyUiContext);
+  if (!context) {
+    throw new Error('usePharmacyUi must be used within a PharmacyProvider');
+  }
+  return context;
+};
+
 export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Load state from local offline storage
   OfflineStorage.resetUsersForFirstSetup();
@@ -4592,9 +4648,59 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     connectSyncEngine, addLog, deleteLog, clearLogs, exportLogs, exportBackup, restoreBackup, resetDemoData, clearAllData,
   ]);
 
+  // Granular sub-values (F6): memoized independently so a change in one bucket does not
+  // re-render consumers of the other.
+  const dataContextValue = useMemo(() => ({
+    exchangeRate, setExchangeRate, toLBP, toUSD, formatLBP, formatUSD,
+    products, addProduct, updateProduct, bulkUpdateProducts, bulkDeleteProducts, deleteProduct, deleteAllProducts,
+    updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV,
+    searchScientificDataOnline, enrichProductWithOnlineScientifics, enrichAllProductsOnline, isSearchingScientifics, standardizeAllScientifics,
+    sales, recordSale, updateSale, deleteSale,
+    purchases, purchaseReturns, supplierPayments, recordSupplierPayment, updateSupplierPayment, deleteSupplierPayment,
+    recordPurchase, updatePurchase, deletePurchase, recordPurchaseReturn, deletePurchaseReturn,
+    expenses, recordExpense, updateExpense, deleteExpense,
+    suppliers, addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier,
+    customers, customerPayments, saleReturns, recordCustomerPayment, updateCustomerPayment, deleteCustomerPayment,
+    recordSaleReturn, deleteSaleReturn, addCustomer, updateCustomer,
+  }), [
+    exchangeRate, setExchangeRate, toLBP, toUSD, formatLBP, formatUSD,
+    products, addProduct, updateProduct, bulkUpdateProducts, bulkDeleteProducts, deleteProduct, deleteAllProducts,
+    updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV,
+    searchScientificDataOnline, enrichProductWithOnlineScientifics, enrichAllProductsOnline, isSearchingScientifics, standardizeAllScientifics,
+    sales, recordSale, updateSale, deleteSale,
+    purchases, purchaseReturns, supplierPayments, recordSupplierPayment, updateSupplierPayment, deleteSupplierPayment,
+    recordPurchase, updatePurchase, deletePurchase, recordPurchaseReturn, deletePurchaseReturn,
+    expenses, recordExpense, updateExpense, deleteExpense,
+    suppliers, addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier,
+    customers, customerPayments, saleReturns, recordCustomerPayment, updateCustomerPayment, deleteCustomerPayment,
+    recordSaleReturn, deleteSaleReturn, addCustomer, updateCustomer,
+  ]);
+
+  const uiContextValue = useMemo(() => ({
+    currentUser, login, logout, users, addUser, updateUser, deleteUser,
+    activeTab, setActiveTab,
+    settings, updateSettings, toggleDarkMode,
+    notifications, unreadCount, dismissNotification, markAllNotificationsRead, addNotification,
+    syncStatus, reconnectSync: connectSyncEngine, activeSessions,
+    logs, addLog, deleteLog, clearLogs, exportLogs,
+    exportBackup, restoreBackup, resetDemoData, clearAllData,
+  }), [
+    currentUser, login, logout, users, addUser, updateUser, deleteUser,
+    activeTab, setActiveTab,
+    settings, updateSettings, toggleDarkMode,
+    notifications, unreadCount, dismissNotification, markAllNotificationsRead, addNotification,
+    syncStatus, connectSyncEngine, activeSessions,
+    logs, addLog, deleteLog, clearLogs, exportLogs,
+    exportBackup, restoreBackup, resetDemoData, clearAllData,
+  ]);
+
   return (
     <PharmacyContext.Provider value={contextValue}>
-      {children}
+      <PharmacyDataContext.Provider value={dataContextValue}>
+        <PharmacyUiContext.Provider value={uiContextValue}>
+          {children}
+        </PharmacyUiContext.Provider>
+      </PharmacyDataContext.Provider>
     </PharmacyContext.Provider>
   );
 };

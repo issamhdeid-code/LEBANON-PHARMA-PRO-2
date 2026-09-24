@@ -1,22 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { PharmacyProvider, usePharmacy } from './context/PharmacyContext';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
+import { PharmacyProvider, usePharmacyUi } from './context/PharmacyContext';
 import { WindowProvider } from './context/WindowContext';
 import { TopRibbon } from './components/layout/TopRibbon';
 import { LoginModal } from './components/auth/LoginModal';
 import { SecondaryUserPicker } from './components/auth/SecondaryUserPicker';
 import { FirstRunSetup } from './components/setup/FirstRunSetup';
+// Dashboard is the default landing view: loaded eagerly so first paint is synchronous.
 import { DashboardView } from './components/dashboard/DashboardView';
-import { SaleView } from './components/sale/SaleView';
-import { StockView } from './components/stock/StockView';
-import { PurchaseView } from './components/purchase/PurchaseView';
-import { QuantityAdjustmentsView } from './components/stock/QuantityAdjustmentsView';
-import { SupplierView } from './components/supplier/SupplierView';
-import { CustomerView } from './components/customer/CustomerView';
-import { FinanceView } from './components/finance/FinanceView';
-import { ReportsView } from './components/reports/ReportsView';
-import { ScientificsView } from './components/scientifics/ScientificsView';
-import { LogsView } from './components/logs/LogsView';
-import { SettingsView } from './components/settings/SettingsView';
 import { PriceUpdaterModal } from './components/stock/PriceUpdaterModal';
 import { CSVImportModal } from './components/stock/CSVImportModal';
 import { MOPHPriceUpdaterModal } from './components/stock/MOPHPriceUpdaterModal';
@@ -25,6 +15,36 @@ import { NotificationToastContainer } from './components/common/NotificationToas
 import { NotificationsModal } from './components/common/NotificationsModal';
 import { useWindowContext } from './context/WindowContext';
 import { useAutomatedLocalBackup } from './hooks/useAutomatedLocalBackup';
+
+// Code-splitting (F4): every secondary view loads its own chunk only on first visit,
+// so startup parses just the shell + dashboard. Combined with lazy mounting (F1),
+// inactive views are not mounted at all and never re-render on context changes.
+const SaleView = lazy(() => import('./components/sale/SaleView').then((m) => ({ default: m.SaleView })));
+const StockView = lazy(() => import('./components/stock/StockView').then((m) => ({ default: m.StockView })));
+const QuantityAdjustmentsView = lazy(() =>
+  import('./components/stock/QuantityAdjustmentsView').then((m) => ({ default: m.QuantityAdjustmentsView }))
+);
+const PurchaseView = lazy(() => import('./components/purchase/PurchaseView').then((m) => ({ default: m.PurchaseView })));
+const SupplierView = lazy(() => import('./components/supplier/SupplierView').then((m) => ({ default: m.SupplierView })));
+const CustomerView = lazy(() => import('./components/customer/CustomerView').then((m) => ({ default: m.CustomerView })));
+const FinanceView = lazy(() => import('./components/finance/FinanceView').then((m) => ({ default: m.FinanceView })));
+const ReportsView = lazy(() => import('./components/reports/ReportsView').then((m) => ({ default: m.ReportsView })));
+const ScientificsView = lazy(() =>
+  import('./components/scientifics/ScientificsView').then((m) => ({ default: m.ScientificsView }))
+);
+const LogsView = lazy(() => import('./components/logs/LogsView').then((m) => ({ default: m.LogsView })));
+const SettingsView = lazy(() => import('./components/settings/SettingsView').then((m) => ({ default: m.SettingsView })));
+
+function ViewLoadingFallback() {
+  return (
+    <div className="flex h-full min-h-0 w-full items-center justify-center bg-[#f8fafc] dark:bg-slate-950">
+      <div className="flex flex-col items-center gap-2 text-slate-400 dark:text-slate-500">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+        <span className="text-xs font-semibold">Loading…</span>
+      </div>
+    </div>
+  );
+}
 
 const PharmacyAppContent: React.FC = () => {
   const {
@@ -36,7 +56,7 @@ const PharmacyAppContent: React.FC = () => {
     updateSettings,
     exportBackup,
     addNotification,
-  } = usePharmacy();
+  } = usePharmacyUi();
   const { restoreWindow } = useWindowContext();
 
   // Run automated daily local backup in background
@@ -56,6 +76,14 @@ const PharmacyAppContent: React.FC = () => {
 
   // Selected drug for scientifics view
   const [selectedScientificProduct, setSelectedScientificProduct] = useState<Product | null>(null);
+
+  // F1: once the Sale (POS) view has been visited it stays mounted so an in-progress
+  // cart / tendered amounts survive tab switches. Other views lazy-mount per visit.
+  const [hasVisitedSale, setHasVisitedSale] = useState(false);
+
+  useEffect(() => {
+    if (activeTab === 'sale') setHasVisitedSale(true);
+  }, [activeTab]);
 
   // Quick navigation handlers
   const handleViewScientific = (prod: Product) => {
@@ -130,6 +158,10 @@ const PharmacyAppContent: React.FC = () => {
     return <LoginModal />;
   }
 
+  // F1: lazy mounting. Only the active non-Sale view is mounted at any time; the Sale
+  // (POS) view is kept mounted after first visit so an in-progress cart, tendered amounts
+  // and focus are preserved across tab switches.
+
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-[#f8fafc] font-sans text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       {/* 9-Tab Ribbon Navigation */}
@@ -137,67 +169,96 @@ const PharmacyAppContent: React.FC = () => {
 
       {/* Main View Area */}
       <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'dashboard' ? 'block' : 'hidden'}`}>
-          <DashboardView
-            onNavigate={(tab) => setActiveTab(tab)}
-            onOpenPriceUpdater={() => handleOpenPriceUpdater('')}
-            onOpenCSVImport={handleOpenCSVImport}
-            onViewScientific={handleViewScientific}
-          />
-        </div>
+        <Suspense fallback={<ViewLoadingFallback />}>
+          {activeTab === 'dashboard' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <DashboardView
+                onNavigate={(tab) => setActiveTab(tab)}
+                onOpenPriceUpdater={() => handleOpenPriceUpdater('')}
+                onOpenCSVImport={handleOpenCSVImport}
+                onViewScientific={handleViewScientific}
+              />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'sale' ? 'block' : 'hidden'}`}>
-          <SaleView onViewScientific={handleViewScientific} />
-        </div>
+          {activeTab === 'stock' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <StockView
+                onViewScientific={handleViewScientific}
+                onOpenCSVImport={handleOpenCSVImport}
+                onOpenMOPHUpdater={handleOpenMOPHUpdater}
+              />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'stock' ? 'block' : 'hidden'}`}>
-          <StockView
-            onViewScientific={handleViewScientific}
-            onOpenCSVImport={handleOpenCSVImport}
-            onOpenMOPHUpdater={handleOpenMOPHUpdater}
-          />
-        </div>
+          {activeTab === 'adjustments' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <QuantityAdjustmentsView />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'adjustments' ? 'block' : 'hidden'}`}>
-          <QuantityAdjustmentsView />
-        </div>
+          {activeTab === 'purchase' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <PurchaseView />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'purchase' ? 'block' : 'hidden'}`}>
-          <PurchaseView />
-        </div>
+          {activeTab === 'supplier' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <SupplierView />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'supplier' ? 'block' : 'hidden'}`}>
-          <SupplierView />
-        </div>
+          {activeTab === 'customer' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <CustomerView />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'customer' ? 'block' : 'hidden'}`}>
-          <CustomerView />
-        </div>
+          {activeTab === 'finance' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <FinanceView />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'finance' ? 'block' : 'hidden'}`}>
-          <FinanceView />
-        </div>
+          {activeTab === 'reports' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <ReportsView />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'reports' ? 'block' : 'hidden'}`}>
-          <ReportsView />
-        </div>
+          {activeTab === 'scientifics' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <ScientificsView
+                initialSelectedProduct={selectedScientificProduct}
+                onOpenPriceUpdater={(code) => handleOpenPriceUpdater(code)}
+                onSelectForSale={(prod) => {
+                  setActiveTab('sale');
+                }}
+              />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'scientifics' ? 'block' : 'hidden'}`}>
-          <ScientificsView
-            initialSelectedProduct={selectedScientificProduct}
-            onOpenPriceUpdater={(code) => handleOpenPriceUpdater(code)}
-            onSelectForSale={(prod) => {
-              setActiveTab('sale');
-            }}
-          />
-        </div>
+          {activeTab === 'logs' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <LogsView />
+            </div>
+          )}
 
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'logs' ? 'block' : 'hidden'}`}>
-          <LogsView />
-        </div>
-        <div className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'settings' ? 'block' : 'hidden'}`}>
-          <SettingsView />
-        </div>
+          {activeTab === 'settings' && (
+            <div className="h-full min-h-0 w-full min-w-0">
+              <SettingsView />
+            </div>
+          )}
+
+          {(hasVisitedSale || activeTab === 'sale') && (
+            <div
+              className={`h-full min-h-0 w-full min-w-0 ${activeTab === 'sale' ? 'block' : 'hidden'}`}
+            >
+              <SaleView onViewScientific={handleViewScientific} />
+            </div>
+          )}
+        </Suspense>
       </main>
 
       {/* Global Modals */}

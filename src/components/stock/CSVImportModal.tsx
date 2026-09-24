@@ -9,7 +9,7 @@ import {
   FileText,
   Sparkles
 } from 'lucide-react';
-import { usePharmacy } from '../../context/PharmacyContext';
+import { usePharmacyData } from '../../context/PharmacyContext';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { formatLBPValue } from '../../utils/priceUtils';
 
@@ -29,7 +29,7 @@ CLAR500, Klacid 500mg, Clarithromycin, 500mg, 14 Tablets, Tablet, 984500, Omniph
 PROF400, Brufen 400mg, Ibuprofen, 400mg, 30 Tablets, Tablet, 340000, Khalil Fattal & Fils, 18`;
 
 export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section }) => {
-  const { importProductsFromCSV, exchangeRate } = usePharmacy();
+  const { importProductsFromCSV, exchangeRate } = usePharmacyData();
 
   const [csvContent, setCsvContent] = useState('');
   const [fileName, setFileName] = useState('');

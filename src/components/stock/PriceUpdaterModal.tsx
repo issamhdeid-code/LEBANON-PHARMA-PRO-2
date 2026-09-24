@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Tag, Check, X, Search, DollarSign, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { usePharmacy } from '../../context/PharmacyContext';
+import { usePharmacyData } from '../../context/PharmacyContext';
 import { Product } from '../../types/pharmacy';
 
 import { DesktopWindow } from '../common/DesktopWindow';
@@ -13,7 +13,7 @@ interface PriceUpdaterModalProps {
 }
 
 export const PriceUpdaterModal: React.FC<PriceUpdaterModalProps> = ({ initialCode = '', onClose, section }) => {
-  const { products, updateDrugPriceByCode, exchangeRate, formatLBP, formatUSD } = usePharmacy();
+  const { products, updateDrugPriceByCode, exchangeRate, formatLBP, formatUSD } = usePharmacyData();
 
   const [code, setCode] = useState(initialCode);
   const [targetProduct, setTargetProduct] = useState<Product | null>(() => {

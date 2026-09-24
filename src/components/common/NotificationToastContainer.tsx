@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AlertTriangle, AlertCircle, CheckCircle2, Info, X, Bell } from 'lucide-react';
-import { usePharmacy } from '../../context/PharmacyContext';
+import { usePharmacyUi } from '../../context/PharmacyContext';
 import { AppNotification } from '../../types/pharmacy';
 
 interface NotificationToastContainerProps {
@@ -9,7 +9,7 @@ interface NotificationToastContainerProps {
 }
 
 export const NotificationToastContainer: React.FC<NotificationToastContainerProps> = ({ onOpenCenter }) => {
-  const { notifications, dismissNotification } = usePharmacy();
+  const { notifications, dismissNotification } = usePharmacyUi();
   const [toasts, setToasts] = useState<AppNotification[]>([]);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const initialLoadRef = useRef(true);

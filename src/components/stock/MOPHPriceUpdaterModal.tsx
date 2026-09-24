@@ -20,7 +20,7 @@ import {
   PlusCircle,
   Layers,
 } from 'lucide-react';
-import { usePharmacy } from '../../context/PharmacyContext';
+import { usePharmacyData } from '../../context/PharmacyContext';
 import { DesktopWindow } from '../common/DesktopWindow';
 import type { Product } from '../../types/pharmacy';
 import {
@@ -102,7 +102,7 @@ function mophUnlockExpiryDate(): Date | null {
 }
 
 export const MOPHPriceUpdaterModal: React.FC<MOPHPriceUpdaterModalProps> = ({ onClose, section }) => {
-  const { products, exchangeRate, updateProduct, importProductsFromCSV } = usePharmacy();
+  const { products, exchangeRate, updateProduct, importProductsFromCSV } = usePharmacyData();
 
   const [step, setStep] = useState<Step>('checking');
   const [unlockPassword, setUnlockPassword] = useState('');

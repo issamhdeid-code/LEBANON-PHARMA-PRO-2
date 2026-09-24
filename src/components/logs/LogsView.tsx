@@ -20,7 +20,7 @@ import {
   ChevronRight,
   ShieldCheck
 } from 'lucide-react';
-import { usePharmacy } from '../../context/PharmacyContext';
+import { usePharmacyUi } from '../../context/PharmacyContext';
 import { AppLogEntry, LogComponent, LogLevel } from '../../types/pharmacy';
 import { formatTime } from '../../utils/dateUtils';
 import { LogDetailModal } from './LogDetailModal';
@@ -37,7 +37,7 @@ const ALL_COMPONENTS: LogComponent[] = [
 ];
 
 export const LogsView: React.FC = () => {
-  const { logs, addLog, clearLogs, exportLogs, currentUser, settings } = usePharmacy();
+  const { logs, addLog, clearLogs, exportLogs, currentUser, settings } = usePharmacyUi();
 
   // Filters state
   const [searchTerm, setSearchTerm] = useState('');

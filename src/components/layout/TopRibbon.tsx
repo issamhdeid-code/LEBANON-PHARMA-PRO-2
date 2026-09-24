@@ -18,7 +18,7 @@ import {
   Bell
 } from 'lucide-react';
 import { NotificationsModal } from '../common/NotificationsModal';
-import { usePharmacy } from '../../context/PharmacyContext';
+import { usePharmacyUi } from '../../context/PharmacyContext';
 import { useWindowContext } from '../../context/WindowContext';
 import { RibbonTab } from '../../types/pharmacy';
 
@@ -31,7 +31,7 @@ export const TopRibbon: React.FC = () => {
     settings,
     toggleDarkMode,
     unreadCount,
-  } = usePharmacy();
+  } = usePharmacyUi();
   const { restoreWindow } = useWindowContext();
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
