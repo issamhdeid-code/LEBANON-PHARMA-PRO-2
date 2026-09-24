@@ -1,5 +1,6 @@
 import {
   Product,
+  ProductTombstone,
   Supplier,
   Customer,
   SaleTransaction,
@@ -1131,6 +1132,7 @@ const STORAGE_KEYS = {
   USERS: 'pharmalebanon_users_v1',
   USER_SETUP_RESET: 'pharmalebanon_user_setup_reset_v1',
   PRODUCTS: 'pharmalebanon_products_v1',
+  DELETED_PRODUCTS: 'pharmalebanon_deleted_products_v1',
   SUPPLIERS: 'pharmalebanon_suppliers_v1',
   CUSTOMERS: 'pharmalebanon_customers_v1',
   SALES: 'pharmalebanon_sales_v1',
@@ -1231,6 +1233,21 @@ export class OfflineStorage {
 
   static saveUsers(users: User[]): void {
     safeSetItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+  }
+
+  static getDeletedProducts(): ProductTombstone[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.DELETED_PRODUCTS);
+      if (data === null) return [];
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveDeletedProducts(tombstones: ProductTombstone[]): void {
+    safeSetItem(STORAGE_KEYS.DELETED_PRODUCTS, JSON.stringify(tombstones));
   }
 
   static getProducts(): Product[] {
@@ -1550,6 +1567,7 @@ export class OfflineStorage {
       notifications: this.getNotifications(),
       currentUser: this.getCurrentUser(),
       logs: this.getLogs(),
+      deletedProducts: this.getDeletedProducts(),
     };
     return JSON.stringify(backupData, null, 2);
   }
@@ -1584,6 +1602,8 @@ export class OfflineStorage {
       this.saveNotifications(Array.isArray(data.notifications) ? data.notifications : []);
       this.saveCurrentUser(data.currentUser || null);
       this.saveLogs(Array.isArray(data.logs) ? data.logs : []);
+      // A restore is an authoritative full state: forget any earlier deletion records.
+      this.saveDeletedProducts(Array.isArray(data.deletedProducts) ? data.deletedProducts : []);
       await idbStorage.saveProducts(data.products);
       return true;
     } catch (e) {
@@ -1606,6 +1626,7 @@ export class OfflineStorage {
     this.saveExpenses([]);
     this.saveConflicts([]);
     this.saveLogs(INITIAL_LOGS);
+    this.saveDeletedProducts([]);
   }
 
   static clearAllData(): void {
@@ -1620,5 +1641,6 @@ export class OfflineStorage {
     this.saveExpenses([]);
     this.saveConflicts([]);
     this.saveLogs([]);
+    this.saveDeletedProducts([]);
   }
 }

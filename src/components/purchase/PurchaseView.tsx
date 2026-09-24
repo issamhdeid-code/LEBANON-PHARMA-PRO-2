@@ -1016,7 +1016,7 @@ export const PurchaseView: React.FC = () => {
 
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [invoiceNumberInput, setInvoiceNumberInput] = useState('');
-  const [isPaid, setIsPaid] = useState(true);
+  const [isPaid, setIsPaid] = useState(false);
   const [paymentReceiptNumber, setPaymentReceiptNumber] = useState('');
   const [invoiceDiscount, setInvoiceDiscount] = useState('0');
   const [invoiceDiscountAmount, setInvoiceDiscountAmount] = useState('0');
@@ -2142,7 +2142,7 @@ export const PurchaseView: React.FC = () => {
     setSupplierSearchQuery('');
     setItems([]);
     setInvoiceDate(new Date().toISOString().split('T')[0]);
-    setIsPaid(true);
+    setIsPaid(false);
     setPaymentReceiptNumber('');
     setPurchaseCurrency('LBP');
     setInvoiceDiscount('0');
@@ -2219,7 +2219,7 @@ export const PurchaseView: React.FC = () => {
     setSelectedSupplierId(data.supplierId || '');
     setSupplierSearchQuery(data.supplierName || '');
     setInvoiceDate(new Date().toISOString().split('T')[0]);
-    setIsPaid(true);
+    setIsPaid(false);
     setPaymentReceiptNumber('');
     setPurchaseCurrency('USD');
     setInvoiceDiscount('0');

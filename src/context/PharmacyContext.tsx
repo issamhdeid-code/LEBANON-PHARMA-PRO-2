@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import Papa from 'papaparse';
 import {
   Product,
+  ProductTombstone,
   Supplier,
   Customer,
   SaleTransaction,
@@ -80,7 +81,21 @@ function mergeById<T extends { id: string }>(local: T[], remote: T[]): T[] {
 
 // Same idea as mergeById but for products specifically, which carry a version number:
 // whichever side has the higher version for a shared id wins, instead of "remote always wins".
-function mergeProductsArrays(local: Product[], remote: Product[]): { merged: Product[]; changed: boolean } {
+// A deletion tombstone (from the optional third argument) wins over any copy whose
+// version is not higher than the tombstone's, so a product deleted on one PC during an
+// outage can never be resurrected by a stale copy merged back afterwards.
+function mergeProductsArrays(
+  local: Product[],
+  remote: Product[],
+  tombstones?: ProductTombstone[]
+): { merged: Product[]; changed: boolean } {
+  const tombstoneById = new Map<string, ProductTombstone>();
+  if (Array.isArray(tombstones)) {
+    for (const t of tombstones) {
+      const existing = tombstoneById.get(t.id);
+      if (!existing || (t.version || 0) > (existing.version || 0)) tombstoneById.set(t.id, t);
+    }
+  }
   const byId = new Map(local.map(p => [p.id, p]));
   const byCode = new Map<string, Product>();
   for (const p of local) {
@@ -89,6 +104,8 @@ function mergeProductsArrays(local: Product[], remote: Product[]): { merged: Pro
   }
   let changed = false;
   for (const remoteProd of remote) {
+    const tombstone = tombstoneById.get(remoteProd.id);
+    if (tombstone && (remoteProd.version || 0) <= (tombstone.version || 0)) continue;
     let localMatch = byId.get(remoteProd.id);
     if (!localMatch) {
       const normalized = String(remoteProd.code || '').toUpperCase();
@@ -99,7 +116,23 @@ function mergeProductsArrays(local: Product[], remote: Product[]): { merged: Pro
       changed = true;
     }
   }
-  return { merged: Array.from(byId.values()), changed };
+  const merged = Array.from(byId.values());
+  const cleaned = tombstoneById.size > 0
+    ? merged.filter(p => {
+        const t = tombstoneById.get(p.id);
+        return !t || (p.version || 0) > (t.version || 0);
+      })
+    : merged;
+  if (cleaned.length !== merged.length) changed = true;
+  return { merged: cleaned, changed };
+}
+
+// Merge a single deletion tombstone into a registry kept by product id (newest wins).
+function mergeTombstone(list: ProductTombstone[], tombstone: ProductTombstone): ProductTombstone[] {
+  if (!tombstone || !tombstone.id) return list;
+  const existing = list.find(t => t.id === tombstone.id);
+  if (existing && (existing.version || 0) >= (tombstone.version || 0)) return list;
+  return existing ? list.map(t => (t.id === tombstone.id ? tombstone : t)) : [...list, tombstone];
 }
 
 // Depletes product stock (with optional batch-level FIFO) to mirror a sale recorded on
@@ -175,8 +208,48 @@ function applySaleStockDepletion(prevProducts: Product[], saleItems: SaleTransac
 
 // ---- Invoice number helpers ------------------------------------------------------
 // Local per-year counter keeps invoices strictly monotonic even when two sales happen
-// in the same millisecond or when the sales list is cleared.
+// in the same millisecond or when the sales list is cleared. It is persisted so a page
+// reload cannot rewind the sequence and collide with invoices already written.
 const _invoiceCounterCache = new Map<string, number>();
+
+function invoiceCounterKey(prefix: string, year: number): string {
+  return `pharmalebanon_inv_counter_${prefix}_${year}`;
+}
+
+function loadInvoiceCounter(prefix: string, year: number): number {
+  // Always beat whatever exists in storage with anything seen in this process already.
+  const cached = _invoiceCounterCache.get(invoiceCounterKey(prefix, year)) || 0;
+  try {
+    const stored = Number(localStorage.getItem(invoiceCounterKey(prefix, year))) || 0;
+    return Math.max(cached, stored);
+  } catch {
+    return cached;
+  }
+}
+
+function saveInvoiceCounter(prefix: string, year: number, value: number): void {
+  _invoiceCounterCache.set(invoiceCounterKey(prefix, year), Math.max(value, _invoiceCounterCache.get(invoiceCounterKey(prefix, year)) || 0));
+  try {
+    localStorage.setItem(invoiceCounterKey(prefix, year), String(value));
+  } catch {
+    // ignore quota/security errors — the in-process cache is the fallback
+  }
+}
+
+// Adopt the highest invoice number seen from a synced record so this terminal never
+// re-issues a number the other terminal already used this year.
+function registerSeenInvoiceNumber(prefix: string, invoiceNumber?: string): void {
+  if (!invoiceNumber) return;
+  const parts = String(invoiceNumber).split('-');
+  if (parts.length < 3) return;
+  const year = Number(parts[1]);
+  const num = parseInt(parts[2] || '', 10);
+  if (Number.isFinite(year) && Number.isFinite(num) && num > 0 && String(year).length === 4) {
+    const key = invoiceCounterKey(prefix, year);
+    const current = Math.max(_invoiceCounterCache.get(key) || 0, Number(localStorage.getItem(key)) || 0);
+    if (num > current) saveInvoiceCounter(prefix, year, num);
+  }
+}
 
 function nextInvoiceNumber(existing: { invoiceNumber?: string }[], prefix: string, fallbackStart: number): string {
   const year = new Date().getFullYear();
@@ -188,9 +261,9 @@ function nextInvoiceNumber(existing: { invoiceNumber?: string }[], prefix: strin
       if (Number.isFinite(num) && num > maxExisting) maxExisting = num;
     }
   }
-  const cached = Math.max(_invoiceCounterCache.get(`${prefix}-${year}`) || 0, maxExisting);
+  const cached = Math.max(loadInvoiceCounter(prefix, year), maxExisting);
   const next = cached + 1;
-  _invoiceCounterCache.set(`${prefix}-${year}`, next);
+  saveInvoiceCounter(prefix, year, next);
   return `${fullPrefix}${String(next).padStart(4, '0')}`;
 }
 
@@ -229,7 +302,7 @@ interface PharmacyContextType {
   deleteAllProducts: () => void;
   updateDrugPriceByCode: (code: string, newPriceLBP: number, newPriceUSD?: number) => { success: boolean; message: string };
   clearPriceChangeIndicators: () => void;
-  importProductsFromCSV: (csvText: string) => { success: boolean; importedCount: number; errors: string[]; skippedLowerPricesCount?: number };
+  importProductsFromCSV: (csvText: string, options?: { enrichAfterImport?: boolean }) => { success: boolean; importedCount: number; errors: string[]; skippedLowerPricesCount?: number };
   searchScientificDataOnline: (ingredients: string, drugName?: string) => Promise<{
     scientificInfo: any;
     source: string;
@@ -477,6 +550,16 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return normalized;
   });
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => OfflineStorage.getSuppliers());
+  const [deletedProducts, setDeletedProducts] = useState<ProductTombstone[]>(() => {
+    const raw = OfflineStorage.getDeletedProducts();
+    // keep the newest tombstone per product id
+    const byId = new Map<string, ProductTombstone>();
+    for (const t of raw) {
+      const existing = byId.get(t.id);
+      if (!existing || (t.version || 0) > (existing.version || 0)) byId.set(t.id, t);
+    }
+    return Array.from(byId.values());
+  });
   const [customers, setCustomers] = useState<Customer[]>(() => OfflineStorage.getCustomers());
   const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>(() => OfflineStorage.getCustomerPayments());
   const [sales, setSales] = useState<SaleTransaction[]>(() => OfflineStorage.getSales());
@@ -644,6 +727,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const activeSessionsRef = useRef(activeSessions);
   const notificationsRef = useRef(notifications);
   const logsRef = useRef(logs);
+  const deletedProductsRef = useRef(deletedProducts);
   useEffect(() => { productsRef.current = products; }, [products]);
   useEffect(() => { salesRef.current = sales; }, [sales]);
   useEffect(() => { notificationsRef.current = notifications; }, [notifications]);
@@ -657,6 +741,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => { usersRef.current = users; }, [users]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { activeSessionsRef.current = activeSessions; }, [activeSessions]);
+  useEffect(() => { deletedProductsRef.current = deletedProducts; }, [deletedProducts]);
 
   // LAN Sync: connect to the other PC and keep local data in sync.
   // Defined as a stable callback (reads live values via refs) so it can be re-triggered
@@ -664,11 +749,24 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const connectSyncEngine = useCallback(() => {
     const applyRemoteProducts = (incoming: Product[]) => {
       setProducts(prev => {
-        const { merged, changed } = mergeProductsArrays(prev, incoming);
+        const { merged, changed } = mergeProductsArrays(prev, incoming, deletedProductsRef.current);
         if (!changed) return prev;
         OfflineStorage.saveProducts(merged);
         idbStorage.saveProducts(merged).catch(() => {});
         return merged;
+      });
+    };
+
+    // Record a deletion tombstone received from the other PC (kept even after the
+    // product is gone locally, so a stale copy can never be merged back later).
+    const applyRemoteTombstone = (tombstone?: ProductTombstone) => {
+      if (!tombstone || !tombstone.id) return;
+      setDeletedProducts(prev => {
+        const existing = prev.find(t => t.id === tombstone.id);
+        if (existing && (existing.version || 0) >= (tombstone.version || 0)) return prev;
+        const next = existing ? prev.map(t => (t.id === tombstone.id ? tombstone : t)) : [...prev, tombstone];
+        OfflineStorage.saveDeletedProducts(next);
+        return next;
       });
     };
 
@@ -688,12 +786,18 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (payload.type === 'STOCK_MUTATION') {
           applyRemoteProducts(Array.isArray(payload.data) ? payload.data : [payload.data]);
         } else if (payload.type === 'PRODUCT_DELETED') {
+          applyRemoteTombstone(payload.data?.tombstone);
           if (payload.data?.all) {
             // Whole catalog wiped on the other PC — mirror it here.
             setProducts(prev => {
               if (prev.length === 0) return prev;
               OfflineStorage.saveProducts([]);
               idbStorage.saveProducts([]).catch(() => {});
+              return [];
+            });
+            // A wholesale wipe supersedes any per-item tombstones (nothing left to protect).
+            setDeletedProducts(() => {
+              OfflineStorage.saveDeletedProducts([]);
               return [];
             });
           } else {
@@ -725,6 +829,8 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
         } else if (payload.type === 'SALE_CREATED') {
           const remoteSale = payload.data as SaleTransaction;
+          registerSeenInvoiceNumber('INV', remoteSale?.invoiceNumber);
+          if (remoteSale?.isUnreal) registerSeenInvoiceNumber('UNR', remoteSale?.invoiceNumber);
           setSales(prev => {
             if (!remoteSale || prev.some(s => s.id === remoteSale.id)) return prev;
             const next = [remoteSale, ...prev];
@@ -750,6 +856,10 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setSales([]);
           setPurchases([]);
           setLogs([]);
+          setDeletedProducts(() => {
+            OfflineStorage.saveDeletedProducts([]);
+            return [];
+          });
           OfflineStorage.clearAllData();
           addNotification('Data Cleared', 'Data was cleared from the other terminal.', 'system', 'warning');
         } else if (payload.type === 'SALE_UPDATED') {
@@ -812,6 +922,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
         } else if (payload.type === 'PURCHASE_CREATED') {
           const remotePurchase = payload.data as PurchaseInvoice;
+          registerSeenInvoiceNumber('PINV', remotePurchase?.invoiceNumber);
           setPurchases(prev => {
             if (!remotePurchase || prev.some(p => p.id === remotePurchase.id)) return prev;
             const next = [remotePurchase, ...prev];
@@ -934,12 +1045,13 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           let mergedUsers = usersRef.current;
           let mergedNotifications = notificationsRef.current;
           let mergedLogs = logsRef.current;
+          let mergedDeletedProducts = deletedProductsRef.current;
 
           // Absorb whatever the reconnecting Secondary recorded while it was offline,
           // instead of just overwriting it with Main's view once we answer.
           if (requesterData) {
             if (Array.isArray(requesterData.products)) {
-              const { merged, changed } = mergeProductsArrays(productsRef.current, requesterData.products);
+              const { merged, changed } = mergeProductsArrays(productsRef.current, requesterData.products, deletedProductsRef.current);
               if (changed) {
                 mergedProducts = merged;
                 setProducts(merged);
@@ -997,6 +1109,23 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               setLogs(mergedLogs);
               OfflineStorage.saveLogs(mergedLogs);
             }
+            if (Array.isArray(requesterData.deletedProducts) && requesterData.deletedProducts.length > 0) {
+              let tombChanged = false;
+              const tombById = new Map<string, ProductTombstone>(mergedDeletedProducts.map(t => [t.id, t]));
+              for (const t of requesterData.deletedProducts as ProductTombstone[]) {
+                if (!t || !t.id) continue;
+                const existing = tombById.get(t.id);
+                if (!existing || (t.version || 0) > (existing.version || 0)) {
+                  tombById.set(t.id, t);
+                  tombChanged = true;
+                }
+              }
+              if (tombChanged) {
+                mergedDeletedProducts = Array.from(tombById.values());
+                setDeletedProducts(mergedDeletedProducts);
+                OfflineStorage.saveDeletedProducts(mergedDeletedProducts);
+              }
+            }
           }
 
           syncEngine.sendSnapshot(requesterId, {
@@ -1013,6 +1142,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             activeSessions: activeSessionsRef.current,
             notifications: mergedNotifications,
             logs: mergedLogs,
+            deletedProducts: mergedDeletedProducts,
           });
         }
       },
@@ -1100,6 +1230,21 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             return next;
           });
         }
+        if (Array.isArray(snapshotData?.deletedProducts)) {
+          setDeletedProducts(prev => {
+            let next = prev;
+            for (const t of snapshotData.deletedProducts as ProductTombstone[]) {
+              if (!t || !t.id) continue;
+              const existing = next.find(x => x.id === t.id);
+              if (!existing || (t.version || 0) > (existing.version || 0)) {
+                next = existing ? next.map(x => (x.id === t.id ? t : x)) : [...next, t];
+              }
+            }
+            if (next === prev) return prev;
+            OfflineStorage.saveDeletedProducts(next);
+            return next;
+          });
+        }
         addNotification('Data Synced', 'Received latest data from Main PC.', 'sync', 'success');
       },
       () => ({
@@ -1116,6 +1261,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         users: usersRef.current,
         notifications: notificationsRef.current,
         logs: logsRef.current,
+        deletedProducts: deletedProductsRef.current,
       })
     );
   }, [addNotification]);
@@ -1536,6 +1682,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setIsSearchingScientifics(true);
     let enrichedCount = 0;
     const nextList = [...currentList];
+    const enrichedById = new Map<string, Product>();
 
     try {
       for (const drug of drugsToEnrich) {
@@ -1568,6 +1715,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 updatedAt: Date.now(),
                 version: (nextList[idx].version || 1) + 1,
               };
+              enrichedById.set(drug.id, nextList[idx]);
               enrichedCount++;
             }
           }
@@ -1578,9 +1726,31 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       }
 
-      if (enrichedCount > 0) {
-        setProducts(nextList);
-        OfflineStorage.saveProducts(nextList);
+      if (enrichedById.size > 0) {
+        // Commit ONLY the enriched scientificInfo onto the live rows, never a frozen
+        // snapshot: any stock/purchase/sale write that landed while the batch was
+        // running stays untouched (they carry a higher version and are kept as-is).
+        setProducts(prev => {
+          let changed = false;
+          const next = prev.map(p => {
+            const e = enrichedById.get(p.id);
+            if (!e) return p;
+            changed = true;
+            return {
+              ...p,
+              scientificInfo: e.scientificInfo,
+              updatedAt: Date.now(),
+              version: (p.version || 1) + 1,
+            };
+          });
+          if (!changed) return prev;
+          OfflineStorage.saveProducts(next);
+          idbStorage.saveProducts(next).catch(() => {});
+          try {
+            syncEngine.broadcast('STOCK_MUTATION', next.filter(p => enrichedById.has(p.id)));
+          } catch (err) {}
+          return next;
+        });
         addNotification(
           'Batch Online Scientifics Enriched',
           `Successfully updated online scientific monographs for ${enrichedCount} drugs.`,
@@ -1778,7 +1948,20 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const updated = products.filter(p => p.id !== id);
     setProducts(updated);
     OfflineStorage.saveProducts(updated);
-    try { syncEngine.broadcast('PRODUCT_DELETED', { id }); } catch (e) {}
+    const tombstone: ProductTombstone = {
+      id,
+      code: prod?.code || '',
+      name: prod?.name || '',
+      deletedAt: Date.now(),
+      version: (prod?.version || 1) + 1,
+    };
+    setDeletedProducts(prev => {
+      const next = mergeTombstone(prev, tombstone);
+      if (next === prev) return prev;
+      OfflineStorage.saveDeletedProducts(next);
+      return next;
+    });
+    try { syncEngine.broadcast('PRODUCT_DELETED', { id, tombstone }); } catch (e) {}
     addNotification('Product Removed', 'Item deleted from database', 'inventory', 'info');
     if (prod) {
       addLog({
@@ -1868,13 +2051,30 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const bulkDeleteProducts = (ids: string[]): { success: boolean; count: number } => {
     if (!ids || ids.length === 0) return { success: false, count: 0 };
     const idSet = new Set(ids);
+    const deletedProds = products.filter(p => idSet.has(p.id));
+    const tombstoneById = new Map(deletedProds.map(p => [p.id, {
+      id: p.id,
+      code: p.code || '',
+      name: p.name || '',
+      deletedAt: Date.now(),
+      version: (p.version || 1) + 1,
+    } as ProductTombstone]));
     setProducts(prev => {
       const next = prev.filter(p => !idSet.has(p.id));
       OfflineStorage.saveProducts(next);
       return next;
     });
+    if (tombstoneById.size > 0) {
+      setDeletedProducts(prev => {
+        let next = prev;
+        for (const t of tombstoneById.values()) next = mergeTombstone(next, t);
+        if (next === prev) return prev;
+        OfflineStorage.saveDeletedProducts(next);
+        return next;
+      });
+    }
     ids.forEach(id => {
-      try { syncEngine.broadcast('PRODUCT_DELETED', { id }); } catch (e) {}
+      try { syncEngine.broadcast('PRODUCT_DELETED', { id, tombstone: tombstoneById.get(id) }); } catch (e) {}
     });
     addNotification('Bulk Delete Complete', `Removed ${ids.length} items from inventory database`, 'inventory', 'warning');
     addLog({
@@ -1890,6 +2090,27 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const deleteAllProducts = () => {
     const count = products.length;
+    if (count > 0) {
+      const tombstones: ProductTombstone[] = products.map(p => ({
+        id: p.id,
+        code: p.code || '',
+        name: p.name || '',
+        deletedAt: Date.now(),
+        version: (p.version || 1) + 1,
+      }));
+      setDeletedProducts(prev => {
+        let next = prev;
+        for (const t of tombstones) next = mergeTombstone(next, t);
+        if (next === prev) return prev;
+        OfflineStorage.saveDeletedProducts(next);
+        return next;
+      });
+      // Broadcast each tombstone so the other PC cannot resurrect a wiped catalog
+      // from a stale copy it still holds after an outage.
+      for (const t of tombstones) {
+        try { syncEngine.broadcast('PRODUCT_DELETED', { id: t.id, tombstone: t }); } catch (e) {}
+      }
+    }
     setProducts([]);
     OfflineStorage.saveProducts([]);
     try { syncEngine.broadcast('PRODUCT_DELETED', { all: true }); } catch (e) {}
@@ -2003,7 +2224,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Requirements 18 & 19: Bulk data import via CSV files for inventory management
   // Exact headline: code, Name, Ingredients, Dosage, Presentation, Form, Price in LBP, Agent, Pharmacist Margin
-  const importProductsFromCSV = (csvText: string): { success: boolean; importedCount: number; errors: string[]; skippedLowerPricesCount?: number } => {
+  const importProductsFromCSV = (csvText: string, options?: { enrichAfterImport?: boolean }): { success: boolean; importedCount: number; errors: string[]; skippedLowerPricesCount?: number } => {
     const errors: string[] = [];
     const parsed = Papa.parse(csvText, {
       header: true,
@@ -2407,13 +2628,17 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       'success'
     );
 
-    // Automatic online scientific search for newly imported drugs (capped batch of up to 35 drugs with throttle)
+    // Optional online scientific search for newly imported drugs (capped batch of up to
+    // 35 drugs with throttle). Opt-in so a bulk import never kicks off a long network
+    // tail that can outlast — and clobber — concurrent POS/purchase writes; the commit
+    // below only merges scientificInfo onto the live rows, never a frozen snapshot.
     const importedDrugs = newProducts.filter(p => p.category === 'drug').slice(0, 35);
-    if (importedDrugs.length > 0) {
+    if (options?.enrichAfterImport && importedDrugs.length > 0) {
       setTimeout(async () => {
         let enriched = 0;
         const currentAll = OfflineStorage.getProducts();
         const nextList = [...currentAll];
+        const enrichedById = new Map<string, Product>();
 
         for (const drug of importedDrugs) {
           const molecule = drug.ingredients || drug.name;
@@ -2445,6 +2670,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   updatedAt: Date.now(),
                   version: (nextList[idx].version || 1) + 1,
                 };
+                enrichedById.set(drug.id, nextList[idx]);
                 enriched++;
               }
             }
@@ -2455,9 +2681,28 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           }
         }
 
-        if (enriched > 0) {
-          setProducts(nextList);
-          OfflineStorage.saveProducts(nextList);
+        if (enrichedById.size > 0) {
+          setProducts(prev => {
+            let changed = false;
+            const next = prev.map(p => {
+              const e = enrichedById.get(p.id);
+              if (!e) return p;
+              changed = true;
+              return {
+                ...p,
+                scientificInfo: e.scientificInfo,
+                updatedAt: Date.now(),
+                version: (p.version || 1) + 1,
+              };
+            });
+            if (!changed) return prev;
+            OfflineStorage.saveProducts(next);
+            idbStorage.saveProducts(next).catch(() => {});
+            try {
+              syncEngine.broadcast('STOCK_MUTATION', next.filter(p => enrichedById.has(p.id)));
+            } catch (e) {}
+            return next;
+          });
           addNotification(
             'Online Scientifics Enriched',
             `Online scientific monographs loaded for ${enriched} imported medicines.`,
@@ -4476,6 +4721,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
       setSyncConflicts(OfflineStorage.getConflicts());
       setNotifications(OfflineStorage.getNotifications());
       setLogs(OfflineStorage.getLogs());
+      setDeletedProducts(OfflineStorage.getDeletedProducts());
       addNotification('Database Restored', 'Successfully restored full pharmacy backup!', 'system', 'success');
       return true;
     }
@@ -4518,6 +4764,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     setSales(OfflineStorage.getSales());
     setPurchases(OfflineStorage.getPurchases());
     setLogs(OfflineStorage.getLogs());
+    setDeletedProducts(OfflineStorage.getDeletedProducts());
         addNotification('Demo Reset', 'Reset all modules to initial Lebanese demo records.', 'system', 'info');
   };
 
@@ -4529,6 +4776,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     setSales([]);
     setPurchases([]);
     setLogs([]);
+    setDeletedProducts([]);
     try { syncEngine.broadcast('CLEAR_ALL_DATA', {}); } catch (e) {}
     addNotification('Data Cleared', 'All inventory, sales, purchases, customers, and suppliers have been deleted.', 'system', 'warning');
   };

@@ -1344,7 +1344,7 @@ async function main(argv) {
       const u = e.url || '';
       if (/favicon|net::ERR_FILE_NOT_FOUND/i.test(t)) return true;
       if (/frame-ancestors' is ignored when delivered via a <meta> element|frame-ancestors.*ignored.*meta/i.test(t)) return true;
-      if (/Failed to load resource: the server responded with a status of (429|503|422)/i.test(t)) return true; // external clinical/generative API rate limits + no-key enrich
+      if (/Failed to load resource: the server responded with a status of (429|503|422|502)/i.test(t)) return true; // external clinical/generative API rate limits + no-key enrich
       if (EXTERNAL_HOSTS.test(t + ' ' + u)) {
         // external API/cloud noise (429/503 rate limits, blocked preflight, enrichment errors)
         return true;
@@ -1359,7 +1359,7 @@ async function main(argv) {
     };
     const realErrors = CONSOLE_EVENTS.filter((e) => (e.kind === 'error' || e.kind === 'pageerror') && !benignConsole(e));
     const fdaCspCount = CONSOLE_EVENTS.filter((e) => (e.kind === 'error') && /api\.fda\.gov|violates the following Content Security Policy directive/i.test((e.text || '') + ' ' + (e.url || ''))).length;
-    const server4xxNoise = CONSOLE_EVENTS.filter((e) => (e.kind === 'error') && /Failed to load resource: the server responded with a status of (422|429|503)/i.test(e.text || '')).length;
+    const server4xxNoise = CONSOLE_EVENTS.filter((e) => (e.kind === 'error') && /Failed to load resource: the server responded with a status of (422|429|503|502)/i.test(e.text || '')).length;
     if (fdaCspCount) log('KNOWN ISSUE: openFDA label fetch blocked by CSP (' + fdaCspCount + ' refusals) — see findings report');
     if (server4xxNoise) log('KNOWN ISSUE: ' + server4xxNoise + ' server 4xx/503 responses (rate-limited / no GEMINI_API_KEY enrich) — see findings report');
     check('no-console-errors', realErrors.length === 0, `${realErrors.length} events`);

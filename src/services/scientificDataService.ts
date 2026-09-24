@@ -1618,7 +1618,7 @@ async function fetchOpenFDALabel(
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 18_000);
         const res = await fetch(
-          `https://api.fda.gov/drug/label.json?search=openfda.generic_name:${encodeURIComponent(`"${term}"`)}&limit=2`,
+          `/api/scientifics/fda-label?term=${encodeURIComponent(term)}`,
           { headers: { Accept: 'application/json' }, signal: controller.signal }
         );
         clearTimeout(timeout);

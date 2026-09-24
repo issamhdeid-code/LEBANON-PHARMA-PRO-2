@@ -271,7 +271,9 @@ app.post('/api/scientifics/enrich', rateLimit(12, 60_000), async (req, res) => {
 
     const ai = getAIClient();
     if (!ai) {
-      return res.status(422).json({
+      // 503 (Service Unavailable) — clean, retry-safe signal that AI enrichment is not
+      // configured, distinct from a 4xx client error the renderer would treat as noise.
+      return res.status(503).json({
         error: 'Gemini API key is not configured on server',
         fallbackNeeded: true,
       });
@@ -451,6 +453,48 @@ Return ONLY valid JSON matching this schema:
       error: err?.message || 'Failed to enrich scientific data with AI',
       fallbackNeeded: true,
     });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// openFDA structured drug label lookup (proxied server-side)
+// ---------------------------------------------------------------------------
+// The renderer never calls api.fda.gov directly (CSP-safe): this proxy forwards the
+// search, applies its own rate limit, and caches results for 6h so batch enrichment
+// is polite to the upstream. Any error degrades to a 502 the app skips gracefully.
+const fdaLabelCache = new Map<string, { cachedAt: number; body: unknown }>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of fdaLabelCache) {
+    if (now - entry.cachedAt > 6 * 3600 * 1000) fdaLabelCache.delete(key);
+  }
+}, 10 * 60 * 1000).unref();
+app.get('/api/scientifics/fda-label', rateLimit(30, 60_000), async (req, res) => {
+  try {
+    const term = String(req.query?.term || '').trim().slice(0, 200);
+    if (!term) return res.status(400).json({ error: 'term query parameter is required' });
+    const cacheKey = term.toLowerCase();
+    const hit = fdaLabelCache.get(cacheKey);
+    if (hit && Date.now() - hit.cachedAt < 6 * 3600 * 1000) {
+      return res.json(hit.body);
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 18_000);
+    const upstream = await fetch(
+      `https://api.fda.gov/drug/label.json?search=openfda.generic_name:${encodeURIComponent(`"${term}"`)}&limit=2`,
+      { headers: { Accept: 'application/json' }, signal: controller.signal }
+    );
+    clearTimeout(timeout);
+    if (!upstream.ok) {
+      return res.status(502).json({ error: `openFDA upstream responded ${upstream.status}` });
+    }
+    const data = await upstream.json();
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const body = { results: results.slice(0, 1), total: data?.meta?.results?.total ?? results.length };
+    fdaLabelCache.set(cacheKey, { cachedAt: Date.now(), body });
+    return res.json(body);
+  } catch (err) {
+    return res.status(502).json({ error: 'Failed to reach openFDA' });
   }
 });
 

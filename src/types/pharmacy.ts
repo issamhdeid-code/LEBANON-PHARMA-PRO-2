@@ -77,6 +77,18 @@ export interface Product {
   version: number; // Vector clock / incrementing version
 }
 
+// Lightweight deletion record kept so a product removed on one terminal during a
+// network outage cannot be resurrected by a stale copy merged back on reconnect.
+// version = the product's version at the moment it was deleted; a merge only keeps
+// an incoming copy when its own version exceeds the tombstone's.
+export interface ProductTombstone {
+  id: string;
+  code: string;
+  name: string;
+  deletedAt: number;
+  version: number;
+}
+
 export interface CartItem {
   product: Product;
   quantity: number;

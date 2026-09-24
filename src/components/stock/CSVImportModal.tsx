@@ -1,32 +1,16 @@
 import React, { useState } from 'react';
 import {
-  FileSpreadsheet,
   Upload,
-  Download,
   CheckCircle2,
-  AlertCircle,
-  X,
-  FileText,
-  Sparkles
+  AlertCircle
 } from 'lucide-react';
 import { usePharmacyData } from '../../context/PharmacyContext';
 import { DesktopWindow } from '../common/DesktopWindow';
-import { formatLBPValue } from '../../utils/priceUtils';
 
 interface CSVImportModalProps {
   onClose: () => void;
   section?: string;
 }
-
-const SAMPLE_CSV_CONTENT = `code, Name, Ingredients, Dosage, Presentation, Form, Price in LBP, Agent, Pharmacist Margin
-PAN500, Panadol Extra, Paracetamol + Caffeine, 500mg/65mg, 24 Film-Coated Tablets, Tablet, 315000, Mersaco Sal, 18
-AUG1G, Augmentin 1g, Amoxicillin + Clavulanate, 1g, 14 Film-Coated Tablets, Tablet, 895000, Omnipharma S.A.L., 20
-LIP20, Lipitor 20mg, Atorvastatin Calcium, 20mg, 30 Tablets, Tablet, 1253000, Khalil Fattal & Fils, 20
-CON5, Concor 5mg, Bisoprolol Fumarate, 5mg, 30 Tablets, Tablet, 537000, Droguerie de l'Union, 19
-NEX40, Nexium 40mg, Esomeprazole Magnesium, 40mg, 28 Tablets, Tablet, 1074000, Mersaco Sal, 20
-VEN100, Ventolin Evohaler, Salbutamol, 100mcg/puff, 200 Doses, Inhaler, 447500, Mersaco Sal, 18
-CLAR500, Klacid 500mg, Clarithromycin, 500mg, 14 Tablets, Tablet, 984500, Omnipharma S.A.L., 20
-PROF400, Brufen 400mg, Ibuprofen, 400mg, 30 Tablets, Tablet, 340000, Khalil Fattal & Fils, 18`;
 
 export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section }) => {
   const { importProductsFromCSV, exchangeRate } = usePharmacyData();
@@ -39,6 +23,7 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
     errors?: string[];
     count?: number;
   } | null>(null);
+  const [enrichAfterImport, setEnrichAfterImport] = useState(false);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -66,30 +51,13 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
     reader.readAsText(file, 'utf-8');
   };
 
-  const handleLoadSample = () => {
-    setCsvContent(SAMPLE_CSV_CONTENT);
-    setFileName('sample_lebanon_drugs.csv');
-    setStatus(null);
-  };
-
-  const handleDownloadSample = () => {
-    const blob = new Blob([`\uFEFF${SAMPLE_CSV_CONTENT}`], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'lebanon_pharmacy_template.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   const handleProcessImport = () => {
     if (!csvContent.trim()) {
-      setStatus({ success: false, message: 'Please upload a CSV file or paste data below.' });
+      setStatus({ success: false, message: 'Please upload a CSV file first.' });
       return;
     }
 
-    const res = importProductsFromCSV(csvContent);
+    const res = importProductsFromCSV(csvContent, { enrichAfterImport });
     if (res.success) {
       const skippedNote = res.skippedLowerPricesCount && res.skippedLowerPricesCount > 0
         ? ` (${res.skippedLowerPricesCount} price decrease${res.skippedLowerPricesCount > 1 ? 's were' : ' was'} skipped to preserve higher selling price, marked with red indicator)`
@@ -115,34 +83,6 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
       <div className="w-full flex-1 flex flex-col min-h-0 overflow-y-auto">
         {/* Content */}
         <div className="p-6 space-y-4 text-xs flex-1 flex flex-col justify-between">
-          {/* Headline Requirements Banner (Requirement 19) */}
-          <div
-            style={{ display: 'none' }}
-            className="hidden rounded-xl border border-blue-200 bg-blue-50/50 p-3.5 text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200"
-          >
-            <span className="font-bold block mb-1">
-              Required CSV Header Format (Requirement 19):
-            </span>
-            <code className="block rounded bg-white/80 p-2 font-mono text-[11px] font-semibold text-blue-800 dark:bg-slate-900 dark:text-blue-300 overflow-x-auto">
-              code, Name, Ingredients, Dosage, Presentation, Form, Price in LBP, Agent, Pharmacist Margin
-            </code>
-            <p className="mt-1.5 text-[11px] text-blue-700 dark:text-blue-300">
-              * Export CSV in Stock produces a compatible superset (adds Category, Subcategory, Barcode, Price USD, Cost Price USD, Stock Quantity, Min Stock Alert, Expiry Date, Batch Number, Batches, and packaging/divisibility columns) so the exported file can be imported back exactly.
-            </p>
-            <p className="mt-1 text-[11px] text-blue-700 dark:text-blue-300">
-              * All medicines imported will have category automatically set to <span className="font-bold">drug</span>, default stock quantity set to <span className="font-bold">0</span> with blank expiry, and USD prices calculated via current rate ($1 = {formatLBPValue(exchangeRate)} L.L.) — unless the CSV explicitly provides those columns.
-            </p>
-            <p className="mt-1 text-[11px] text-blue-700 dark:text-blue-300">
-              * <span className="font-semibold">Price Safeguard:</span> If a new price in the CSV is lower than the existing price, the price update is skipped to preserve your current inventory value, while displaying the decrease indicator (red arrow and % change).
-            </p>
-            <div className="mt-2 flex items-center space-x-1.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 p-1.5 rounded border border-emerald-200 dark:border-emerald-800">
-              <Sparkles className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-              <span>
-                Automatic Online Scientific Monograph: Active ingredients are automatically queried online to populate indications, contraindications, side effects, and in-stock generic bio-equivalents.
-              </span>
-            </div>
-          </div>
-
           {status && (
             <div
               className={`rounded-xl p-3 text-xs ${
@@ -169,8 +109,8 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
             </div>
           )}
 
-          {/* Upload Box & Sample Action */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Upload Box */}
+          <div className="grid grid-cols-1 gap-3">
             <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 p-4 text-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/20 dark:border-slate-700 dark:bg-slate-800/30">
               <Upload className="h-6 w-6 text-slate-400 mb-1" />
               <span className="font-bold text-slate-700 dark:text-slate-200">
@@ -185,45 +125,16 @@ export const CSVImportModal: React.FC<CSVImportModalProps> = ({ onClose, section
               />
             </label>
 
-            <div
-              style={{ display: 'none' }}
-              className="hidden flex flex-col justify-center space-y-2 rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-800/30"
-            >
-              <span className="font-semibold text-slate-700 dark:text-slate-300">
-                Quick Actions & Template
-              </span>
-              <button
-                type="button"
-                onClick={handleLoadSample}
-                className="flex items-center space-x-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-              >
-                <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                <span>Load Demo Lebanese CSV</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleDownloadSample}
-                className="flex items-center space-x-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-              >
-                <Download className="h-3.5 w-3.5 text-blue-500" />
-                <span>Download Sample .CSV Template</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Raw CSV Text Preview / Editor */}
-          <div className="hidden" style={{ display: 'none' }}>
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              CSV Content Preview / Manual Paste
+            <label className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-slate-700 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-200">
+              <input
+                type="checkbox"
+                checked={enrichAfterImport}
+                onChange={(e) => setEnrichAfterImport(e.target.checked)}
+                className="h-3.5 w-3.5 rounded accent-emerald-600 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              />
+              <span className="font-bold">Enrich scientific monographs online after import</span>
+              <span className="text-[10px] text-slate-400">(network): fetch indications, contraindications, side effects & dosing for new drugs</span>
             </label>
-            <textarea
-              value={csvContent}
-              onChange={(e) => setCsvContent(e.target.value)}
-              placeholder="Paste comma-separated rows here..."
-              rows={7}
-              style={{ display: 'none' }}
-              className="hidden w-full rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-[11px] text-slate-800 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            />
           </div>
 
           {/* Action Buttons */}
