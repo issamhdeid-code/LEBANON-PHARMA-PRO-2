@@ -1171,6 +1171,7 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     estimateSize: () => (catalogViewMode === 'advanced' ? 245 : 105),
     overscan: 4,
     getItemKey: (index) => `${catalogViewMode}-${index}`,
+    useFlushSync: false,
   });
 
   // Reset focus when filters change

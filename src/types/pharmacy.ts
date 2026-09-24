@@ -149,6 +149,10 @@ export interface SaleTransaction {
   notes?: string;
   synced: boolean;
   isUnreal?: boolean;
+  pointsEarned?: number;
+  pointsRedeemed?: number;
+  pointsDiscountUSD?: number;
+  pointsDiscountLBP?: number;
 }
 
 export interface PurchaseItem {
@@ -294,6 +298,13 @@ export interface PharmacySettings {
       no: string;
     };
   };
+  // Loyalty Point System Configuration
+  loyaltyProgramEnabled?: boolean;
+  loyaltyPointsPerUSD?: number; // e.g. 1 point earned per $1 spent
+  loyaltyRedeemRatePoints?: number; // e.g. 100 points
+  loyaltyRedeemRateUSD?: number; // e.g. $1.00 USD (so 100 points = $1.00)
+  loyaltyMinPointsToRedeem?: number; // e.g. 10 points minimum to redeem
+  loyaltyMaxRedemptionPercent?: number; // e.g. 100% max discount from points
 }
 
 export type SyncStatus = 'offline' | 'connecting' | 'connected' | 'error';

@@ -32,10 +32,12 @@ import {
   Trash2,
   Database,
   ShieldCheck,
+  Star,
 } from 'lucide-react';
 import { UsersPanel } from './UsersPanel';
 import { StockSettingsPanel } from './StockSettingsPanel';
 import { SaleSettingsPanel } from './SaleSettingsPanel';
+import { LoyaltySettingsPanel } from './LoyaltySettingsPanel';
 import {
   backupToGoogleDrive,
   restoreFromGoogleDrive,
@@ -56,7 +58,7 @@ import { formatTime, formatDateTime } from '../../utils/dateUtils';
 
 export const SettingsView: React.FC = () => {
   const { settings, updateSettings, syncStatus, addNotification, exportBackup, restoreBackup, clearAllData } = usePharmacy();
-  const [settingsTab, setSettingsTab] = useState<'display' | 'network' | 'notifications' | 'backup' | 'users' | 'stock' | 'sale'>('display');
+  const [settingsTab, setSettingsTab] = useState<'display' | 'network' | 'notifications' | 'backup' | 'users' | 'stock' | 'sale' | 'loyalty'>('display');
   const [isTesting, setIsTesting] = useState(false);
   const [showClearDataModal, setShowClearDataModal] = useState(false);
   const [mode, setMode] = useState<'main' | 'secondary'>(settings.syncMode || 'main');
@@ -552,6 +554,17 @@ export const SettingsView: React.FC = () => {
           >
             <ShoppingCart className="h-4 w-4" /> Sale
           </button>
+          <button
+            id="tab-btn-loyalty"
+            onClick={() => setSettingsTab('loyalty')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              settingsTab === 'loyalty'
+                ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            <Star className="h-4 w-4 fill-amber-400" /> Loyalty Program
+          </button>
         </div>
 
         {settingsTab === 'display' && (
@@ -681,6 +694,7 @@ export const SettingsView: React.FC = () => {
 
         {settingsTab === 'stock' && <StockSettingsPanel />}
         {settingsTab === 'sale' && <SaleSettingsPanel />}
+        {settingsTab === 'loyalty' && <LoyaltySettingsPanel />}
 
         {settingsTab === 'notifications' && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">

@@ -2470,7 +2470,15 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setCustomers(prevCustomers => {
           const updatedCusts = prevCustomers.map(c => {
             if (c.id === fullSale.customerId) {
-              const addedPoints = Math.floor(fullSale.totalUSD * 2);
+              const programEnabled = settings.loyaltyProgramEnabled !== false;
+              const addedPoints = !programEnabled
+                ? 0
+                : fullSale.pointsEarned !== undefined
+                ? fullSale.pointsEarned
+                : Math.floor(fullSale.totalUSD * (settings.loyaltyPointsPerUSD ?? 1));
+              const redeemedPoints = fullSale.pointsRedeemed || 0;
+              const newPoints = Math.max(0, c.loyaltyPoints - redeemedPoints + addedPoints);
+
               let debtLBP = c.balanceLBP;
               let debtUSD = c.balanceUSD;
 
@@ -2481,7 +2489,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
               return {
                 ...c,
-                loyaltyPoints: c.loyaltyPoints + addedPoints,
+                loyaltyPoints: newPoints,
                 balanceUSD: debtUSD,
                 balanceLBP: debtLBP,
                 lastVisit: new Date().toISOString().split('T')[0],

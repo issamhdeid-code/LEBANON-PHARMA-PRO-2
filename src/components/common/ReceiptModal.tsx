@@ -191,6 +191,25 @@ const ThermalReceipt: React.FC<{ sale: SaleTransaction, settings: PharmacySettin
               </span>
             </div>
           ) : null}
+          {((sale.pointsRedeemed && sale.pointsRedeemed > 0) || (sale.pointsEarned && sale.pointsEarned > 0)) && (
+            <div className="pt-1.5 border-t border-dashed border-amber-300 dark:border-amber-700/80 text-[10px] space-y-0.5 text-amber-900 dark:text-amber-300 font-sans">
+              <div className="font-bold flex items-center justify-between">
+                <span>⭐ Patient Loyalty Rewards</span>
+              </div>
+              {sale.pointsRedeemed && sale.pointsRedeemed > 0 && (
+                <div className="flex justify-between text-rose-700 dark:text-rose-400 font-semibold">
+                  <span>Redeemed Points:</span>
+                  <span>-{sale.pointsRedeemed} pts (-${(sale.pointsDiscountUSD || 0).toFixed(2)})</span>
+                </div>
+              )}
+              {sale.pointsEarned !== undefined && sale.pointsEarned > 0 && (
+                <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-semibold">
+                  <span>Points Earned Today:</span>
+                  <span>+{sale.pointsEarned} pts</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

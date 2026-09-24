@@ -1553,6 +1553,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     getScrollElement: () => parentRef.current,
     estimateSize: () => 44,
     overscan: 10,
+    useFlushSync: false,
   });
 
   // Comprehensive table scroll and virtualizer top reset

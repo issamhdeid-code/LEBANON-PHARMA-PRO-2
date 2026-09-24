@@ -55,6 +55,12 @@ export const INITIAL_SETTINGS: PharmacySettings = {
     cosmetics: 11,
     para: 11,
   },
+  loyaltyProgramEnabled: true,
+  loyaltyPointsPerUSD: 1,
+  loyaltyRedeemRatePoints: 100,
+  loyaltyRedeemRateUSD: 1.0,
+  loyaltyMinPointsToRedeem: 10,
+  loyaltyMaxRedemptionPercent: 100,
   invoiceTemplate: {
     enabled: false,
     headerEnglish: {
