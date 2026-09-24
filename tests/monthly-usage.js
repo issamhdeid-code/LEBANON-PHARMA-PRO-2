@@ -459,11 +459,29 @@ async function seedCatalog(t, count) {
     }
   }
   if (!opened && !textarea) throw new Error('CSV import modal could not be opened');
-  if (!textarea) throw new Error('CSV textarea not found after opening modal');
-  await t.page.evaluate((csv) => {
-    const el = window.__PT.inputByPlaceholder('Paste comma-separated rows here...');
-    window.__PT.setValue(el, csv);
-  }, genCsv(count));
+  // The current CSV import UI is file-upload only (the paste editor is hidden in
+  // CSVImportModal). Seed through the hidden file input when there is no paste textarea.
+  let usedFile = false;
+  if (textarea) {
+    await t.page.evaluate((csv) => {
+      const el = window.__PT.inputByPlaceholder('Paste comma-separated rows here...');
+      window.__PT.setValue(el, csv);
+    }, genCsv(count));
+  } else {
+    const tmpFile = path.join(os.tmpdir(), `lpp2-seed-${process.pid}-${Date.now()}.csv`);
+    fs.writeFileSync(tmpFile, '\uFEFF' + genCsv(count));
+    try {
+      const handles = await t.page.$$('input[type="file"]');
+      if (handles.length) {
+        await handles[handles.length - 1].uploadFile(tmpFile);
+        usedFile = true;
+        await sleep(1200);
+      }
+    } catch (e) {
+      usedFile = false;
+    }
+  }
+  if (!textarea && !usedFile) throw new Error('CSV textarea not found after opening modal');
   await sleep(400);
   const done = await clickText(t.page, 'Import to Inventory');
   if (!done) {
@@ -599,6 +617,19 @@ async function restockPurchase(t, codes) {
     invoiceHasItems = await t.page.evaluate(() => !document.body.innerText.includes('No items added to invoice yet.'));
   }
   if (!invoiceHasItems) return false;
+  // PurchaseView defaults new invoices to "Settled (Paid)" which blocks saving until a
+  // Receipt Number is provided. Switch to "Unpaid / On Account" so every purchase
+  // records (this harness buys hundreds of invoices and never intends to pay cash).
+  const setUnpaid = await t.page.evaluate(() => {
+    const sel = window.__PT.all('select').find((s) => window.__PT.vis(s) && Array.from(s.options).some((o) => (o.innerText || '').includes('Unpaid / On Account')));
+    return sel ? window.__PT.setValue(sel, 'unpaid') : false;
+  });
+  if (!setUnpaid) {
+    // fallback: the select may be outside the modal flow — try a receipt number instead
+    const receipt = window.__PT.all('input').find((el) => window.__PT.vis(el) && /receipt/i.test((el.placeholder || '') + ' ' + (el.id || '')));
+    if (receipt) window.__PT.setValue(receipt, 'REC-' + Math.floor(Date.now()));
+  }
+  await sleep(300);
   const completed = await clickText(t.page, 'Receive & Restock Items');
   await sleep(1400);
   return completed;
