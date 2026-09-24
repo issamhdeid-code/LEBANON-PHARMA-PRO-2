@@ -12,6 +12,8 @@ interface DesktopWindowProps {
   children: React.ReactNode;
   width?: string;
   height?: string;
+  initialWidth?: number;
+  initialHeight?: number;
   minWidth?: number;
   minHeight?: number;
   maxWidth?: number;

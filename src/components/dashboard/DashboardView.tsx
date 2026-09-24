@@ -25,6 +25,7 @@ import { formatLBPValue } from '../../utils/priceUtils';
 import { formatTime } from '../../utils/dateUtils';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
 import { LowStockForecastWidget } from './LowStockForecastWidget';
+import { UpcomingExpiryWidget } from './UpcomingExpiryWidget';
 import { PurchaseItem } from '../../types/pharmacy';
 
 interface DashboardViewProps {
@@ -290,6 +291,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         exchangeRate={exchangeRate}
         onSendToPurchase={handleSendToPurchase}
         onViewProduct={onViewScientific}
+      />
+
+      {/* Upcoming Medicine Expiry Tracking (30, 60, 90 Days) */}
+      <UpcomingExpiryWidget
+        products={products}
+        exchangeRate={exchangeRate}
+        onViewProduct={onViewScientific}
+        onOpenPriceUpdater={onOpenPriceUpdater}
+        onNavigate={onNavigate}
       />
 
       {/* Two Columns: Low Stock Alerts + Recent Sales */}
