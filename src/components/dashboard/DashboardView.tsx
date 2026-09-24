@@ -24,9 +24,7 @@ import { formatStockDisplay } from '../../utils/stockUtils';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { formatTime } from '../../utils/dateUtils';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
-import { LowStockForecastWidget } from './LowStockForecastWidget';
 import { UpcomingExpiryWidget } from './UpcomingExpiryWidget';
-import { PurchaseItem } from '../../types/pharmacy';
 
 interface DashboardViewProps {
   onNavigate: (view: any) => void;
@@ -50,33 +48,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     exchangeRate,
     formatLBP,
     formatUSD,
-    addNotification,
   } = usePharmacy();
-
-  const handleSendToPurchase = (orderData: {
-    supplierId?: string;
-    supplierName?: string;
-    items: PurchaseItem[];
-  }) => {
-    try {
-      localStorage.setItem('pos_pending_purchase_order', JSON.stringify({
-        ...orderData,
-        timestamp: Date.now(),
-      }));
-      window.dispatchEvent(new CustomEvent('load_pending_purchase_order', { detail: orderData }));
-    } catch {
-      // Fallback
-    }
-
-    addNotification(
-      'Forecast Order Transferred',
-      `Transferred ${orderData.items.length} forecast items to the Purchase tab.`,
-      'inventory',
-      'success'
-    );
-
-    onNavigate('purchase');
-  };
 
   // Real sales only (unreal / fictitious invoices are excluded from dashboard)
   const realSales = useMemo(() => sales.filter((s) => !s.isUnreal), [sales]);
@@ -282,16 +254,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Low Stock Depletion Forecast & Smart Reordering */}
-      <LowStockForecastWidget
-        products={products}
-        sales={realSales}
-        suppliers={suppliers}
-        exchangeRate={exchangeRate}
-        onSendToPurchase={handleSendToPurchase}
-        onViewProduct={onViewScientific}
-      />
 
       {/* Upcoming Medicine Expiry Tracking (30, 60, 90 Days) */}
       <UpcomingExpiryWidget

@@ -2203,66 +2203,6 @@ export const PurchaseView: React.FC = () => {
     showFeedback('success', `Autofilled purchase invoice with ${data.items.length} items from ${data.supplierName || 'invoice'}.`);
   };
 
-  const handleApplyForecastOrder = useCallback((data: {
-    supplierId?: string;
-    supplierName?: string;
-    items: PurchaseItem[];
-  }) => {
-    restoreWindow('purchase-invoice-window');
-    restoreWindow('new_purchase_invoice');
-    restoreWindow('Receive Supplier Shipment');
-    restoreSectionWindows('purchase');
-
-    setIsViewMode(false);
-    setIsCreateOpen(true);
-    setEditingPurchaseId(null);
-    setSelectedSupplierId(data.supplierId || '');
-    setSupplierSearchQuery(data.supplierName || '');
-    setInvoiceDate(new Date().toISOString().split('T')[0]);
-    setIsPaid(false);
-    setPaymentReceiptNumber('');
-    setPurchaseCurrency('USD');
-    setInvoiceDiscount('0');
-    setInvoiceDiscountAmount('0');
-    setManualTotal('');
-    setItems(data.items);
-
-    showFeedback('success', `Populated new purchase order with ${data.items.length} low-stock forecast items.`);
-  }, [restoreWindow, restoreSectionWindows]);
-
-  // Listen for low-stock forecast transfer events
-  useEffect(() => {
-    const handlePendingEvent = (e: any) => {
-      if (e.detail) {
-        handleApplyForecastOrder(e.detail);
-        localStorage.removeItem('pos_pending_purchase_order');
-      }
-    };
-
-    window.addEventListener('load_pending_purchase_order', handlePendingEvent);
-
-    // Also check on mount if there's an unconsumed pending order
-    try {
-      const stored = localStorage.getItem('pos_pending_purchase_order');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
-          // If recent (within 5 minutes)
-          if (Date.now() - (parsed.timestamp || 0) < 300_000) {
-            handleApplyForecastOrder(parsed);
-          }
-          localStorage.removeItem('pos_pending_purchase_order');
-        }
-      }
-    } catch {
-      // Ignore
-    }
-
-    return () => {
-      window.removeEventListener('load_pending_purchase_order', handlePendingEvent);
-    };
-  }, [handleApplyForecastOrder]);
-
   const handleViewPurchase = (inv: PurchaseInvoice) => {
     restoreWindow('purchase-invoice-window');
     restoreWindow('view_purchase_invoice');
