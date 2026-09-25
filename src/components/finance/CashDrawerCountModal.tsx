@@ -33,7 +33,6 @@ const USD_DENOMINATIONS = [
 ];
 
 const LBP_DENOMINATIONS = [
-  { value: 250000, label: '250,000 L.L.' },
   { value: 100000, label: '100,000 L.L.' },
   { value: 50000, label: '50,000 L.L.' },
   { value: 20000, label: '20,000 L.L.' },
