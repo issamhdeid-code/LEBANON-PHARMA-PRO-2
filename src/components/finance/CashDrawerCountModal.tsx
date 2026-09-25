@@ -382,7 +382,7 @@ export const CashDrawerCountModal: React.FC<CashDrawerCountModalProps> = ({
 
                 {/* Discrepancy Status */}
                 <div className="rounded-lg bg-white p-2.5 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 shadow-2xs">
-                  <div className="text-[10px] uppercase font-bold text-slate-400">Varience</div>
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Variance</div>
                   <div className="flex items-center justify-between mt-1 text-xs font-mono font-bold">
                     <span className={diffUSD === 0 ? 'text-emerald-600' : diffUSD > 0 ? 'text-amber-600' : 'text-rose-600'}>
                       {diffUSD >= 0 ? '+' : ''}${diffUSD.toFixed(2)}
