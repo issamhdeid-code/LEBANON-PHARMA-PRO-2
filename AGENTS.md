@@ -91,6 +91,11 @@ security sections).
   not happen.
 - Where automated coverage cannot reach a feature, manually verify that feature
   AND its neighbors still work. "It compiles" is never proof.
+- VERIFY-THEN-REPORT GATE — every completed task ends with a report that
+  includes the verification evidence actually run (e.g. the `npm run lint`
+  result, targeted test output, spot-check note), never just an assertion of
+  success. If a gate was skipped, say so and why. Reports must not contain
+  claims the gates did not produce.
 - Puppeteer E2E harness lives in tests/*.js (e.g. tests/full-walkthrough.js:
   boots its OWN server on port 3456; pass/fail exit code). NEVER touch the dev
   server and NEVER modify server.ts for tests. Port 3000 is dev-only.
@@ -146,3 +151,8 @@ security sections).
   uncertain. Batch independent tool calls in one message; token economy: read
   only target-referenced files. Independent gates run in parallel; verify before
   claiming success.
+- ASSUMPTION LIST — any fact not just verified with a tool (external behavior,
+  unread file contents, guessed directory structure, third-party API shape) must
+  be labeled *assumed* in the final report; only tool-verified facts may be
+  stated as fact. When a load-bearing assumption is unavoidable, state it BEFORE
+  implementing so the user can correct it early.
