@@ -234,11 +234,6 @@ export const CashDrawerCountModal: React.FC<CashDrawerCountModalProps> = ({
                   {mode === 'close' ? 'Z-Close Session' : 'Spot Check Only'}
                 </span>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                {mode === 'close'
-                  ? 'Count cash notes to reconcile drawer against sales and close out register session.'
-                  : 'Enter physical note quantities to verify register balances without modifying cash totals.'}
-              </p>
             </div>
           </div>
 
