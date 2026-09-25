@@ -14,9 +14,13 @@ import { Product } from './types/pharmacy';
 import { NotificationToastContainer } from './components/common/NotificationToastContainer';
 import { NotificationsModal } from './components/common/NotificationsModal';
 import { ReadOnlyArchiveBanner } from './components/common/ReadOnlyArchiveBanner';
-import { DevElementPicker } from './components/common/DevElementPicker';
 import { useWindowContext } from './context/WindowContext';
 import { useAutomatedLocalBackup } from './hooks/useAutomatedLocalBackup';
+
+const isDevBuild = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
+const DevElementPicker = isDevBuild
+  ? lazy(() => import('./components/common/DevElementPicker').then((m) => ({ default: m.DevElementPicker })))
+  : null;
 
 // Code-splitting (F4): every secondary view loads its own chunk only on first visit,
 // so startup parses just the shell + dashboard. Combined with lazy mounting (F1),
@@ -172,8 +176,8 @@ const PharmacyAppContent: React.FC = () => {
       {/* Read-Only Archive Banner if viewing a closed fiscal year */}
       <ReadOnlyArchiveBanner />
 
-      {/* Dev-only element picker: active only when localStorage lp_dev_picker === '1' */}
-      <DevElementPicker />
+      {/* Dev-only element picker: active only in Vite development builds with localStorage lp_dev_picker === '1' */}
+      {DevElementPicker ? <DevElementPicker /> : null}
 
       {/* Main View Area */}
       <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">

@@ -175,7 +175,7 @@ app.use((req, res, next) => {
   // res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-LP-Dev-Editor');
   const origin = req.headers.origin;
   if (origin && isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -196,6 +196,41 @@ app.get('/api/health', (req, res) => {
     protocol: SYNC_PROTOCOL_VERSION,
   });
 });
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  const normalized = String(address || '').toLowerCase().replace(/^::ffff:/, '');
+  return normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost';
+}
+
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/api/dev/visual-editor/apply', rateLimit(20, 60_000), (req, res, next) => {
+    if (!isLoopbackAddress(req.socket.remoteAddress || req.ip)) {
+      return res.status(403).json({ error: 'The visual editor is available only from the local machine.' });
+    }
+    if (req.get('X-LP-Dev-Editor') !== '1') {
+      return res.status(403).json({ error: 'Missing visual-editor request header.' });
+    }
+    next();
+  }, async (req, res) => {
+    let DevVisualEditorError: typeof import('./src/services/devVisualEditorServer').DevVisualEditorError | undefined;
+    try {
+      const devEditor = await import('./src/services/devVisualEditorServer');
+      DevVisualEditorError = devEditor.DevVisualEditorError;
+      const result = await devEditor.applyDevVisualEditor(req.body, process.cwd());
+      return res.json(result);
+    } catch (error: any) {
+      if (DevVisualEditorError && error instanceof DevVisualEditorError) {
+        return res.status(error.status).json({
+          error: error.message,
+          code: error.code,
+          ...(error.details ? { details: error.details } : {}),
+        });
+      }
+      console.error('Visual editor source apply failed:', error);
+      return res.status(500).json({ error: 'The source file could not be updated.' });
+    }
+  });
+}
 
 // Local IPv4 addresses of this machine, so the Main PC can show the Secondary
 // exactly which address to pair with. Reuses the security envelope's own cache.

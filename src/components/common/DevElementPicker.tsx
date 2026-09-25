@@ -1,4 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { DEV_VISUAL_EDITOR_MAX_OPERATIONS } from '../../types/devVisualEditor';
+import type {
+  DevVisualEditorApplyRequest,
+  DevVisualEditorCandidate,
+  DevVisualEditorOperation,
+} from '../../types/devVisualEditor';
 
 interface PickedElement {
   tag: string;
@@ -20,38 +26,63 @@ type EditAction =
       kind: 'rename';
       element: HTMLElement;
       beforeHtml: string;
+      beforeText: string;
+      afterText: string;
     }
   | {
       kind: 'resize';
       element: HTMLElement;
       beforeWidth: string;
       beforeHeight: string;
+      anchorText: string;
+      tag: string;
+      width: string;
+      height: string;
     }
   | {
       kind: 'remove';
       element: HTMLElement;
       parent: Node;
       nextSibling: Node | null;
+      anchorText: string;
+      tag: string;
     };
 
 const visibleTextOf = (el: HTMLElement): string =>
   (el.innerText || el.textContent || '').trim();
 
-const hasDirectText = (el: HTMLElement): boolean =>
-  Array.from(el.childNodes).some(
-    (node) => node.nodeType === 3 && Boolean((node.textContent || '').trim())
+const directTextNodesOf = (el: HTMLElement): Text[] =>
+  Array.from(el.childNodes).filter(
+    (node): node is Text => node.nodeType === 3 && Boolean((node.textContent || '').trim())
   );
+
+const directTextAnchorOf = (el: HTMLElement): string =>
+  directTextNodesOf(el)[0]?.textContent?.trim() || '';
+
+const sourceTextAnchorOf = (el: HTMLElement): string => {
+  const direct = directTextAnchorOf(el);
+  if (direct) return direct;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const text = (node.textContent || '').trim();
+    if (text) return text;
+    node = walker.nextNode();
+  }
+  return '';
+};
 
 const canRenameElement = (el: HTMLElement): boolean => {
   const tag = el.tagName.toLowerCase();
-  return !['input', 'textarea', 'select'].includes(tag) && (el.children.length === 0 || hasDirectText(el));
+  const directTextCount = directTextNodesOf(el).length;
+  return !['input', 'textarea', 'select'].includes(tag)
+    && directTextCount <= 1
+    && (el.children.length === 0 || directTextCount === 1);
 };
 
 const setElementText = (el: HTMLElement, text: string): boolean => {
   if (!canRenameElement(el)) return false;
-  const directText = Array.from(el.childNodes).find(
-    (node) => node.nodeType === 3 && Boolean((node.textContent || '').trim())
-  );
+  const directText = directTextNodesOf(el)[0];
   if (directText) {
     directText.textContent = text;
   } else {
@@ -60,6 +91,60 @@ const setElementText = (el: HTMLElement, text: string): boolean => {
   return true;
 };
 
+const toSourceOperation = (action: EditAction): DevVisualEditorOperation => {
+  if (action.kind === 'rename') {
+    return { kind: 'rename', beforeText: action.beforeText, afterText: action.afterText };
+  }
+  if (action.kind === 'resize') {
+    return {
+      kind: 'resize',
+      anchorText: action.anchorText,
+      tag: action.tag,
+      width: action.width || null,
+      height: action.height || null,
+    };
+  }
+  return { kind: 'remove', anchorText: action.anchorText, tag: action.tag };
+};
+
+type SourceOperationRecord = {
+  operation: DevVisualEditorOperation;
+};
+
+const toSourceOperations = (actions: EditAction[]): DevVisualEditorOperation[] => {
+  const records: SourceOperationRecord[] = [];
+  const resizeRecords = new Map<HTMLElement, SourceOperationRecord>();
+  for (const action of actions) {
+    const operation = toSourceOperation(action);
+    if (operation.kind === 'resize') {
+      const previous = resizeRecords.get(action.element);
+      if (previous) {
+        const previousIndex = records.indexOf(previous);
+        if (previousIndex >= 0) records.splice(previousIndex, 1);
+      }
+      const record: SourceOperationRecord = { operation };
+      records.push(record);
+      resizeRecords.set(action.element, record);
+    } else {
+      records.push({ operation });
+    }
+  }
+  return records.map((record) => record.operation);
+};
+
+const describeSourceOperation = (operation: DevVisualEditorOperation): string => {
+  if (operation.kind === 'rename') {
+    return `Rename “${operation.beforeText}” → “${operation.afterText}”`;
+  }
+  if (operation.kind === 'resize') {
+    const size = [operation.width || 'auto', operation.height || 'auto'].join(' × ');
+    return `Resize <${operation.tag}> to ${size}`;
+  }
+  return `Remove <${operation.tag}> containing “${operation.anchorText}”`;
+};
+
+
+const MAX_PREVIEW_EDITS = DEV_VISUAL_EDITOR_MAX_OPERATIONS;
 
 const UTILITY_CLASS_RE = /^(flex|grid|w-|h-|p-|m-|gap|text-|bg-|rounded|border|shadow|focus|hover|dark:)/;
 
@@ -177,11 +262,15 @@ export const DevElementPicker: React.FC = () => {
   const [editorError, setEditorError] = useState('');
   const [editorNotice, setEditorNotice] = useState('');
   const [copyState, setCopyState] = useState('');
+  const [sourcePath, setSourcePath] = useState('');
+  const [sourceCandidates, setSourceCandidates] = useState<DevVisualEditorCandidate[]>([]);
+  const [sourceApplying, setSourceApplying] = useState(false);
   const hlRef = useRef<HTMLDivElement | null>(null);
   const lbRef = useRef<HTMLDivElement | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
   const pickCardRef = useRef<HTMLDivElement | null>(null);
   const selectedElRef = useRef<HTMLElement | null>(null);
+  const sourceTextRef = useRef('');
 
   useEffect(() => {
     if (!enabled) return;
@@ -262,6 +351,10 @@ export const DevElementPicker: React.FC = () => {
       setResizeWidth(el.style.width);
       setResizeHeight(el.style.height);
       setHistory([]);
+      sourceTextRef.current = sourceTextAnchorOf(el).slice(0, 500);
+      setSourcePath('');
+      setSourceCandidates([]);
+      setSourceApplying(false);
       setEditorError('');
       setEditorNotice('');
       setCopyState('');
@@ -308,6 +401,10 @@ export const DevElementPicker: React.FC = () => {
     setResizeWidth('');
     setResizeHeight('');
     setHistory([]);
+    sourceTextRef.current = '';
+    setSourcePath('');
+    setSourceCandidates([]);
+    setSourceApplying(false);
     setEditorError('');
     setEditorNotice('');
     setCopyState('');
@@ -319,18 +416,27 @@ export const DevElementPicker: React.FC = () => {
       setEditorError('The selected element is no longer in the preview. Pick it again.');
       return;
     }
+    if (history.length >= MAX_PREVIEW_EDITS) {
+      setEditorError(`Preview history is full. Undo an edit before adding another (maximum ${MAX_PREVIEW_EDITS}).`);
+      return;
+    }
     if (!canRenameElement(element)) {
       setEditorError('Rename is available for text elements with direct text content.');
       return;
     }
-    if (visibleTextOf(element) === renameText) return;
+    const beforeText = directTextAnchorOf(element);
+    if (!beforeText || beforeText.length > 500) {
+      setEditorError('Rename needs one direct text node no longer than 500 characters.');
+      return;
+    }
+    if (beforeText === renameText.trim()) return;
     const beforeHtml = element.innerHTML;
     if (!setElementText(element, renameText)) {
       setEditorError('This element cannot be renamed safely.');
       return;
     }
-    const action: EditAction = { kind: 'rename', element, beforeHtml };
-    setHistory((prev) => [...prev, action].slice(-50));
+    const action: EditAction = { kind: 'rename', element, beforeHtml, beforeText, afterText: renameText };
+    setHistory((prev) => [...prev, action]);
     updatePick(element, true);
   };
 
@@ -340,8 +446,14 @@ export const DevElementPicker: React.FC = () => {
       setEditorError('The selected element is no longer in the preview. Pick it again.');
       return;
     }
+    if (history.length >= MAX_PREVIEW_EDITS) {
+      setEditorError(`Preview history is full. Undo an edit before adding another (maximum ${MAX_PREVIEW_EDITS}).`);
+      return;
+    }
     const beforeWidth = element.style.width;
     const beforeHeight = element.style.height;
+    const anchorText = sourceTextAnchorOf(element);
+    const tag = element.tagName.toLowerCase();
     const width = resizeWidth.trim();
     const height = resizeHeight.trim();
     if (beforeWidth === width && beforeHeight === height) return;
@@ -357,8 +469,17 @@ export const DevElementPicker: React.FC = () => {
       setEditorError('Use a valid CSS size, such as 320px or 50%.');
       return;
     }
-    const action: EditAction = { kind: 'resize', element, beforeWidth, beforeHeight };
-    setHistory((prev) => [...prev, action].slice(-50));
+    const action: EditAction = {
+      kind: 'resize',
+      element,
+      beforeWidth,
+      beforeHeight,
+      anchorText,
+      tag,
+      width,
+      height,
+    };
+    setHistory((prev) => [...prev, action]);
     updatePick(element, true);
   };
 
@@ -366,6 +487,10 @@ export const DevElementPicker: React.FC = () => {
     const element = selectedElRef.current;
     if (!element || !element.isConnected) {
       setEditorError('The selected element is no longer in the preview. Pick it again.');
+      return;
+    }
+    if (history.length >= MAX_PREVIEW_EDITS) {
+      setEditorError(`Preview history is full. Undo an edit before adding another (maximum ${MAX_PREVIEW_EDITS}).`);
       return;
     }
     if (element === document.documentElement || element === document.body || element.id === 'root') {
@@ -377,11 +502,13 @@ export const DevElementPicker: React.FC = () => {
       setEditorError('This element cannot be removed safely.');
       return;
     }
+    const anchorText = sourceTextAnchorOf(element);
+    const tag = element.tagName.toLowerCase();
     const nextSibling = element.nextSibling;
     updatePick(element, false);
     element.remove();
-    const action: EditAction = { kind: 'remove', element, parent, nextSibling };
-    setHistory((prev) => [...prev, action].slice(-50));
+    const action: EditAction = { kind: 'remove', element, parent, nextSibling, anchorText, tag };
+    setHistory((prev) => [...prev, action]);
     setEditorNotice('Element removed from the preview. Use Undo to restore it.');
   };
 
@@ -413,6 +540,102 @@ export const DevElementPicker: React.FC = () => {
     setHistory((prev) => prev.slice(0, -1));
     updatePick(action.element, true);
     setEditorNotice('Last preview change undone.');
+  };
+
+  const applyToSource = async (): Promise<void> => {
+    if (sourceApplying || history.length === 0 || !pick) return;
+    const operations = toSourceOperations(history);
+    if (operations.some((operation) => operation.kind !== 'rename'
+      && (!operation.anchorText || operation.anchorText.length > 500))) {
+      setEditorError('One or more preview edits have no safe static text anchor for source apply.');
+      return;
+    }
+    const request: DevVisualEditorApplyRequest = {
+      sourceText: sourceTextRef.current,
+      operations,
+      dryRun: true,
+      ...(sourcePath ? { filePath: sourcePath } : {}),
+    };
+    setSourceApplying(true);
+    setEditorError('');
+    setEditorNotice('');
+    try {
+      const previewResponse = await fetch('/api/dev/visual-editor/apply', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-LP-Dev-Editor': '1',
+        },
+        body: JSON.stringify(request),
+      });
+      const previewPayload = await previewResponse.json() as {
+        error?: string;
+        code?: string;
+        details?: { candidates?: DevVisualEditorCandidate[] };
+        ok?: boolean;
+        filePath?: string;
+        hash?: string;
+        changed?: boolean;
+      };
+      if (!previewResponse.ok || !previewPayload.ok || !previewPayload.filePath || !previewPayload.hash) {
+        if (previewResponse.status === 409 && previewPayload.code === 'SOURCE_AMBIGUOUS') {
+          setSourceCandidates(previewPayload.details?.candidates || []);
+          setSourcePath('');
+          setEditorError('More than one source file matches. Choose the correct file, then apply again.');
+        } else {
+          setEditorError(previewPayload.error || 'The source preview could not be created.');
+        }
+        return;
+      }
+
+      setSourcePath(previewPayload.filePath);
+      if (previewPayload.changed === false) {
+        setEditorNotice('The selected changes already match the source file.');
+        return;
+      }
+      const summary = operations.slice(0, 6).map(describeSourceOperation).join('\n');
+      const confirmed = window.confirm(
+        `Write ${operations.length} preview change${operations.length === 1 ? '' : 's'} to ${previewPayload.filePath}?\n\n${summary}${operations.length > 6 ? '\n…' : ''}`
+      );
+      if (!confirmed) {
+        setEditorNotice('Source apply cancelled.');
+        return;
+      }
+
+      const writeResponse = await fetch('/api/dev/visual-editor/apply', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-LP-Dev-Editor': '1',
+        },
+        body: JSON.stringify({
+          ...request,
+          filePath: previewPayload.filePath,
+          expectedHash: previewPayload.hash,
+          dryRun: false,
+        } satisfies DevVisualEditorApplyRequest),
+      });
+      const writePayload = await writeResponse.json() as {
+        error?: string;
+        code?: string;
+        ok?: boolean;
+        filePath?: string;
+        hash?: string;
+      };
+      if (!writeResponse.ok || !writePayload.ok || !writePayload.filePath || !writePayload.hash) {
+        setEditorError(writePayload.error || 'The source file could not be updated.');
+        return;
+      }
+      setSourcePath(writePayload.filePath);
+      setHistory([]);
+      setSourceCandidates([]);
+      if (selectedElRef.current?.isConnected) sourceTextRef.current = sourceTextAnchorOf(selectedElRef.current).slice(0, 500);
+      setEditorNotice(`Applied source changes to ${writePayload.filePath}.`);
+    } catch {
+      setEditorError('The source editor could not reach the local dev server.');
+    } finally {
+      setSourceApplying(false);
+    }
   };
 
   const copySelector = async (): Promise<void> => {
@@ -480,7 +703,7 @@ export const DevElementPicker: React.FC = () => {
             ELEMENT PICKED ✓ — PREVIEW EDITOR
           </div>
           <div style={{ color: '#94a3b8', marginBottom: 8 }}>
-            Changes apply to this preview only. Reload to restore the source UI.
+            Preview changes are immediate. Use Apply to source to write pending edits to the local project.
           </div>
           <div>
             <b>Selector:</b>{' '}
@@ -505,6 +728,59 @@ export const DevElementPicker: React.FC = () => {
               <b>Value:</b> {pick.value}
             </div>
           ) : null}
+          <div
+            style={{
+              marginTop: 8,
+              padding: 8,
+              background: '#172033',
+              border: '1px solid #334155',
+              borderRadius: 7,
+            }}
+          >
+            <div style={{ color: '#86efac', fontWeight: 700 }}>SOURCE APPLY</div>
+            <div style={{ color: '#94a3b8', marginTop: 2 }}>
+              Pending preview edits can be written to one local src file after confirmation.
+            </div>
+            {sourceCandidates.length > 0 ? (
+              <label style={{ ...EDITOR_LABEL_STYLE, display: 'block', marginTop: 6 }}>
+                <span>Source file</span>
+                <select
+                  aria-label="Source file"
+                  value={sourcePath}
+                  onChange={(e) => {
+                    setSourcePath(e.target.value);
+                    setEditorError('');
+                  }}
+                  style={EDITOR_INPUT_STYLE}
+                >
+                  <option value="">Choose a source file…</option>
+                  {sourceCandidates.map((candidate) => (
+                    <option key={candidate.filePath} value={candidate.filePath}>
+                      {candidate.filePath} · line {candidate.line} · {candidate.occurrences} match
+                      {candidate.occurrences === 1 ? '' : 'es'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : sourcePath ? (
+              <div style={{ color: '#cbd5e1', marginTop: 6 }}>
+                Target: <code style={{ color: '#7dd3fc' }}>{sourcePath}</code>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={applyToSource}
+              disabled={sourceApplying || history.length === 0}
+              style={{
+                ...EDITOR_BUTTON_STYLE,
+                background: '#047857',
+                color: '#fff',
+                marginTop: 7,
+              }}
+            >
+              {sourceApplying ? 'Preparing source…' : 'Apply to source'}
+            </button>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
             <label style={{ ...EDITOR_LABEL_STYLE, gridColumn: '1 / -1' }}>
               <span>Text</span>
@@ -512,7 +788,7 @@ export const DevElementPicker: React.FC = () => {
                 aria-label="Selected element text"
                 value={renameText}
                 onChange={(e) => setRenameText(e.target.value)}
-                disabled={!selectedConnected || !canRenameSelected}
+                disabled={sourceApplying || !selectedConnected || !canRenameSelected}
                 style={EDITOR_INPUT_STYLE}
               />
             </label>
@@ -523,7 +799,7 @@ export const DevElementPicker: React.FC = () => {
                 value={resizeWidth}
                 onChange={(e) => setResizeWidth(e.target.value)}
                 placeholder="e.g. 320px"
-                disabled={!selectedConnected}
+                disabled={sourceApplying || !selectedConnected}
                 style={EDITOR_INPUT_STYLE}
               />
             </label>
@@ -534,7 +810,7 @@ export const DevElementPicker: React.FC = () => {
                 value={resizeHeight}
                 onChange={(e) => setResizeHeight(e.target.value)}
                 placeholder="e.g. 48px"
-                disabled={!selectedConnected}
+                disabled={sourceApplying || !selectedConnected}
                 style={EDITOR_INPUT_STYLE}
               />
             </label>
@@ -566,7 +842,7 @@ export const DevElementPicker: React.FC = () => {
             <button
               type="button"
               onClick={applyResize}
-              disabled={!selectedConnected}
+              disabled={sourceApplying || !selectedConnected}
               style={{ ...EDITOR_BUTTON_STYLE, background: '#0e7490', color: '#fff' }}
             >
               Apply size
@@ -574,7 +850,7 @@ export const DevElementPicker: React.FC = () => {
             <button
               type="button"
               onClick={removeSelected}
-              disabled={!selectedConnected}
+              disabled={sourceApplying || !selectedConnected}
               style={EDITOR_DANGER_BUTTON_STYLE}
             >
               Remove
@@ -582,7 +858,7 @@ export const DevElementPicker: React.FC = () => {
             <button
               type="button"
               onClick={undoLast}
-              disabled={history.length === 0}
+              disabled={sourceApplying || history.length === 0}
               style={EDITOR_SECONDARY_BUTTON_STYLE}
             >
               Undo
@@ -597,7 +873,7 @@ export const DevElementPicker: React.FC = () => {
             >
               Reload preview
             </button>
-            <button type="button" onClick={clearPick} style={EDITOR_SECONDARY_BUTTON_STYLE}>
+            <button type="button" onClick={clearPick} disabled={sourceApplying} style={EDITOR_SECONDARY_BUTTON_STYLE}>
               OK
             </button>
           </div>
