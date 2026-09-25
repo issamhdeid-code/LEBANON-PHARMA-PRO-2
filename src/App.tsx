@@ -14,6 +14,7 @@ import { Product } from './types/pharmacy';
 import { NotificationToastContainer } from './components/common/NotificationToastContainer';
 import { NotificationsModal } from './components/common/NotificationsModal';
 import { ReadOnlyArchiveBanner } from './components/common/ReadOnlyArchiveBanner';
+import { DevElementPicker } from './components/common/DevElementPicker';
 import { useWindowContext } from './context/WindowContext';
 import { useAutomatedLocalBackup } from './hooks/useAutomatedLocalBackup';
 
@@ -170,6 +171,9 @@ const PharmacyAppContent: React.FC = () => {
 
       {/* Read-Only Archive Banner if viewing a closed fiscal year */}
       <ReadOnlyArchiveBanner />
+
+      {/* Dev-only element picker: active only when localStorage lp_dev_picker === '1' */}
+      <DevElementPicker />
 
       {/* Main View Area */}
       <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
