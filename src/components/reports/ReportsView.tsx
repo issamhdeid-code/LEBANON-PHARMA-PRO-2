@@ -125,9 +125,6 @@ export const ReportsView: React.FC = () => {
                 Pharmacy Reports & Analytics
               </h2>
             </div>
-            <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-              Audit pharmacy performance, gross margins, and collect specialized operational and regulatory reports.
-            </p>
           </div>
 
           {activeSubTab === 'overview' ? (

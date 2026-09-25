@@ -410,9 +410,6 @@ export const UpcomingExpiryWidget: React.FC<UpcomingExpiryWidgetProps> = ({
                 30 / 60 / 90 Days Alert
               </span>
             </div>
-            <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-              Identifies medicines nearing expiration to enable First-Expired-First-Out (FEFO) discounts, return to agents, or quarantine.
-            </p>
           </div>
         </div>
 

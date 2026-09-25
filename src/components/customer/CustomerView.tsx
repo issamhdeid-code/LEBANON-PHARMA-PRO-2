@@ -527,9 +527,6 @@ export const CustomerView: React.FC = () => {
                 {customers.reduce((sum, c) => sum + (c.loyaltyPoints || 0), 0).toLocaleString()} Loyalty Points
               </span>
             </div>
-            <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-              Record patient drug allergies, chronic conditions, loyalty points, and counter account balances.
-            </p>
           </div>
           {activeTab === 'directory' && (
             <button

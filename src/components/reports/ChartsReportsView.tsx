@@ -631,9 +631,6 @@ export const ChartsReportsView: React.FC = () => {
               <BarChart3 className="h-4 w-4 text-teal-600" />
               Monthly Sales vs Purchases Comparison ({currencyMode})
             </h3>
-            <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-              Side-by-side analysis of monthly revenue generation vs inventory procurement expenditure.
-            </p>
           </div>
 
           <div className="flex items-center gap-3 text-xs font-semibold">

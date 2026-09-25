@@ -240,9 +240,6 @@ export const PurchaseReturnTab: React.FC = () => {
             <div className="flex flex-col items-center justify-center h-full text-slate-400 p-8 text-center">
               <RotateCcw className="h-12 w-12 text-slate-300 dark:text-slate-600 mb-3 stroke-[1.5]" />
               <p className="font-bold text-sm text-slate-700 dark:text-slate-300">No purchase returns recorded</p>
-              <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                Use the "New Return On Purchase" button to record items returned to suppliers for expiry swap or cash refund.
-              </p>
               <button
                 onClick={() => setIsNewReturnModalOpen(true)}
                 className="mt-4 flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer"

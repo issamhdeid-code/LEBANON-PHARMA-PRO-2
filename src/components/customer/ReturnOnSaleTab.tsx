@@ -119,9 +119,6 @@ export const ReturnOnSaleTab: React.FC = () => {
               {saleReturns.length} Total Returns
             </span>
           </div>
-          <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-            Accept returned goods from patients, automatically restore warehouse stock, and deduct from cash drawer or credit balance.
-          </p>
         </div>
 
         <button

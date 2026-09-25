@@ -568,9 +568,6 @@ export const QuantityAdjustmentsView: React.FC = () => {
                 Quantity Adjustments
               </h1>
             </div>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              Adjust stock levels and manage batches for inventory items.
-            </p>
           </div>
         </div>
 
@@ -1136,9 +1133,6 @@ export const QuantityAdjustmentsView: React.FC = () => {
                       {allAdjustmentActivities.length} {allAdjustmentActivities.length === 1 ? 'Record' : 'Records'}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Complete history of stock counts, batch corrections, and audit adjustments
-                  </p>
                 </div>
               </div>
             </div>

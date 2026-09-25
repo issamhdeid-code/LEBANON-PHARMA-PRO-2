@@ -110,9 +110,6 @@ export const FinanceView: React.FC = () => {
             <Wallet className="h-7 w-7 text-teal-600 dark:text-teal-400" />
             Financial Dashboard
           </h1>
-          <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-1">
-            Track revenue, margins, expenses, and tax configurations
-          </p>
         </div>
       </div>
 

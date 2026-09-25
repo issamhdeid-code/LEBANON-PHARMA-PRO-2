@@ -229,9 +229,6 @@ export const LogsView: React.FC = () => {
                 Offline Event Stream
               </span>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Real-time audit trail and state telemetry tracking dispensing, stock movements, supplier invoices, scientific lookups, and system configurations.
-            </p>
           </div>
 
           {/* Quick Action Buttons */}

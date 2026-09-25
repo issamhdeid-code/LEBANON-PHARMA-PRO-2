@@ -2292,9 +2292,6 @@ export const PurchaseView: React.FC = () => {
                 Purchases & Supplier Invoices
               </h2>
             </div>
-            <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-              Restock inventory from Lebanese agents (Mersaco, Omnipharma, Fattal) & track shipment arrivals.
-            </p>
           </div>
 
           <div className="flex items-center gap-2">

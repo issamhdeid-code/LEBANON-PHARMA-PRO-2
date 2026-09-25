@@ -188,9 +188,6 @@ export const SupplierView: React.FC = () => {
               {suppliers.length} Agents
             </span>
           </div>
-          <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-            Lebanese drug agencies, agent directories, and pending payable balances.
-          </p>
         </div>
 
         {/* Search */}

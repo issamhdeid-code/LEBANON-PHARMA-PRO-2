@@ -118,9 +118,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Pharmacy Operations Dashboard
             </h1>
           </div>
-          <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-            Real-time point-of-sale analytics, inventory alerts, written-off differences audit, and dual-currency revenues.
-          </p>
         </div>
 
         {/* Quick Action Buttons */}
