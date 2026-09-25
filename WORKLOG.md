@@ -145,17 +145,36 @@ This log tracks all architectural decisions, feature implementations, and module
   - Hid the "Quick Actions & Template" side card (`CSS selector 2`).
   - Hid the raw CSV preview and manual paste textarea block (`CSS selector 3`).
 
+#### 10. Settings & Accounting Module — Fiscal Year Closing & Archiving Engine
+- **Requirement**: Implement a complete, irreversible "Year Closing & Archiving" accounting workflow under Settings with audit certifications, inventory rollover, opening balance carryover, historical read-only archives, and multi-terminal synchronization.
+- **Implementation**:
+  - **Data Model & Synchronization** (`src/types/pharmacy.ts`, `src/services/storage.ts`, `src/context/PharmacyContext.tsx`):
+    - Defined `YearClosingRecord` and `YearClosingSummary` tracking closed fiscal years, timestamps, signoff notes, authorized pharmacist, sales/purchases/expenses/payments totals, and inventory valuations.
+    - Added `closedYears` storage in `OfflineStorage` (`getClosedYears()`, `saveClosedYears()`) and included in full JSON backup/restore exports.
+    - Added `closeFiscalYear()` handler in `PharmacyContext` with multi-terminal sync broadcasting (`YEAR_CLOSED`) and snapshot synchronization between Main and Secondary terminals.
+    - **Stock & Inventory Rollover**: Inventory quantities, batches, expiry dates, and cost prices carry over intact into the new fiscal year.
+    - **Customer & Supplier Balance Rollover**: Outstanding customer debt and supplier payables carry over as opening balances for the new fiscal year.
+    - **Annual Ledger Reset**: Archived year transactions remain safely stored while active operational counters begin fresh for the new year.
+  - **User Interface Components** (`src/components/settings/YearClosingModal.tsx`, `src/components/settings/ClosedYearsViewModal.tsx`, `src/components/settings/SettingsView.tsx`):
+    - Added "Fiscal Year Closing & Archiving" section in Settings with action to trigger closing or view historical archives.
+    - **Year Closing Modal**: Multi-step safety flow with audit summary preview, password/passcode verification, confirmation typing guard, note input, and irreversible execution notice.
+    - **Closed Years Archive Explorer**: Inspect past closed years, search and review historical financial summaries, and print or export formal Annual Audit Signoff Certificates with official MOPH pharmacy stamps.
+  - **Unit Testing** (`src/services/yearClosing.test.ts`):
+    - Comprehensive Vitest test suite verifying summary calculation, inventory quantity & batch carryover, customer/supplier opening balance preservation, and full backup/restore compatibility. All 20 test files and 189 tests passing.
+
 ---
 
-## Ongoing Backlog & Next Steps
+## Ongoing Backlog & Next Steps for OpenCode
 
 1. **POS Grid Layout**:
    - Allow 4 product cards next to each other in POS mode.
-   - Adjust card dimensions and text alignment.
+   - Adjust card dimensions and text alignment for high-density touch/POS displays.
 2. **Scientifics Generic Alternatives Ordering & Filtering**:
    - In "4. Generic Alternatives in Lebanon", list single active ingredient alternatives matching the product first.
    - List multi-ingredient combinations containing the molecule second.
    - Prioritize in-stock alternatives while showing all alternatives regardless of stock status.
    - Audit molecule matching to ensure exact active ingredient correspondence.
-3. **Multi-Terminal LAN Connectivity**:
+3. **Multi-Terminal LAN Connectivity & Secondary PC Verification**:
    - Validate peer connection and developer view access for secondary PCs on the local network.
+4. **Year Closing Historical Transaction Filtering**:
+   - Add global fiscal year selector filter in Reports and Transaction logs to switch between active year and archived closed years.

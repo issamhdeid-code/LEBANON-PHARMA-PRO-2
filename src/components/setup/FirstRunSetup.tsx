@@ -13,7 +13,7 @@ type Step = 'role' | 'secondary-wait' | 'identity' | 'admin';
 // Main PC: define the pharmacy identity and create the first admin account here.
 // Secondary PC: point at an already-running Main PC and pull all of its data instead.
 export const FirstRunSetup: React.FC = () => {
-  const { settings, updateSettings, syncStatus, reconnectSync, addUser, users, addNotification, restoreBackup } = usePharmacy();
+  const { settings, updateSettings, syncStatus, reconnectSync, addUser, users, addNotification, restoreBackup, switchWorkingYear } = usePharmacy();
 
   const [step, setStep] = useState<Step>('role');
   const [role, setRole] = useState<'main' | 'secondary'>('main');
@@ -33,6 +33,7 @@ export const FirstRunSetup: React.FC = () => {
     defaultCurrency: 'BOTH' as 'LBP' | 'USD' | 'BOTH',
     lowStockThreshold: '10',
     expiryWarningDays: '90',
+    fiscalYear: String(new Date().getFullYear()),
   });
   const [identityError, setIdentityError] = useState<string | null>(null);
 
@@ -102,6 +103,12 @@ export const FirstRunSetup: React.FC = () => {
       return;
     }
     setIdentityError(null);
+    const parsedYear = Number(identity.fiscalYear) || new Date().getFullYear();
+    sessionStorage.setItem('pharma_working_year', String(parsedYear));
+    sessionStorage.setItem('pharma_is_archive_readonly', 'false');
+    if (switchWorkingYear) {
+      switchWorkingYear(parsedYear).catch(() => {});
+    }
     updateSettings({
       pharmacyName: identity.pharmacyName.trim(),
       pharmacyPhone: identity.pharmacyPhone.trim(),
@@ -375,6 +382,18 @@ export const FirstRunSetup: React.FC = () => {
                     <option value="LBP">L.L. only</option>
                     <option value="USD">$ only</option>
                   </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">Fiscal / Working Year *</label>
+                  <input
+                    type="number"
+                    min="2000"
+                    max="2100"
+                    value={identity.fiscalYear}
+                    onChange={(e) => setIdentity(s => ({ ...s, fiscalYear: e.target.value }))}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-md text-sm outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                  <span className="text-[10px] text-slate-400">Year to start transactional accounting registers.</span>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">Low Stock Threshold</label>

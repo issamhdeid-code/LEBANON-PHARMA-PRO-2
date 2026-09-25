@@ -13,6 +13,7 @@ import { MOPHPriceUpdaterModal } from './components/stock/MOPHPriceUpdaterModal'
 import { Product } from './types/pharmacy';
 import { NotificationToastContainer } from './components/common/NotificationToastContainer';
 import { NotificationsModal } from './components/common/NotificationsModal';
+import { ReadOnlyArchiveBanner } from './components/common/ReadOnlyArchiveBanner';
 import { useWindowContext } from './context/WindowContext';
 import { useAutomatedLocalBackup } from './hooks/useAutomatedLocalBackup';
 
@@ -166,6 +167,9 @@ const PharmacyAppContent: React.FC = () => {
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-[#f8fafc] font-sans text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       {/* 9-Tab Ribbon Navigation */}
       <TopRibbon />
+
+      {/* Read-Only Archive Banner if viewing a closed fiscal year */}
+      <ReadOnlyArchiveBanner />
 
       {/* Main View Area */}
       <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">

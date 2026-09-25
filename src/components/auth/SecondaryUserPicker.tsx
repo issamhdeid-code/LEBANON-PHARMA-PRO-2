@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { Lock, ShieldCheck, ArrowRight, AlertCircle, KeyRound, Wifi, WifiOff } from 'lucide-react';
+import { Lock, ShieldCheck, ArrowRight, AlertCircle, KeyRound, Wifi, WifiOff, Calendar, Archive } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 
 // Shown on a Secondary PC before login: pick which synced account this terminal will use.
 // Accounts already signed in on another PC are hidden to avoid two terminals sharing one identity.
 export const SecondaryUserPicker: React.FC = () => {
-  const { users, settings, activeSessions, syncStatus, login } = usePharmacy();
+  const { users, settings, activeSessions, syncStatus, login, workingYear, closedYears } = usePharmacy();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [password, setPassword] = useState('');
+  const [selectedYear, setSelectedYear] = useState<number>(workingYear);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [manualMode, setManualMode] = useState(false);
@@ -28,7 +29,7 @@ export const SecondaryUserPicker: React.FC = () => {
     setError(null);
     setIsLoading(true);
     setTimeout(() => {
-      const res = login(selectedUser.username, password);
+      const res = login(selectedUser.username, password, selectedYear);
       if (!res.success) setError(res.error || 'Invalid password.');
       setIsLoading(false);
     }, 150);
@@ -39,11 +40,13 @@ export const SecondaryUserPicker: React.FC = () => {
     setError(null);
     setIsLoading(true);
     setTimeout(() => {
-      const res = login(manualUsername, manualPassword);
+      const res = login(manualUsername, manualPassword, selectedYear);
       if (!res.success) setError(res.error || 'Invalid credentials.');
       setIsLoading(false);
     }, 150);
   };
+
+  const isSelectedYearArchived = closedYears.some(r => r.year === selectedYear);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-4 select-none">
@@ -67,6 +70,36 @@ export const SecondaryUserPicker: React.FC = () => {
               <span>{error}</span>
             </div>
           )}
+
+          {/* Fiscal / Working Year Selector */}
+          <div className="mb-4">
+            <label className="block text-[11px] font-bold uppercase text-gray-600 dark:text-slate-300 mb-1">
+              Fiscal / Working Year
+            </label>
+            <div className="relative">
+              <Calendar className="absolute left-2.5 top-2 h-3.5 w-3.5 text-gray-400" />
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                className="w-full rounded border border-gray-300 bg-white pl-8 pr-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:border-teal-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <option value={workingYear}>
+                  {workingYear} (Active Year)
+                </option>
+                {closedYears.map((cy) => (
+                  <option key={cy.year} value={cy.year}>
+                    {cy.year} (Archived - Read Only)
+                  </option>
+                ))}
+              </select>
+            </div>
+            {isSelectedYearArchived && (
+              <p className="mt-1 flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                <Archive className="h-3 w-3" />
+                This year is closed & sealed. App will start in Read-Only archive mode.
+              </p>
+            )}
+          </div>
 
           {!manualMode && (
             <>

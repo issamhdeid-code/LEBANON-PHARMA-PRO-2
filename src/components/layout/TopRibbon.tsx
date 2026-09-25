@@ -15,7 +15,9 @@ import {
   FileText,
   Settings,
   Wallet,
-  Bell
+  Bell,
+  Calendar,
+  Archive,
 } from 'lucide-react';
 import { NotificationsModal } from '../common/NotificationsModal';
 import { usePharmacyUi } from '../../context/PharmacyContext';
@@ -31,6 +33,8 @@ export const TopRibbon: React.FC = () => {
     settings,
     toggleDarkMode,
     unreadCount,
+    workingYear,
+    isArchiveReadOnly,
   } = usePharmacyUi();
   const { restoreWindow } = useWindowContext();
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -151,6 +155,28 @@ export const TopRibbon: React.FC = () => {
               </>
             )}
           </button>
+
+          {/* Fiscal / Working Year Badge */}
+          <div
+            className={`hidden sm:flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold border transition-colors select-none ${
+              isArchiveReadOnly
+                ? 'bg-amber-500/20 text-amber-200 border-amber-400/40'
+                : 'bg-teal-800/80 text-teal-100 border-teal-600/40'
+            }`}
+            title={isArchiveReadOnly ? `Archived Year ${workingYear} (Read Only)` : `Active Fiscal Year: ${workingYear}`}
+          >
+            {isArchiveReadOnly ? (
+              <Archive className="h-3.5 w-3.5 text-amber-300" />
+            ) : (
+              <Calendar className="h-3.5 w-3.5 text-teal-300" />
+            )}
+            <span>{workingYear}</span>
+            {isArchiveReadOnly && (
+              <span className="text-[10px] text-amber-300 uppercase px-1 py-0.2 bg-amber-900/60 rounded">
+                Archive
+              </span>
+            )}
+          </div>
 
           {/* User Profile Badge */}
           {currentUser && (

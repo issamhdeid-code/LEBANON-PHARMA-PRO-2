@@ -14,7 +14,8 @@ type SyncPayload = {
       | 'EXPENSE_CREATED' | 'EXPENSE_DELETED'
       | 'USER_UPSERT' | 'USER_DELETED' | 'SETTINGS_UPDATE'
       | 'CLEAR_ALL_DATA'
-      | 'USER_SESSION';
+      | 'USER_SESSION'
+      | 'YEAR_CLOSED';
   data: any;
   senderId: string;
   protocol?: number;

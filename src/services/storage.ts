@@ -14,7 +14,9 @@ import {
   User,
   AppNotification,
   SyncConflictLog,
-  AppLogEntry
+  AppLogEntry,
+  YearClosingRecord,
+  ArchivedYearData
 } from '../types/pharmacy';
 import { resolveStraightforwardScientificInfo } from './scientificDataService';
 import { hashPassword } from '../utils/password';
@@ -1145,6 +1147,7 @@ const STORAGE_KEYS = {
   PURCHASE_RETURNS: 'pharmalebanon_purchase_returns_v1',
   SALE_RETURNS: 'pharmalebanon_sale_returns_v1',
   EXPENSES: 'pharmalebanon_expenses_v1',
+  CLOSED_YEARS: 'pharmalebanon_closed_years_v1',
 };
 
 // Safe setItem that handles browser quota limits without crashing
@@ -1520,6 +1523,19 @@ export class OfflineStorage {
     }
   }
 
+  static getClosedYears(): YearClosingRecord[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.CLOSED_YEARS);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveClosedYears(records: YearClosingRecord[]): void {
+    safeSetItem(STORAGE_KEYS.CLOSED_YEARS, JSON.stringify(records));
+  }
+
   static saveLogs(logs: AppLogEntry[]): void {
     try {
       // Keep up to 100 recent logs in localStorage to conserve quota
@@ -1568,6 +1584,7 @@ export class OfflineStorage {
       currentUser: this.getCurrentUser(),
       logs: this.getLogs(),
       deletedProducts: this.getDeletedProducts(),
+      closedYears: this.getClosedYears(),
     };
     return JSON.stringify(backupData, null, 2);
   }
@@ -1602,6 +1619,9 @@ export class OfflineStorage {
       this.saveNotifications(Array.isArray(data.notifications) ? data.notifications : []);
       this.saveCurrentUser(data.currentUser || null);
       this.saveLogs(Array.isArray(data.logs) ? data.logs : []);
+      if (Array.isArray(data.closedYears)) {
+        this.saveClosedYears(data.closedYears);
+      }
       // A restore is an authoritative full state: forget any earlier deletion records.
       this.saveDeletedProducts(Array.isArray(data.deletedProducts) ? data.deletedProducts : []);
       await idbStorage.saveProducts(data.products);

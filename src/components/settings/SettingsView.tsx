@@ -33,11 +33,13 @@ import {
   Database,
   ShieldCheck,
   Star,
+  Calendar,
 } from 'lucide-react';
 import { UsersPanel } from './UsersPanel';
 import { StockSettingsPanel } from './StockSettingsPanel';
 import { SaleSettingsPanel } from './SaleSettingsPanel';
 import { LoyaltySettingsPanel } from './LoyaltySettingsPanel';
+import { YearClosingTab } from './YearClosingTab';
 import {
   backupToGoogleDrive,
   restoreFromGoogleDrive,
@@ -58,7 +60,7 @@ import { formatTime, formatDateTime } from '../../utils/dateUtils';
 
 export const SettingsView: React.FC = () => {
   const { settings, updateSettings, syncStatus, addNotification, exportBackup, restoreBackup, clearAllData } = usePharmacy();
-  const [settingsTab, setSettingsTab] = useState<'display' | 'network' | 'notifications' | 'backup' | 'users' | 'stock' | 'sale' | 'loyalty'>('display');
+  const [settingsTab, setSettingsTab] = useState<'display' | 'network' | 'notifications' | 'backup' | 'users' | 'stock' | 'sale' | 'loyalty' | 'yearClosing'>('display');
   const [isTesting, setIsTesting] = useState(false);
   const [showClearDataModal, setShowClearDataModal] = useState(false);
   const [mode, setMode] = useState<'main' | 'secondary'>(settings.syncMode || 'main');
@@ -564,6 +566,17 @@ export const SettingsView: React.FC = () => {
             }`}
           >
             <Star className="h-4 w-4 fill-amber-400" /> Loyalty Program
+          </button>
+          <button
+            id="tab-btn-year-closing"
+            onClick={() => setSettingsTab('yearClosing')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              settingsTab === 'yearClosing'
+                ? 'border-teal-600 text-teal-700 dark:text-teal-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            <Calendar className="h-4 w-4" /> Fiscal Year Closing
           </button>
         </div>
 
@@ -1737,6 +1750,8 @@ export const SettingsView: React.FC = () => {
 
         </div>
         )}
+
+        {settingsTab === 'yearClosing' && <YearClosingTab />}
 
       </div>
 

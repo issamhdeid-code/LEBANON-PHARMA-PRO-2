@@ -22,7 +22,9 @@ import {
   SyncConflictLog,
   AppLogEntry,
   LogComponent,
-  LogLevel
+  LogLevel,
+  YearClosingRecord,
+  ArchivedYearData
 } from '../types/pharmacy';
 import { syncEngine } from '../services/syncEngine';
 import { parseMoleculeList } from '../services/mophParsers';
@@ -47,6 +49,12 @@ import {
   normalizePresentation,
   isCanonicalPresentation,
 } from '../utils/presentationUtils';
+import {
+  getCashDrawerManualTransactions,
+  saveCashDrawerManualTransactions,
+  getCashDrawerCountRecords,
+  saveCashDrawerCountRecords,
+} from '../services/cashDrawerService';
 
 // Settings fields that describe the pharmacy's shared business data and must be
 // identical on every terminal. Everything else (theme, dark mode, font size, this
@@ -270,12 +278,19 @@ function nextInvoiceNumber(existing: { invoiceNumber?: string }[], prefix: strin
 interface PharmacyContextType {
   // Authentication & Role
   currentUser: User | null;
-  login: (username: string, password: string) => { success: boolean; error?: string };
+  login: (username: string, password: string, selectedYear?: number) => { success: boolean; error?: string };
   logout: () => void;
   users: User[];
   addUser: (user: Omit<User, 'id'>) => void;
   updateUser: (id: string, updates: Partial<User>) => void;
   deleteUser: (id: string) => void;
+
+  // Fiscal & Working Year
+  workingYear: number;
+  isArchiveReadOnly: boolean;
+  closedYears: YearClosingRecord[];
+  closeYear: (yearToClose: number, note?: string) => Promise<{ success: boolean; error?: string; summary?: any }>;
+  switchWorkingYear: (targetYear: number) => Promise<boolean>;
 
   // Navigation
   activeTab: RibbonTab;
@@ -432,6 +447,7 @@ type PharmacyDataContextType = Pick<
 type PharmacyUiContextType = Pick<
   PharmacyContextType,
   | 'currentUser' | 'login' | 'logout' | 'users' | 'addUser' | 'updateUser' | 'deleteUser'
+  | 'workingYear' | 'isArchiveReadOnly' | 'closedYears' | 'closeYear' | 'switchWorkingYear'
   | 'activeTab' | 'setActiveTab'
   | 'settings' | 'updateSettings' | 'toggleDarkMode'
   | 'notifications' | 'unreadCount' | 'dismissNotification' | 'markAllNotificationsRead' | 'addNotification'
@@ -571,8 +587,18 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [notifications, setNotifications] = useState<AppNotification[]>(() => OfflineStorage.getNotifications());
   const [, setSyncConflicts] = useState<SyncConflictLog[]>(() => OfflineStorage.getConflicts());
   const [logs, setLogs] = useState<AppLogEntry[]>(() => OfflineStorage.getLogs());
+  const [closedYears, setClosedYears] = useState<YearClosingRecord[]>(() => OfflineStorage.getClosedYears());
+  const [workingYear, setWorkingYear] = useState<number>(() => {
+    const saved = sessionStorage.getItem('pharma_working_year');
+    if (saved && !isNaN(Number(saved))) return Number(saved);
+    return new Date().getFullYear();
+  });
+  const [isArchiveReadOnly, setIsArchiveReadOnly] = useState<boolean>(() => {
+    const saved = sessionStorage.getItem('pharma_is_archive_readonly');
+    return saved === 'true';
+  });
 
-    const [isSearchingScientifics, setIsSearchingScientifics] = useState(false);
+  const [isSearchingScientifics, setIsSearchingScientifics] = useState(false);
 
   const exchangeRate = settings.exchangeRate || 89500;
 
@@ -728,10 +754,16 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const notificationsRef = useRef(notifications);
   const logsRef = useRef(logs);
   const deletedProductsRef = useRef(deletedProducts);
+  const closedYearsRef = useRef(closedYears);
+  const customerPaymentsRef = useRef(customerPayments);
+  const supplierPaymentsRef = useRef(supplierPayments);
   useEffect(() => { productsRef.current = products; }, [products]);
   useEffect(() => { salesRef.current = sales; }, [sales]);
   useEffect(() => { notificationsRef.current = notifications; }, [notifications]);
   useEffect(() => { logsRef.current = logs; }, [logs]);
+  useEffect(() => { closedYearsRef.current = closedYears; }, [closedYears]);
+  useEffect(() => { customerPaymentsRef.current = customerPayments; }, [customerPayments]);
+  useEffect(() => { supplierPaymentsRef.current = supplierPayments; }, [supplierPayments]);
   useEffect(() => { suppliersRef.current = suppliers; }, [suppliers]);
   useEffect(() => { customersRef.current = customers; }, [customers]);
   useEffect(() => { purchasesRef.current = purchases; }, [purchases]);
@@ -1031,6 +1063,20 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             }
             return prev;
           });
+        } else if (payload.type === 'YEAR_CLOSED') {
+          const record = payload.data?.record as YearClosingRecord;
+          if (record && record.year) {
+            setClosedYears(prev => {
+              if (prev.some(r => r.year === record.year)) return prev;
+              const next = [record, ...prev];
+              OfflineStorage.saveClosedYears(next);
+              return next;
+            });
+            if (payload.data?.archiveData) {
+              idbStorage.saveArchivedYear(record.year, payload.data.archiveData).catch(() => {});
+            }
+            addNotification('Year Closed', `Fiscal year ${record.year} was finalized and archived by Main PC.`, 'system', 'info');
+          }
         }
       },
       (requesterId, requesterData) => {
@@ -1143,6 +1189,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             notifications: mergedNotifications,
             logs: mergedLogs,
             deletedProducts: mergedDeletedProducts,
+            closedYears: closedYearsRef.current,
           });
         }
       },
@@ -1242,6 +1289,19 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             }
             if (next === prev) return prev;
             OfflineStorage.saveDeletedProducts(next);
+            return next;
+          });
+        }
+        if (Array.isArray(snapshotData?.closedYears)) {
+          setClosedYears(prev => {
+            const byYear = new Map<number, YearClosingRecord>();
+            for (const r of [...snapshotData.closedYears, ...prev]) {
+              if (r && r.year && !byYear.has(r.year)) {
+                byYear.set(r.year, r);
+              }
+            }
+            const next = Array.from(byYear.values()).sort((a, b) => b.year - a.year);
+            OfflineStorage.saveClosedYears(next);
             return next;
           });
         }
@@ -1392,7 +1452,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   // Auth methods
-  const login = (username: string, password: string): { success: boolean; error?: string } => {
+  const login = (username: string, password: string, selectedYear?: number): { success: boolean; error?: string } => {
     const trimmedUser = username.trim().toLowerCase();
     const found = users.find(u => u.username.toLowerCase() === trimmedUser && verifyPassword(password, u.password));
     if (found) {
@@ -1411,6 +1471,12 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (heldBy && heldBy !== settings.deviceInstanceId) {
         return { success: false, error: `${found.name} is already signed in on another PC. Choose a different account.` };
       }
+
+      // If a specific working/archived year was chosen at login, activate that fiscal year
+      if (selectedYear && selectedYear !== workingYear) {
+        switchWorkingYear(selectedYear).catch(() => {});
+      }
+
       setCurrentUser(found);
       OfflineStorage.saveCurrentUser(found);
       setActiveSessions(prev => ({ ...prev, [found.id]: settings.deviceInstanceId || '' }));
@@ -1423,9 +1489,9 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         action: 'USER_LOGIN',
         level: 'success',
         title: `Staff Sign In: ${found.name}`,
-        description: `User "${found.username}" signed in with ${found.role} privileges.`,
+        description: `User "${found.username}" signed in with ${found.role} privileges${selectedYear ? ` (Fiscal Year: ${selectedYear})` : ''}.`,
         user: { id: found.id, name: found.name, role: found.role, username: found.username },
-        details: { role: found.role, username: found.username, terminal: settings.deviceName }
+        details: { role: found.role, username: found.username, terminal: settings.deviceName, selectedYear }
       });
       return { success: true };
     }
@@ -2749,6 +2815,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       isUnreal,
     };
 
+    if (isArchiveReadOnly) {
+      addNotification('Action Blocked', 'Viewing archived fiscal year in read-only mode. Sales cannot be recorded.', 'system', 'error');
+      return fullSale;
+    }
+
     // 1. Save Sale
     const updatedSales = [fullSale, ...sales];
     setSales(updatedSales);
@@ -3252,6 +3323,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Customer Payments
   const recordCustomerPayment = (payment: Omit<CustomerPayment, 'id' | 'timestamp'>) => {
+    if (isArchiveReadOnly) {
+      addNotification('Action Blocked', 'Viewing archived fiscal year in read-only mode. Customer payments cannot be recorded.', 'system', 'error');
+      return { success: false, error: 'Viewing archived fiscal year in read-only mode. Customer payments cannot be recorded.' };
+    }
+
     const fullPayment: CustomerPayment = {
       ...payment,
       id: `CUST-PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -3387,6 +3463,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Purchases
 
 const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp' | 'allocations'>) => {
+    if (isArchiveReadOnly) {
+      addNotification('Action Blocked', 'Viewing archived fiscal year in read-only mode. Supplier payments cannot be recorded.', 'system', 'error');
+      return { success: false, error: 'Viewing archived fiscal year in read-only mode. Supplier payments cannot be recorded.' };
+    }
+
     const currentYear = new Date().getFullYear().toString().slice(-2);
     const yearPayments = supplierPayments.filter(p => p.id && p.id.startsWith(`RCT-${currentYear}-`));
     let nextNum = 1;
@@ -3778,6 +3859,11 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
       timestamp: Date.now(),
     };
 
+    if (isArchiveReadOnly) {
+      addNotification('Action Blocked', 'Viewing archived fiscal year in read-only mode. Purchases cannot be recorded.', 'system', 'error');
+      return fullPurchase;
+    }
+
     // 1. Add purchase invoice
     const updatedPurchases = [fullPurchase, ...purchases];
     setPurchases(updatedPurchases);
@@ -4087,6 +4173,11 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
       timestamp: Date.now(),
     };
 
+    if (isArchiveReadOnly) {
+      addNotification('Action Blocked', 'Viewing archived fiscal year in read-only mode. Purchase returns cannot be recorded.', 'system', 'error');
+      return fullReturn;
+    }
+
     // 1. Add purchase return
     const updatedReturns = [fullReturn, ...purchaseReturns];
     setPurchaseReturns(updatedReturns);
@@ -4272,6 +4363,11 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
       returnNumber,
       timestamp: Date.now(),
     };
+
+    if (isArchiveReadOnly) {
+      addNotification('Action Blocked', 'Viewing archived fiscal year in read-only mode. Sale returns cannot be recorded.', 'system', 'error');
+      return fullReturn;
+    }
 
     // 1. Add to saleReturns list & save & sync
     const updatedReturns = [fullReturn, ...saleReturns];
@@ -4502,6 +4598,12 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
       timestamp: Date.now(),
     };
 
+    if (isArchiveReadOnly) {
+      addNotification('Action Blocked', 'Viewing archived fiscal year in read-only mode. Expenses cannot be recorded.', 'system', 'error');
+      return fullExpense;
+    }
+
+    // 1. Add to expenses list & save & sync
     const updatedExpenses = [fullExpense, ...expenses];
     setExpenses(updatedExpenses);
     OfflineStorage.saveExpenses(updatedExpenses);
@@ -4781,6 +4883,214 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     addNotification('Data Cleared', 'All inventory, sales, purchases, customers, and suppliers have been deleted.', 'system', 'warning');
   };
 
+  const switchWorkingYear = useCallback(async (targetYear: number): Promise<boolean> => {
+    const isClosed = closedYears.some(r => r.year === targetYear);
+    if (isClosed) {
+      const archived = await idbStorage.getArchivedYear(targetYear);
+      if (archived) {
+        setProducts(archived.products || []);
+        setSales(archived.sales || []);
+        setPurchases(archived.purchases || []);
+        setPurchaseReturns(archived.purchaseReturns || []);
+        setSaleReturns(archived.saleReturns || []);
+        setSuppliers(archived.suppliers || []);
+        setCustomers(archived.customers || []);
+        setExpenses(archived.expenses || []);
+        setSupplierPayments(archived.supplierPayments || []);
+        setCustomerPayments(archived.customerPayments || []);
+        setWorkingYear(targetYear);
+        setIsArchiveReadOnly(true);
+        sessionStorage.setItem('pharma_working_year', String(targetYear));
+        sessionStorage.setItem('pharma_is_archive_readonly', 'true');
+        addNotification('Archive Loaded', `Viewing finalized fiscal year ${targetYear} in read-only mode.`, 'system', 'info');
+        return true;
+      }
+    }
+
+    // Active working year: restore live storage
+    const liveProducts = OfflineStorage.getProducts();
+    const liveSales = OfflineStorage.getSales();
+    const livePurchases = OfflineStorage.getPurchases();
+    const livePurchaseReturns = OfflineStorage.getPurchaseReturns();
+    const liveSaleReturns = OfflineStorage.getSaleReturns();
+    const liveSuppliers = OfflineStorage.getSuppliers();
+    const liveCustomers = OfflineStorage.getCustomers();
+    const liveExpenses = OfflineStorage.getExpenses();
+    const liveSupplierPayments = OfflineStorage.getSupplierPayments();
+    const liveCustomerPayments = OfflineStorage.getCustomerPayments();
+
+    setProducts(liveProducts);
+    setSales(liveSales);
+    setPurchases(livePurchases);
+    setPurchaseReturns(livePurchaseReturns);
+    setSaleReturns(liveSaleReturns);
+    setSuppliers(liveSuppliers);
+    setCustomers(liveCustomers);
+    setExpenses(liveExpenses);
+    setSupplierPayments(liveSupplierPayments);
+    setCustomerPayments(liveCustomerPayments);
+
+    setWorkingYear(targetYear);
+    setIsArchiveReadOnly(false);
+    sessionStorage.setItem('pharma_working_year', String(targetYear));
+    sessionStorage.setItem('pharma_is_archive_readonly', 'false');
+    return true;
+  }, [closedYears, addNotification]);
+
+  const closeYear = useCallback(async (yearToClose: number, note?: string): Promise<{ success: boolean; error?: string; summary?: any }> => {
+    if (closedYears.some(r => r.year === yearToClose)) {
+      return { success: false, error: `Fiscal year ${yearToClose} is already closed.` };
+    }
+
+    // Must be admin to close year
+    if (currentUser?.role !== 'admin') {
+      return { success: false, error: 'Only administrative accounts can perform annual fiscal closing.' };
+    }
+
+    // 1. Calculate ending valuation & summaries
+    const currentProducts = productsRef.current;
+    const currentSales = salesRef.current;
+    const currentPurchases = purchasesRef.current;
+    const currentPurchaseReturns = purchaseReturnsRef.current;
+    const currentSaleReturns = saleReturnsRef.current;
+    const currentExpenses = expensesRef.current;
+    const currentSuppliers = suppliersRef.current;
+    const currentCustomers = customersRef.current;
+    const currentSupplierPayments = supplierPaymentsRef.current;
+    const currentCustomerPayments = customerPaymentsRef.current;
+
+    const totalSalesUSD = currentSales.reduce((acc, s) => acc + (s.totalUSD || 0), 0);
+    const totalSalesLBP = currentSales.reduce((acc, s) => acc + (s.totalLBP || 0), 0);
+    const totalPurchasesUSD = currentPurchases.reduce((acc, p) => acc + (p.totalCostUSD || 0), 0);
+    const totalPurchasesLBP = currentPurchases.reduce((acc, p) => acc + (p.totalCostLBP || 0), 0);
+    const totalExpensesUSD = currentExpenses.reduce((acc, e) => acc + (e.amountUSD || 0), 0);
+    const totalExpensesLBP = currentExpenses.reduce((acc, e) => acc + (e.amountLBP || 0), 0);
+    const inventoryValuationUSD = currentProducts.reduce((acc, p) => acc + ((p.stockQuantity || 0) * (p.costPriceUSD || 0)), 0);
+    const inventoryValuationLBP = toLBP(inventoryValuationUSD);
+
+    const summary = {
+      salesCount: currentSales.length,
+      totalSalesUSD,
+      totalSalesLBP,
+      purchasesCount: currentPurchases.length,
+      totalPurchasesUSD,
+      totalPurchasesLBP,
+      expensesCount: currentExpenses.length,
+      totalExpensesUSD,
+      totalExpensesLBP,
+      customerPaymentsCount: currentCustomerPayments.length,
+      supplierPaymentsCount: currentSupplierPayments.length,
+      productsCount: currentProducts.length,
+      inventoryValuationUSD,
+      inventoryValuationLBP,
+      customersCount: currentCustomers.length,
+      suppliersCount: currentSuppliers.length,
+    };
+
+    const record: YearClosingRecord = {
+      year: yearToClose,
+      closedAt: Date.now(),
+      closedDate: new Date().toISOString(),
+      closedBy: currentUser.name || currentUser.username,
+      note: note || `Year ${yearToClose} officially closed by ${currentUser.name}`,
+      summary,
+    };
+
+    // 2. Build full archived year data
+    const archiveData: ArchivedYearData = {
+      year: yearToClose,
+      closedRecord: record,
+      products: currentProducts,
+      suppliers: currentSuppliers,
+      customers: currentCustomers,
+      sales: currentSales,
+      purchases: currentPurchases,
+      purchaseReturns: currentPurchaseReturns,
+      saleReturns: currentSaleReturns,
+      supplierPayments: currentSupplierPayments,
+      customerPayments: currentCustomerPayments,
+      expenses: currentExpenses,
+      cashDrawerTransactions: getCashDrawerManualTransactions(),
+      cashDrawerCounts: getCashDrawerCountRecords(),
+    };
+
+    // 3. Persist archive to IndexedDB
+    const idbSuccess = await idbStorage.saveArchivedYear(yearToClose, archiveData);
+    if (!idbSuccess) {
+      return { success: false, error: 'Failed to write archive record to offline IndexedDB storage.' };
+    }
+
+    // 4. Update closed years list
+    const updatedClosedYears = [record, ...closedYears.filter(r => r.year !== yearToClose)];
+    setClosedYears(updatedClosedYears);
+    OfflineStorage.saveClosedYears(updatedClosedYears);
+
+    // 5. Roll over active working year:
+    // - Stock carried over with exact quantities & batches intact at closing
+    // - Customer & supplier debt/balances carried over as opening balances
+    // - Reset annual transactions (sales, purchases, returns, expenses, cash drawer) for new year
+    setSales([]);
+    OfflineStorage.saveSales([]);
+    setPurchases([]);
+    OfflineStorage.savePurchases([]);
+    setPurchaseReturns([]);
+    OfflineStorage.savePurchaseReturns([]);
+    setSaleReturns([]);
+    OfflineStorage.saveSaleReturns([]);
+    setExpenses([]);
+    OfflineStorage.saveExpenses([]);
+    setCustomerPayments([]);
+    OfflineStorage.saveCustomerPayments([]);
+    setSupplierPayments([]);
+    OfflineStorage.saveSupplierPayments([]);
+
+    // Initialize fresh cash drawer float for the new year
+    saveCashDrawerManualTransactions([
+      {
+        id: `cd-init-float-${yearToClose + 1}`,
+        voucherNumber: `VCH-FLOAT-${yearToClose + 1}`,
+        type: 'IN',
+        category: 'starting_float',
+        amountUSD: 200,
+        amountLBP: 15000000,
+        reason: `New Year Opening Float (${yearToClose + 1})`,
+        performedBy: currentUser.name,
+        timestamp: Date.now(),
+        date: new Date().toISOString(),
+      },
+    ]);
+    saveCashDrawerCountRecords([]);
+
+    // Set new active year
+    const nextYear = yearToClose + 1;
+    setWorkingYear(nextYear);
+    setIsArchiveReadOnly(false);
+    sessionStorage.setItem('pharma_working_year', String(nextYear));
+    sessionStorage.setItem('pharma_is_archive_readonly', 'false');
+
+    // 6. Broadcast over LAN sync to Secondary PCs
+    try {
+      syncEngine.broadcast('YEAR_CLOSED', { record, archiveData });
+    } catch (e) {
+      console.warn('Sync broadcast for YEAR_CLOSED failed:', e);
+    }
+
+    // 7. Audit log & notification
+    addLog({
+      component: 'System',
+      action: 'YEAR_CLOSED',
+      level: 'warning',
+      title: `Fiscal Year ${yearToClose} Finalized & Closed`,
+      description: `Year ${yearToClose} permanently sealed into archive by ${currentUser.name}. Rolled over into active year ${nextYear}.`,
+      user: { id: currentUser.id, name: currentUser.name, role: currentUser.role, username: currentUser.username },
+      details: { yearToClose, nextYear, summary }
+    });
+
+    addNotification('Year Closed Successfully', `Year ${yearToClose} has been archived. Active working year is now ${nextYear}.`, 'system', 'success');
+
+    return { success: true, summary };
+  }, [closedYears, currentUser, toLBP, addLog, addNotification]);
+
   const contextValue = useMemo(() => ({
     currentUser,
     login,
@@ -4879,6 +5189,12 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     restoreBackup,
     resetDemoData,
     clearAllData,
+
+    workingYear,
+    isArchiveReadOnly,
+    closedYears,
+    closeYear,
+    switchWorkingYear,
   }), [
     currentUser, users, activeTab, exchangeRate, products, sales, purchases, purchaseReturns, saleReturns, expenses, suppliers, customers, customerPayments,
     settings, notifications, syncStatus, activeSessions, logs, isSearchingScientifics,
@@ -4894,6 +5210,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     addSupplier, bulkAddSuppliers, updateSupplier, deleteSupplier, addCustomer, updateCustomer, deleteCustomer, updateSettings, toggleDarkMode,
     unreadCount, dismissNotification, markAllNotificationsRead, addNotification,
     connectSyncEngine, addLog, deleteLog, clearLogs, exportLogs, exportBackup, restoreBackup, resetDemoData, clearAllData,
+    workingYear, isArchiveReadOnly, closedYears, closeYear, switchWorkingYear,
   ]);
 
   // Granular sub-values (F6): memoized independently so a change in one bucket does not
@@ -4926,6 +5243,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
 
   const uiContextValue = useMemo(() => ({
     currentUser, login, logout, users, addUser, updateUser, deleteUser,
+    workingYear, isArchiveReadOnly, closedYears, closeYear, switchWorkingYear,
     activeTab, setActiveTab,
     settings, updateSettings, toggleDarkMode,
     notifications, unreadCount, dismissNotification, markAllNotificationsRead, addNotification,
@@ -4934,6 +5252,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     exportBackup, restoreBackup, resetDemoData, clearAllData,
   }), [
     currentUser, login, logout, users, addUser, updateUser, deleteUser,
+    workingYear, isArchiveReadOnly, closedYears, closeYear, switchWorkingYear,
     activeTab, setActiveTab,
     settings, updateSettings, toggleDarkMode,
     notifications, unreadCount, dismissNotification, markAllNotificationsRead, addNotification,

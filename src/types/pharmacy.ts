@@ -569,3 +569,48 @@ export interface SaleReturn {
   synced?: boolean;
 }
 
+export interface YearClosingSummary {
+  salesCount: number;
+  totalSalesUSD: number;
+  totalSalesLBP: number;
+  purchasesCount: number;
+  totalPurchasesUSD: number;
+  totalPurchasesLBP: number;
+  expensesCount: number;
+  totalExpensesUSD: number;
+  totalExpensesLBP: number;
+  customerPaymentsCount: number;
+  supplierPaymentsCount: number;
+  productsCount: number;
+  inventoryValuationUSD: number;
+  inventoryValuationLBP: number;
+  customersCount: number;
+  suppliersCount: number;
+}
+
+export interface YearClosingRecord {
+  year: number;
+  closedAt: number; // timestamp
+  closedDate: string; // ISO date
+  closedBy: string; // User name or ID
+  note?: string;
+  summary: YearClosingSummary;
+}
+
+export interface ArchivedYearData {
+  year: number;
+  closedRecord: YearClosingRecord;
+  products: Product[];
+  suppliers: Supplier[];
+  customers: Customer[];
+  sales: SaleTransaction[];
+  purchases: PurchaseInvoice[];
+  purchaseReturns: PurchaseReturn[];
+  saleReturns: SaleReturn[];
+  supplierPayments: SupplierPayment[];
+  customerPayments: CustomerPayment[];
+  expenses: Expense[];
+  cashDrawerTransactions?: any[];
+  cashDrawerCounts?: any[];
+}
+

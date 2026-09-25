@@ -1,6 +1,6 @@
 // Offline IndexedDB Storage Service for high-capacity local data storage
 // Provides unlimited offline storage for products, sales, purchases, and large catalogs
-import { Product } from '../types/pharmacy';
+import { Product, ArchivedYearData } from '../types/pharmacy';
 
 const DB_NAME = 'PharmaLebDB_v2';
 const DB_VERSION = 1;
@@ -82,6 +82,44 @@ class IndexedDbStorageService {
       });
     } catch (e) {
       console.warn('IndexedDB getProducts error:', e);
+      return null;
+    }
+  }
+
+  public async saveArchivedYear(year: number, data: ArchivedYearData): Promise<boolean> {
+    try {
+      const db = await this.getDB();
+      if (!db) return false;
+
+      return new Promise((resolve) => {
+        const tx = db.transaction([STORE_STATE], 'readwrite');
+        const store = tx.objectStore(STORE_STATE);
+        const req = store.put(data, `archived_year_${year}`);
+
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+      });
+    } catch (e) {
+      console.warn('IndexedDB saveArchivedYear error:', e);
+      return false;
+    }
+  }
+
+  public async getArchivedYear(year: number): Promise<ArchivedYearData | null> {
+    try {
+      const db = await this.getDB();
+      if (!db) return null;
+
+      return new Promise((resolve) => {
+        const tx = db.transaction([STORE_STATE], 'readonly');
+        const store = tx.objectStore(STORE_STATE);
+        const req = store.get(`archived_year_${year}`);
+
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch (e) {
+      console.warn('IndexedDB getArchivedYear error:', e);
       return null;
     }
   }
