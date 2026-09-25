@@ -1,4 +1,4 @@
-# AGENTS.md — Lebanon Pharma Pro operational conventions
+﻿# AGENTS.md â€” Lebanon Pharma Pro operational conventions
 
 > If this file exists, agents MUST follow it. User instructions override it.
 
@@ -16,11 +16,11 @@
 
 ## 2. Pairing & sync security (IP-only, no shared key)
 - Pairing a Secondary PC needs ONLY the Main PC's IP address, entered in
-  Settings → Network & Sync. There is NO shared key, sync secret, or provisioning
-  endpoint — do not reintroduce one.
+  Settings â†’ Network & Sync. There is NO shared key, sync secret, or provisioning
+  endpoint â€” do not reintroduce one.
 - The LAN surface is still kept in a locked envelope; never weaken these:
   - Host-header allow-list (localhost + this machine's own IPv4s + *.run.app)
-    on the HTTP API → blocks DNS rebinding.
+    on the HTTP API â†’ blocks DNS rebinding.
   - Socket.IO origin allow-list matching the host allow-list.
   - SYNC_PROTOCOL_VERSION checked on every inbound mutation (server-side and in
     syncEngine); unknown/foreign protocol payloads are dropped.
@@ -46,9 +46,9 @@ Online features are extensions:
 - MOPH official price list (`/api/moph/price-list`, scraped WebMarketed XLS)
 - LNDD ingredient lookup (`/api/moph/lndd-ingredients`, disk-cached)
 - Gemini drug monographs (`/api/scientifics/enrich`, requires GEMINI_API_KEY
-  on the SERVER only — .env, never in renderer or bundled code)
+  on the SERVER only â€” .env, never in renderer or bundled code)
 - Google Drive backup (user-provided OAuth client ID)
-- Trusted online time (`/api/moph/now`) for the 1-year MOPH unlock — fails
+- Trusted online time (`/api/moph/now`) for the 1-year MOPH unlock â€” fails
   CLOSED, never trust the local clock.
 Rules: all external calls are server-side proxies (renderer never fetches
 MOPH/Google/Gemini directly beyond the Drive OAuth flow); respect the rate
@@ -57,13 +57,13 @@ LNDD); on any error/timeout degrade gracefully with a fallback message and never
 throw into the checkout path.
 
 ## 5. Critical Path Protection
-These files are the sync critical path — do NOT modify unless the task is
+These files are the sync critical path â€” do NOT modify unless the task is
 specifically about them, and require explicit user approval: PharmacyContext.tsx,
 syncEngine.ts, storage.ts, indexedDbStorage.ts, and server.ts (sync/handshake/
 security sections).
 
 ## 6. Testing & non-regression discipline
-- NON-REGRESSION GUARANTEE — applies to EVERY code change, no exceptions:
+- NON-REGRESSION GUARANTEE â€” applies to EVERY code change, no exceptions:
   adding, removing, or modifying an option, feature, button, or function must
   never break any other option/feature/button/function.
 - PROPORTIONAL VERIFICATION (speed-aware): never run the full test battery
@@ -71,19 +71,19 @@ security sections).
   1. Map every affected surface: the edited code's callers and callees, shared
      state/context, sync broadcasts, and every UI/feature that consumes the
      touched data or props.
-  2. After EVERY change, run `npm run lint` (tsc --noEmit) — fast and
-     MANDATORY — plus any quick targeted check that fits the change (unit test,
+  2. After EVERY change, run `npm run lint` (tsc --noEmit) â€” fast and
+     MANDATORY â€” plus any quick targeted check that fits the change (unit test,
      spot-check in the running app).
   3. Full gates per completed task: `npm run lint` + `npm run test` (vitest) IN
-     PARALLEL in one message, then `npm run build` last — always when the change
+     PARALLEL in one message, then `npm run build` last â€” always when the change
      touches UI flows or shared data (stock, sales/checkout, purchases,
      customers, scientifics, reports, settings, sync). For small isolated
      changes that pass fast checks, defer the heavy gates to the task's final
      run.
 - FULL-WALKTHROUGH REQUIRES APPROVAL: never run the Puppeteer full-walkthrough
-  automatically — ALWAYS ask the user first, wait for explicit go-ahead, and
+  automatically â€” ALWAYS ask the user first, wait for explicit go-ahead, and
   report the pass/fail result (and any break) after it finishes.
-- IF ANYTHING IS BROKEN: stop and escalate — run the quick tests needed to
+- IF ANYTHING IS BROKEN: stop and escalate â€” run the quick tests needed to
   confirm and scope the break, then REPORT to the user with a clear
   recommendation of the required fix, and let the user decide what to do next.
   If the full harness would help confirm the break, ask the user before running
@@ -91,7 +91,7 @@ security sections).
   not happen.
 - Where automated coverage cannot reach a feature, manually verify that feature
   AND its neighbors still work. "It compiles" is never proof.
-- VERIFY-THEN-REPORT GATE — every completed task ends with a report that
+- VERIFY-THEN-REPORT GATE â€” every completed task ends with a report that
   includes the verification evidence actually run (e.g. the `npm run lint`
   result, targeted test output, spot-check note), never just an assertion of
   success. If a gate was skipped, say so and why. Reports must not contain
@@ -116,7 +116,7 @@ security sections).
   when asked. Never amend, rebase, reset --hard, or force-push.
 - Multi-tool handoff: `git pull` + clean `git status` BEFORE editing; the remote
   is the single source of truth. WORKLOG.md is write-only from opencode unless
-  the user explicitly asks. Line endings are normalized by .gitattributes —
+  the user explicitly asks. Line endings are normalized by .gitattributes â€”
   stop and inspect if a push shows a full-file diff.
 
 ## 9. Code output standards
@@ -124,7 +124,7 @@ security sections).
   imports (no @/ aliases). No comments unless asked. No README creation.
 - Formatting invariants: LBP amounts as integer strings via formatLBPValue (no
   dot/decimals), USD with .toFixed(2). Products carry version for sync merges;
-  scientificInfo compaction is handled by compactProductsForStorage — do not
+  scientificInfo compaction is handled by compactProductsForStorage â€” do not
   inline.
 
 ## 10. UI/UX engineering (pharmacy product rules)
@@ -151,8 +151,36 @@ security sections).
   uncertain. Batch independent tool calls in one message; token economy: read
   only target-referenced files. Independent gates run in parallel; verify before
   claiming success.
-- ASSUMPTION LIST — any fact not just verified with a tool (external behavior,
+- ASSUMPTION LIST â€” any fact not just verified with a tool (external behavior,
   unread file contents, guessed directory structure, third-party API shape) must
   be labeled *assumed* in the final report; only tool-verified facts may be
   stated as fact. When a load-bearing assumption is unavoidable, state it BEFORE
   implementing so the user can correct it early.
+
+## 12. Verification truth-checks (anti-hallucination)
+- MEASURE, DON'T THEORIZE: when a coordinate/geometry/zoom/behavior claim is in
+  doubt, get numbers from the page first. A suspicious measurement supersedes
+  any amount of reasoning; an impossible number (e.g. a > innerWidth offset)
+  is a measurement artifact — re-derive it from a clean reload + real input,
+  never debug the math in your head.
+- REAL-INPUT BIAS: for anything geometric or behavioral, reproduce with the
+  real cursor/browser mouse (browser.hover/click over fresh refs on a clean
+  reload), not only synthetic dispatched events — a synthetic event path can
+  silently use stale or wrong-space coordinates and "verify" a lie.
+- ZOOM STAYS APP-OWNED: the app applies documentElement.style.zoom from
+  settings.appZoom on boot. Changing zoom mid-session (style.zoom flips +
+  reload) produces frozen innerWidth and garbage offsets — never treat those
+  as real data. Set the settings key, do a FULL reload so the app boots at
+  that zoom, then measure.
+- NEVER GUESS STORAGE KEYS: enumerate localStorage (Object.keys) first and
+  read the real settings key (e.g. pharmalebanon_settings_v1.appZoom) before
+  assuming or writing one. Same for any localStorage flag: enumerate before
+  activate.
+- COMMIT, THEN PROVE IT LANDED: git log only says a commit was created.
+  To claim a fix is committed, run git show HEAD:<file> and confirm the
+  intended lines are present. Claims of "committed" or "verified" must be
+  tool-verified, not inferred.
+- LABEL ASSUMED vs VERIFIED in every report, and say which gates produced
+  each claim (lint / test / build / live preview / e2e). A claim with no
+  gate behind it is an assumption; say so explicitly.
+
