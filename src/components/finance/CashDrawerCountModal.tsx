@@ -224,7 +224,7 @@ export const CashDrawerCountModal: React.FC<CashDrawerCountModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-black text-slate-900 dark:text-slate-100">
-                  {mode === 'close' ? 'Close Cash Drawer (Shift Reconciliation)' : 'Count Cash Drawer (Physical Audit)'}
+                  {mode === 'close' ? 'Close Cash Drawer (Shift Reconciliation)' : 'Count Cash Drawer'}
                 </h3>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
                   mode === 'close'
