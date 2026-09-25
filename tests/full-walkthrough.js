@@ -358,7 +358,7 @@ async function firstRunWalkthrough(t) {
   await setFormInput(t.page, 3, ADMIN.password);
   await sleep(200);
   await clickText(t.page, 'Finish Setup');
-  await waitFor(t.page, () => /sign in to pharmacy/i.test(document.body.innerText), { timeout: 60000 });
+  await waitFor(t.page, () => /sign in \(\d{4}\)/i.test(document.body.innerText), { timeout: 60000 });
   check('setup-admin-complete', true, 'admin created, back to login');
 }
 
@@ -1282,7 +1282,7 @@ async function addSecondUser(t) {
 }
 
 async function secondarySetupAndSync(t) {
-  await waitFor(t.page, () => /FIRST-TIME SETUP/.test(document.body.innerText) || /sign in to pharmacy/i.test(document.body.innerText) || /choose your account/i.test(document.body.innerText), { timeout: 120000 });
+  await waitFor(t.page, () => /FIRST-TIME SETUP/.test(document.body.innerText) || /sign in \(\d{4}\)/i.test(document.body.innerText) || /choose your account/i.test(document.body.innerText), { timeout: 120000 });
   if (await t.page.evaluate(() => /FIRST-TIME SETUP/.test(document.body.innerText))) {
     await clickAnyText(t.page, 'Secondary PC', { exact: true });
     await sleep(300);
@@ -1291,7 +1291,7 @@ async function secondarySetupAndSync(t) {
     const started = await clickText(t.page, 'Connect & Sync Now');
     check('secondary-connect-sync', started, 'Connect & Sync Now clicked');
     if (!started) throw new Error('secondary connect button not found');
-    await waitFor(t.page, () => /sign in to pharmacy/i.test(document.body.innerText) || /choose your account/i.test(document.body.innerText), { timeout: 120000 });
+    await waitFor(t.page, () => /sign in \(\d{4}\)/i.test(document.body.innerText) || /choose your account/i.test(document.body.innerText), { timeout: 120000 });
   }
   // if the account picker is shown, fall back to manual credentials
   if (await t.page.evaluate(() => /choose your account/i.test(document.body.innerText))) {
