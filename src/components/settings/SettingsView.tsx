@@ -487,7 +487,7 @@ export const SettingsView: React.FC = () => {
         <div className="flex gap-1 border-b border-slate-200 dark:border-slate-700">
           <button
             onClick={() => setSettingsTab('display')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 first:pl-0 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'display'
                 ? 'border-teal-600 text-teal-700 dark:text-teal-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -497,7 +497,7 @@ export const SettingsView: React.FC = () => {
           </button>
           <button
             onClick={() => setSettingsTab('network')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 first:pl-0 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'network'
                 ? 'border-teal-600 text-teal-700 dark:text-teal-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -507,7 +507,7 @@ export const SettingsView: React.FC = () => {
           </button>
           <button
             onClick={() => setSettingsTab('users')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 first:pl-0 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'users'
                 ? 'border-teal-600 text-teal-700 dark:text-teal-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -517,7 +517,7 @@ export const SettingsView: React.FC = () => {
           </button>
           <button
             onClick={() => setSettingsTab('notifications')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 first:pl-0 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'notifications'
                 ? 'border-teal-600 text-teal-700 dark:text-teal-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -528,7 +528,7 @@ export const SettingsView: React.FC = () => {
           <button
             id="tab-btn-backup"
             onClick={() => setSettingsTab('backup')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 first:pl-0 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'backup'
                 ? 'border-teal-600 text-teal-700 dark:text-teal-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -538,7 +538,7 @@ export const SettingsView: React.FC = () => {
           </button>
           <button
             onClick={() => setSettingsTab('stock')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 first:pl-0 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'stock'
                 ? 'border-teal-600 text-teal-700 dark:text-teal-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -548,7 +548,7 @@ export const SettingsView: React.FC = () => {
           </button>
           <button
             onClick={() => setSettingsTab('sale')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 first:pl-0 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'sale'
                 ? 'border-teal-600 text-teal-700 dark:text-teal-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -559,7 +559,7 @@ export const SettingsView: React.FC = () => {
           <button
             id="tab-btn-loyalty"
             onClick={() => setSettingsTab('loyalty')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 first:pl-0 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'loyalty'
                 ? 'border-amber-500 text-amber-600 dark:text-amber-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -570,7 +570,7 @@ export const SettingsView: React.FC = () => {
           <button
             id="tab-btn-year-closing"
             onClick={() => setSettingsTab('yearClosing')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 first:pl-0 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               settingsTab === 'yearClosing'
                 ? 'border-teal-600 text-teal-700 dark:text-teal-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
