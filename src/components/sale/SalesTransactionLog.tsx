@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { SaleTransaction } from '../../types/pharmacy';
 import { usePharmacy } from '../../context/PharmacyContext';
+import { FiscalYearSelect } from '../common/FiscalYearSelect';
 import { ViewSaleModal } from './ViewSaleModal';
 import { EditSaleModal } from './EditSaleModal';
 import { ReceiptModal } from '../common/ReceiptModal';
@@ -175,6 +176,9 @@ export const SalesTransactionLog: React.FC<SalesTransactionLogProps> = ({ onSwit
               <ArrowUpDown className="h-3.5 w-3.5" />
             </button>
           </div>
+
+          {/* Fiscal Year Selector */}
+          <FiscalYearSelect />
         </div>
 
         {/* Dense Stats Overview Bar */}

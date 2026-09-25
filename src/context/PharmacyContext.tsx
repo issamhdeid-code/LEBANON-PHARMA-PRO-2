@@ -2920,6 +2920,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateSale = (saleId: string, updatedData: Partial<SaleTransaction>): { success: boolean; error?: string } => {
+    if (isArchiveReadOnly) {
+      addNotification('Action Blocked', 'Viewing archived fiscal year in read-only mode. Sales cannot be modified.', 'system', 'error');
+      return { success: false, error: 'Viewing archived fiscal year in read-only mode. Sales cannot be modified.' };
+    }
+
     const existingIndex = sales.findIndex(s => s.id === saleId);
     if (existingIndex === -1) {
       return { success: false, error: 'Sale record not found.' };
@@ -3154,6 +3159,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const deleteSale = (saleId: string): { success: boolean } => {
+    if (isArchiveReadOnly) {
+      addNotification('Action Blocked', 'Viewing archived fiscal year in read-only mode. Sales cannot be deleted.', 'system', 'error');
+      return { success: false };
+    }
+
     const saleToDelete = sales.find(s => s.id === saleId);
     if (!saleToDelete) return { success: false };
 

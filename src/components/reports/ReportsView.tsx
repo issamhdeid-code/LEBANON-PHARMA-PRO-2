@@ -19,6 +19,7 @@ import { formatLBPValue } from '../../utils/priceUtils';
 import { formatDateTime } from '../../utils/dateUtils';
 import { CollectReportsView } from './CollectReportsView';
 import { ChartsReportsView } from './ChartsReportsView';
+import { FiscalYearSelect } from '../common/FiscalYearSelect';
 
 export const ReportsView: React.FC = () => {
   const { sales, products, exchangeRate, formatLBP, formatUSD } = usePharmacy();
@@ -129,8 +130,9 @@ export const ReportsView: React.FC = () => {
             </p>
           </div>
 
-          {activeSubTab === 'overview' && (
+          {activeSubTab === 'overview' ? (
             <div className="flex items-center space-x-2">
+              <FiscalYearSelect />
               {/* Time range buttons */}
               <div className="flex items-center rounded border border-gray-200 bg-gray-100 p-0.5 dark:border-slate-700 dark:bg-slate-800 text-xs">
                 {(['today', 'week', 'month', 'all'] as const).map((range) => (
@@ -155,6 +157,10 @@ export const ReportsView: React.FC = () => {
                 <Printer className="h-3.5 w-3.5" />
                 <span>Print Overview</span>
               </button>
+            </div>
+          ) : (
+            <div className="flex items-center">
+              <FiscalYearSelect />
             </div>
           )}
         </div>
