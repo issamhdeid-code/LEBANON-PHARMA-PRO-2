@@ -55,6 +55,12 @@ const describeOf = (el: HTMLElement): PickedElement => {
   };
 };
 
+const rootZoom = (): number => {
+  const raw = typeof document !== 'undefined' ? document.documentElement.style.zoom : '';
+  const n = parseFloat(raw);
+  return Number.isFinite(n) && n > 0 ? n / 100 : 1;
+};
+
 const FLOAT_STYLE: React.CSSProperties = {
   position: 'fixed',
   right: 16,
@@ -119,12 +125,13 @@ export const DevElementPicker: React.FC = () => {
         return;
       }
       const r = el.getBoundingClientRect();
+      const z = rootZoom();
       if (hl) {
         hl.style.display = 'block';
-        hl.style.left = r.left + 'px';
-        hl.style.top = r.top + 'px';
-        hl.style.width = r.width + 'px';
-        hl.style.height = r.height + 'px';
+        hl.style.left = r.left / z + 'px';
+        hl.style.top = r.top / z + 'px';
+        hl.style.width = r.width / z + 'px';
+        hl.style.height = r.height / z + 'px';
       }
       if (lb) {
         const cls = el.getAttribute('class');
@@ -134,8 +141,8 @@ export const DevElementPicker: React.FC = () => {
           el.tagName.toLowerCase() +
           (el.id ? '#' + el.id : '') +
           (cls ? ' .' + cls.split(/\s+/).slice(0, 2).join(' .') : '');
-        lb.style.left = Math.min(r.left, window.innerWidth - 580) + 'px';
-        lb.style.top = (r.top < 30 ? r.bottom + 6 : r.top - 26) + 'px';
+        lb.style.left = Math.min(r.left / z, window.innerWidth - 580) + 'px';
+        lb.style.top = (r.top < 30 ? r.bottom + 6 : r.top - 26) / z + 'px';
         lb.style.display = 'block';
       }
     };
