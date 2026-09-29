@@ -86,6 +86,22 @@ describe('mergeByIdPreferNewer', () => {
     expect(second.applied).toHaveLength(0);
   });
 
+  it('converges regardless of which side sends, so two terminals end up agreeing', () => {
+    // Regression: the receiving side used to replace unconditionally, so a terminal that
+    // already held the newer copy would take the older one off the wire while the sender
+    // took the newer one — leaving the two PCs permanently disagreeing. Applying the same
+    // recency rule on both sides makes the outcome independent of direction.
+    const pc1: Row[] = [{ id: 'a', timestamp: 900, label: 'newer' }];
+    const pc2: Row[] = [{ id: 'a', timestamp: 100, label: 'older' }];
+
+    const atPc1 = mergeByIdPreferNewer(pc1, pc2);
+    const atPc2 = mergeByIdPreferNewer(pc2, pc1);
+
+    expect(atPc1.merged).toEqual(atPc2.merged);
+    expect(atPc1.merged[0].label).toBe('newer');
+    expect(atPc2.merged[0].label).toBe('newer');
+  });
+
   it('preserves the stored ordering and appends new records at the end', () => {
     const stored: Row[] = [{ id: 'a', timestamp: 3 }, { id: 'b', timestamp: 2 }];
     const incoming: Row[] = [{ id: 'c', timestamp: 1 }];

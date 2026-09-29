@@ -909,52 +909,54 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           registerSeenInvoiceNumber('INV', remoteSale.invoiceNumber);
           if (remoteSale.isUnreal) registerSeenInvoiceNumber('UNR', remoteSale.invoiceNumber);
           setSales(prev => {
-            if (!remoteSale) return prev;
-            const next = upsertById(prev, remoteSale);
-            OfflineStorage.saveSales(next);
-            idbStorage.saveSales(next).catch(() => {});
-            return next;
+            // Same recency rule the importing terminal applied. Without it a re-delivered
+            // or older copy would replace a newer record already held here.
+            const { merged, applied } = mergeByIdPreferNewer(prev, [remoteSale]);
+            if (applied.length === 0) return prev;
+            OfflineStorage.saveSales(merged);
+            idbStorage.saveSales(merged).catch(() => {});
+            return merged;
           });
         } else if (payload.type === 'PURCHASE_UPSERT') {
           const remotePurchase = payload.data as PurchaseInvoice;
           if (!remotePurchase?.id) return;
           registerSeenInvoiceNumber('PINV', remotePurchase.invoiceNumber);
           setPurchases(prev => {
-            if (!remotePurchase) return prev;
-            const next = upsertById(prev, remotePurchase);
-            OfflineStorage.savePurchases(next);
-            idbStorage.savePurchases(next).catch(() => {});
-            return next;
+            const { merged, applied } = mergeByIdPreferNewer(prev, [remotePurchase]);
+            if (applied.length === 0) return prev;
+            OfflineStorage.savePurchases(merged);
+            idbStorage.savePurchases(merged).catch(() => {});
+            return merged;
           });
         } else if (payload.type === 'PURCHASE_RETURN_UPSERT') {
           const remoteReturn = payload.data as PurchaseReturn;
           if (!remoteReturn?.id) return;
           setPurchaseReturns(prev => {
-            if (!remoteReturn) return prev;
-            const next = upsertById(prev, remoteReturn);
-            OfflineStorage.savePurchaseReturns(next);
-            idbStorage.savePurchaseReturns(next).catch(() => {});
-            return next;
+            const { merged, applied } = mergeByIdPreferNewer(prev, [remoteReturn]);
+            if (applied.length === 0) return prev;
+            OfflineStorage.savePurchaseReturns(merged);
+            idbStorage.savePurchaseReturns(merged).catch(() => {});
+            return merged;
           });
         } else if (payload.type === 'SALE_RETURN_UPSERT') {
           const remoteReturn = payload.data as SaleReturn;
           if (!remoteReturn?.id) return;
           setSaleReturns(prev => {
-            if (!remoteReturn) return prev;
-            const next = upsertById(prev, remoteReturn);
-            OfflineStorage.saveSaleReturns(next);
-            idbStorage.saveSaleReturns(next).catch(() => {});
-            return next;
+            const { merged, applied } = mergeByIdPreferNewer(prev, [remoteReturn]);
+            if (applied.length === 0) return prev;
+            OfflineStorage.saveSaleReturns(merged);
+            idbStorage.saveSaleReturns(merged).catch(() => {});
+            return merged;
           });
         } else if (payload.type === 'EXPENSE_UPSERT') {
           const remoteExpense = payload.data as Expense;
           if (!remoteExpense?.id) return;
           setExpenses(prev => {
-            if (!remoteExpense) return prev;
-            const next = upsertById(prev, remoteExpense);
-            OfflineStorage.saveExpenses(next);
-            idbStorage.saveExpenses(next).catch(() => {});
-            return next;
+            const { merged, applied } = mergeByIdPreferNewer(prev, [remoteExpense]);
+            if (applied.length === 0) return prev;
+            OfflineStorage.saveExpenses(merged);
+            idbStorage.saveExpenses(merged).catch(() => {});
+            return merged;
           });
         } else if (payload.type === 'CLEAR_ALL_DATA') {
           // The other terminal wiped everything — mirror the wipe locally.
