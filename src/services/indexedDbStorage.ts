@@ -1,11 +1,31 @@
 // Offline IndexedDB Storage Service for high-capacity local data storage
 // Provides unlimited offline storage for products, sales, purchases, and large catalogs
-import { Product, ArchivedYearData } from '../types/pharmacy';
+import {
+  Product,
+  ArchivedYearData,
+  SaleTransaction,
+  PurchaseInvoice,
+  PurchaseReturn,
+  SaleReturn,
+  SupplierPayment,
+  CustomerPayment,
+  Expense,
+} from '../types/pharmacy';
 
 const DB_NAME = 'PharmaLebDB_v2';
 const DB_VERSION = 1;
 const STORE_PRODUCTS = 'products';
 const STORE_STATE = 'app_state';
+
+type CollectionKey =
+  | 'full_products_list'
+  | 'full_sales_list'
+  | 'full_purchases_list'
+  | 'full_purchase_returns_list'
+  | 'full_sale_returns_list'
+  | 'full_supplier_payments_list'
+  | 'full_customer_payments_list'
+  | 'full_expenses_list';
 
 class IndexedDbStorageService {
   private dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -49,6 +69,70 @@ class IndexedDbStorageService {
   }
 
   public async saveProducts(products: Product[]): Promise<boolean> {
+    return this.saveCollection('full_products_list', products);
+  }
+
+  public async getProducts(): Promise<Product[] | null> {
+    return this.getCollection<Product>('full_products_list');
+  }
+
+  public async saveSales(sales: SaleTransaction[]): Promise<boolean> {
+    return this.saveCollection('full_sales_list', sales);
+  }
+
+  public async getSales(): Promise<SaleTransaction[] | null> {
+    return this.getCollection<SaleTransaction>('full_sales_list');
+  }
+
+  public async savePurchases(purchases: PurchaseInvoice[]): Promise<boolean> {
+    return this.saveCollection('full_purchases_list', purchases);
+  }
+
+  public async getPurchases(): Promise<PurchaseInvoice[] | null> {
+    return this.getCollection<PurchaseInvoice>('full_purchases_list');
+  }
+
+  public async savePurchaseReturns(data: PurchaseReturn[]): Promise<boolean> {
+    return this.saveCollection('full_purchase_returns_list', data);
+  }
+
+  public async getPurchaseReturns(): Promise<PurchaseReturn[] | null> {
+    return this.getCollection<PurchaseReturn>('full_purchase_returns_list');
+  }
+
+  public async saveSaleReturns(data: SaleReturn[]): Promise<boolean> {
+    return this.saveCollection('full_sale_returns_list', data);
+  }
+
+  public async getSaleReturns(): Promise<SaleReturn[] | null> {
+    return this.getCollection<SaleReturn>('full_sale_returns_list');
+  }
+
+  public async saveSupplierPayments(data: SupplierPayment[]): Promise<boolean> {
+    return this.saveCollection('full_supplier_payments_list', data);
+  }
+
+  public async getSupplierPayments(): Promise<SupplierPayment[] | null> {
+    return this.getCollection<SupplierPayment>('full_supplier_payments_list');
+  }
+
+  public async saveCustomerPayments(data: CustomerPayment[]): Promise<boolean> {
+    return this.saveCollection('full_customer_payments_list', data);
+  }
+
+  public async getCustomerPayments(): Promise<CustomerPayment[] | null> {
+    return this.getCollection<CustomerPayment>('full_customer_payments_list');
+  }
+
+  public async saveExpenses(data: Expense[]): Promise<boolean> {
+    return this.saveCollection('full_expenses_list', data);
+  }
+
+  public async getExpenses(): Promise<Expense[] | null> {
+    return this.getCollection<Expense>('full_expenses_list');
+  }
+
+  private async saveCollection(key: CollectionKey, data: unknown[]): Promise<boolean> {
     try {
       const db = await this.getDB();
       if (!db) return false;
@@ -56,18 +140,18 @@ class IndexedDbStorageService {
       return new Promise((resolve) => {
         const tx = db.transaction([STORE_STATE], 'readwrite');
         const store = tx.objectStore(STORE_STATE);
-        const req = store.put(products, 'full_products_list');
+        const req = store.put(data, key);
 
         req.onsuccess = () => resolve(true);
         req.onerror = () => resolve(false);
       });
     } catch (e) {
-      console.warn('IndexedDB saveProducts error:', e);
+      console.warn(`IndexedDB saveCollection(${key}) error:`, e);
       return false;
     }
   }
 
-  public async getProducts(): Promise<Product[] | null> {
+  private async getCollection<T>(key: CollectionKey): Promise<T[] | null> {
     try {
       const db = await this.getDB();
       if (!db) return null;
@@ -75,13 +159,13 @@ class IndexedDbStorageService {
       return new Promise((resolve) => {
         const tx = db.transaction([STORE_STATE], 'readonly');
         const store = tx.objectStore(STORE_STATE);
-        const req = store.get('full_products_list');
+        const req = store.get(key);
 
-        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : null);
+        req.onsuccess = () => resolve(Array.isArray(req.result) ? (req.result as T[]) : null);
         req.onerror = () => resolve(null);
       });
     } catch (e) {
-      console.warn('IndexedDB getProducts error:', e);
+      console.warn(`IndexedDB getCollection(${key}) error:`, e);
       return null;
     }
   }

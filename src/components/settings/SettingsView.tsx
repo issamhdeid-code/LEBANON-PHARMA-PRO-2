@@ -40,6 +40,7 @@ import { StockSettingsPanel } from './StockSettingsPanel';
 import { SaleSettingsPanel } from './SaleSettingsPanel';
 import { LoyaltySettingsPanel } from './LoyaltySettingsPanel';
 import { YearClosingTab } from './YearClosingTab';
+import { SectionCSVPanel } from './SectionCSVPanel';
 import {
   backupToGoogleDrive,
   restoreFromGoogleDrive,
@@ -1510,6 +1511,9 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* Per-Section CSV Import / Export */}
+            <SectionCSVPanel />
           </div>
         )}
 

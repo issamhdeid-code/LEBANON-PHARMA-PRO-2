@@ -1189,6 +1189,13 @@ function compactProductsForStorage(products: Product[]): string {
 
 // In-memory cache for ultra-fast and fail-safe product access
 let memoryProducts: Product[] | null = null;
+let memorySales: SaleTransaction[] | null = null;
+let memoryPurchases: PurchaseInvoice[] | null = null;
+let memoryPurchaseReturns: PurchaseReturn[] | null = null;
+let memorySaleReturns: SaleReturn[] | null = null;
+let memorySupplierPayments: SupplierPayment[] | null = null;
+let memoryCustomerPayments: CustomerPayment[] | null = null;
+let memoryExpenses: Expense[] | null = null;
 let storageWarningMessage: string | null = null;
 
 export class OfflineStorage {
@@ -1376,98 +1383,157 @@ export class OfflineStorage {
   }
 
   static getSales(): SaleTransaction[] {
+    if (memorySales !== null) return memorySales;
     try {
       const data = localStorage.getItem(STORAGE_KEYS.SALES);
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      memorySales = parsed;
+      return parsed;
     } catch {
       return [];
     }
   }
 
   static saveSales(sales: SaleTransaction[]): void {
-    safeSetItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
+    memorySales = sales;
+    idbStorage.saveSales(sales).catch(() => {});
+    try {
+      safeSetItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
+    } catch (e) {
+      console.warn('saveSales localStorage failed (kept in memory + IndexedDB):', e);
+    }
   }
 
   static getPurchases(): PurchaseInvoice[] {
+    if (memoryPurchases !== null) return memoryPurchases;
     try {
       const data = localStorage.getItem(STORAGE_KEYS.PURCHASES);
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      memoryPurchases = parsed;
+      return parsed;
     } catch {
       return [];
     }
   }
 
   static savePurchases(purchases: PurchaseInvoice[]): void {
-    safeSetItem(STORAGE_KEYS.PURCHASES, JSON.stringify(purchases));
+    memoryPurchases = purchases;
+    idbStorage.savePurchases(purchases).catch(() => {});
+    try {
+      safeSetItem(STORAGE_KEYS.PURCHASES, JSON.stringify(purchases));
+    } catch (e) {
+      console.warn('savePurchases localStorage failed (kept in memory + IndexedDB):', e);
+    }
   }
 
   static getCustomerPayments(): CustomerPayment[] {
+    if (memoryCustomerPayments !== null) return memoryCustomerPayments;
     try {
       const data = localStorage.getItem('pharmacy_customer_payments');
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      memoryCustomerPayments = parsed;
+      return parsed;
     } catch {
       return [];
     }
   }
 
   static saveCustomerPayments(payments: CustomerPayment[]): void {
+    memoryCustomerPayments = payments;
+    idbStorage.saveCustomerPayments(payments).catch(() => {});
     try {
-      localStorage.setItem('pharmacy_customer_payments', JSON.stringify(payments));
-    } catch (error) {
-      console.error('Failed to save customer payments to localStorage', error);
+      safeSetItem('pharmacy_customer_payments', JSON.stringify(payments));
+    } catch (e) {
+      console.warn('saveCustomerPayments localStorage failed (kept in memory + IndexedDB):', e);
     }
   }
 
   static getSupplierPayments(): SupplierPayment[] {
+    if (memorySupplierPayments !== null) return memorySupplierPayments;
     try {
       const data = localStorage.getItem(STORAGE_KEYS.SUPPLIER_PAYMENTS);
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      memorySupplierPayments = parsed;
+      return parsed;
     } catch {
       return [];
     }
   }
 
   static saveSupplierPayments(payments: SupplierPayment[]): void {
-    safeSetItem(STORAGE_KEYS.SUPPLIER_PAYMENTS, JSON.stringify(payments));
+    memorySupplierPayments = payments;
+    idbStorage.saveSupplierPayments(payments).catch(() => {});
+    try {
+      safeSetItem(STORAGE_KEYS.SUPPLIER_PAYMENTS, JSON.stringify(payments));
+    } catch (e) {
+      console.warn('saveSupplierPayments localStorage failed (kept in memory + IndexedDB):', e);
+    }
   }
 
   static getPurchaseReturns(): PurchaseReturn[] {
+    if (memoryPurchaseReturns !== null) return memoryPurchaseReturns;
     try {
       const data = localStorage.getItem(STORAGE_KEYS.PURCHASE_RETURNS);
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      memoryPurchaseReturns = parsed;
+      return parsed;
     } catch {
       return [];
     }
   }
 
   static savePurchaseReturns(returns: PurchaseReturn[]): void {
-    safeSetItem(STORAGE_KEYS.PURCHASE_RETURNS, JSON.stringify(returns));
+    memoryPurchaseReturns = returns;
+    idbStorage.savePurchaseReturns(returns).catch(() => {});
+    try {
+      safeSetItem(STORAGE_KEYS.PURCHASE_RETURNS, JSON.stringify(returns));
+    } catch (e) {
+      console.warn('savePurchaseReturns localStorage failed (kept in memory + IndexedDB):', e);
+    }
   }
 
   static getSaleReturns(): SaleReturn[] {
+    if (memorySaleReturns !== null) return memorySaleReturns;
     try {
       const data = localStorage.getItem(STORAGE_KEYS.SALE_RETURNS);
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      memorySaleReturns = parsed;
+      return parsed;
     } catch {
       return [];
     }
   }
 
   static saveSaleReturns(returns: SaleReturn[]): void {
-    safeSetItem(STORAGE_KEYS.SALE_RETURNS, JSON.stringify(returns));
+    memorySaleReturns = returns;
+    idbStorage.saveSaleReturns(returns).catch(() => {});
+    try {
+      safeSetItem(STORAGE_KEYS.SALE_RETURNS, JSON.stringify(returns));
+    } catch (e) {
+      console.warn('saveSaleReturns localStorage failed (kept in memory + IndexedDB):', e);
+    }
   }
 
   static getExpenses(): Expense[] {
+    if (memoryExpenses !== null) return memoryExpenses;
     try {
       const data = localStorage.getItem(STORAGE_KEYS.EXPENSES);
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      memoryExpenses = parsed;
+      return parsed;
     } catch {
       return [];
     }
   }
 
   static saveExpenses(expenses: Expense[]): void {
-    safeSetItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+    memoryExpenses = expenses;
+    idbStorage.saveExpenses(expenses).catch(() => {});
+    try {
+      safeSetItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+    } catch (e) {
+      console.warn('saveExpenses localStorage failed (kept in memory + IndexedDB):', e);
+    }
   }
 
 
@@ -1624,7 +1690,18 @@ export class OfflineStorage {
       }
       // A restore is an authoritative full state: forget any earlier deletion records.
       this.saveDeletedProducts(Array.isArray(data.deletedProducts) ? data.deletedProducts : []);
-      await idbStorage.saveProducts(data.products);
+      // Persist the full restore to IndexedDB (unlimited) so large sections like sales
+      // and purchases survive even though the 5MB localStorage budget may reject them.
+      await Promise.all([
+        idbStorage.saveProducts(data.products),
+        idbStorage.saveSales(Array.isArray(data.sales) ? data.sales : []),
+        idbStorage.savePurchases(Array.isArray(data.purchases) ? data.purchases : []),
+        idbStorage.savePurchaseReturns(Array.isArray(data.purchaseReturns) ? data.purchaseReturns : []),
+        idbStorage.saveSaleReturns(Array.isArray(data.saleReturns) ? data.saleReturns : []),
+        idbStorage.saveSupplierPayments(Array.isArray(data.supplierPayments) ? data.supplierPayments : []),
+        idbStorage.saveCustomerPayments(Array.isArray(data.customerPayments) ? data.customerPayments : []),
+        idbStorage.saveExpenses(Array.isArray(data.expenses) ? data.expenses : []),
+      ]);
       return true;
     } catch (e) {
       console.error('Failed to restore backup:', e);
@@ -1643,10 +1720,13 @@ export class OfflineStorage {
     this.savePurchases(INITIAL_PURCHASES);
     this.savePurchaseReturns([]);
     this.saveSaleReturns([]);
+    this.saveSupplierPayments([]);
+    this.saveCustomerPayments([]);
     this.saveExpenses([]);
     this.saveConflicts([]);
     this.saveLogs(INITIAL_LOGS);
     this.saveDeletedProducts([]);
+    this.saveClosedYears([]);
   }
 
   static clearAllData(): void {
@@ -1658,9 +1738,12 @@ export class OfflineStorage {
     this.savePurchases([]);
     this.savePurchaseReturns([]);
     this.saveSaleReturns([]);
+    this.saveSupplierPayments([]);
+    this.saveCustomerPayments([]);
     this.saveExpenses([]);
     this.saveConflicts([]);
     this.saveLogs([]);
     this.saveDeletedProducts([]);
+    this.saveClosedYears([]);
   }
 }

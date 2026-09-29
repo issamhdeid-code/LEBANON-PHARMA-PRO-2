@@ -50,6 +50,14 @@ import {
   isCanonicalPresentation,
 } from '../utils/presentationUtils';
 import {
+  SectionKey,
+  SectionImportResult,
+  parseSectionCsv,
+  exportSectionCsv as buildSectionCsv,
+} from '../utils/sectionCsv';
+import { mergeByIdPreferNewer } from '../utils/collectionMerge';
+import { mergeProductsArrays } from '../utils/productMerge';
+import {
   getCashDrawerManualTransactions,
   saveCashDrawerManualTransactions,
   getCashDrawerCountRecords,
@@ -88,52 +96,7 @@ function mergeById<T extends { id: string }>(local: T[], remote: T[]): T[] {
 }
 
 // Same idea as mergeById but for products specifically, which carry a version number:
-// whichever side has the higher version for a shared id wins, instead of "remote always wins".
-// A deletion tombstone (from the optional third argument) wins over any copy whose
-// version is not higher than the tombstone's, so a product deleted on one PC during an
-// outage can never be resurrected by a stale copy merged back afterwards.
-function mergeProductsArrays(
-  local: Product[],
-  remote: Product[],
-  tombstones?: ProductTombstone[]
-): { merged: Product[]; changed: boolean } {
-  const tombstoneById = new Map<string, ProductTombstone>();
-  if (Array.isArray(tombstones)) {
-    for (const t of tombstones) {
-      const existing = tombstoneById.get(t.id);
-      if (!existing || (t.version || 0) > (existing.version || 0)) tombstoneById.set(t.id, t);
-    }
-  }
-  const byId = new Map(local.map(p => [p.id, p]));
-  const byCode = new Map<string, Product>();
-  for (const p of local) {
-    const normalized = String(p.code || '').toUpperCase();
-    if (normalized && !byCode.has(normalized)) byCode.set(normalized, p);
-  }
-  let changed = false;
-  for (const remoteProd of remote) {
-    const tombstone = tombstoneById.get(remoteProd.id);
-    if (tombstone && (remoteProd.version || 0) <= (tombstone.version || 0)) continue;
-    let localMatch = byId.get(remoteProd.id);
-    if (!localMatch) {
-      const normalized = String(remoteProd.code || '').toUpperCase();
-      localMatch = normalized ? byCode.get(normalized) : undefined;
-    }
-    if (!localMatch || (remoteProd.version || 0) >= (localMatch.version || 0)) {
-      byId.set(remoteProd.id, remoteProd);
-      changed = true;
-    }
-  }
-  const merged = Array.from(byId.values());
-  const cleaned = tombstoneById.size > 0
-    ? merged.filter(p => {
-        const t = tombstoneById.get(p.id);
-        return !t || (p.version || 0) > (t.version || 0);
-      })
-    : merged;
-  if (cleaned.length !== merged.length) changed = true;
-  return { merged: cleaned, changed };
-}
+// see mergeProductsArrays in utils/productMerge.
 
 // Merge a single deletion tombstone into a registry kept by product id (newest wins).
 function mergeTombstone(list: ProductTombstone[], tombstone: ProductTombstone): ProductTombstone[] {
@@ -318,6 +281,8 @@ interface PharmacyContextType {
   updateDrugPriceByCode: (code: string, newPriceLBP: number, newPriceUSD?: number) => { success: boolean; message: string };
   clearPriceChangeIndicators: () => void;
   importProductsFromCSV: (csvText: string, options?: { enrichAfterImport?: boolean }) => { success: boolean; importedCount: number; errors: string[]; skippedLowerPricesCount?: number };
+  importSectionFromCSV: (section: SectionKey, csvText: string) => SectionImportResult;
+  exportSectionCSV: (section: SectionKey) => string;
   searchScientificDataOnline: (ingredients: string, drugName?: string) => Promise<{
     scientificInfo: any;
     source: string;
@@ -502,32 +467,87 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [currentUser, users]);
 
-  // Background hydration from IndexedDB (unlimited offline local storage)
+  // Background hydration from IndexedDB (unlimited offline local storage).
+  // Merged with mergeProductsArrays instead of being chosen by array length. That union
+  // keeps every product present on only one side, compares `version` per product so a
+  // stale IndexedDB copy cannot overwrite a newer local edit, and honours deletion
+  // tombstones. A length comparison could do none of those: replacing wholesale dropped
+  // the local-only products, and skipping the merge whenever the counts did not line up
+  // let already-deleted products come back.
   useEffect(() => {
+    let cancelled = false;
     idbStorage.getProducts().then((stored) => {
-      if (stored && Array.isArray(stored) && stored.length > 0) {
-        setProducts((prev) => {
-          if (stored.length > prev.length) {
-            const normalizedStored = stored.map((p) => {
-              const normForm = normalizePharmaceuticalForm(p.form);
-              const normPres = normalizePresentation(p.presentation);
-              return {
-                ...p,
-                form: normForm,
-                presentation: normPres,
-                scientificInfo: p.scientificInfo
-                  ? { ...p.scientificInfo, form: normForm }
-                  : undefined,
-              };
-            });
-            OfflineStorage.updateMemoryCache(normalizedStored);
-            idbStorage.saveProducts(normalizedStored).catch(() => {});
-            return normalizedStored;
-          }
-          return prev;
+      if (cancelled || !stored || !Array.isArray(stored) || stored.length === 0) return;
+      setProducts((prev) => {
+        const normalizedStored = stored.map((p) => {
+          const normForm = normalizePharmaceuticalForm(p.form);
+          const normPres = normalizePresentation(p.presentation);
+          return {
+            ...p,
+            form: normForm,
+            presentation: normPres,
+            scientificInfo: p.scientificInfo
+              ? { ...p.scientificInfo, form: normForm }
+              : undefined,
+          };
         });
-      }
+        const { merged, changed } = mergeProductsArrays(prev, normalizedStored, deletedProductsRef.current);
+        if (!changed) return prev;
+        // saveProducts refreshes the memory cache, IndexedDB and localStorage (with its
+        // quota fallback). The previous code only refreshed the memory cache, which left
+        // the localStorage boot cache stale until some unrelated write happened to fix it.
+        OfflineStorage.saveProducts(merged);
+        return merged;
+      });
     });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Background hydration from IndexedDB for the transaction collections. The 5MB
+  // localStorage budget cannot hold large sales/purchases/payment arrays, so the
+  // complete snapshot lives in IndexedDB. The two copies are merged by recency rather
+  // than by array length: whichever side has a record the other lacks keeps it, and a
+  // record only changes hands when the IndexedDB copy is strictly newer. That way a
+  // localStorage write that failed on quota can never drop newer local records, and a
+  // stale IndexedDB copy can never overwrite them either.
+  useEffect(() => {
+    let cancelled = false;
+    const adopt = <T extends { id: string; timestamp?: number }>(
+      dbValue: T[] | null,
+      setter: React.Dispatch<React.SetStateAction<T[]>>,
+      saveLocal: (next: T[]) => void,
+      saveDb: (next: T[]) => void
+    ) => {
+      if (!dbValue || !Array.isArray(dbValue) || dbValue.length === 0) return;
+      setter(prev => {
+        const { merged, applied } = mergeByIdPreferNewer(prev, dbValue);
+        if (applied.length === 0) return prev;
+        saveLocal(merged);
+        saveDb(merged);
+        return merged;
+      });
+    };
+    Promise.all([
+      idbStorage.getSales(),
+      idbStorage.getPurchases(),
+      idbStorage.getPurchaseReturns(),
+      idbStorage.getSaleReturns(),
+      idbStorage.getSupplierPayments(),
+      idbStorage.getCustomerPayments(),
+      idbStorage.getExpenses(),
+    ]).then(([dbSales, dbPurchases, dbPurchaseReturns, dbSaleReturns, dbSupplierPayments, dbCustomerPayments, dbExpenses]) => {
+      if (cancelled) return;
+      adopt(dbSales, setSales, OfflineStorage.saveSales, n => { idbStorage.saveSales(n).catch(() => {}); });
+      adopt(dbPurchases, setPurchases, OfflineStorage.savePurchases, n => { idbStorage.savePurchases(n).catch(() => {}); });
+      adopt(dbPurchaseReturns, setPurchaseReturns, OfflineStorage.savePurchaseReturns, n => { idbStorage.savePurchaseReturns(n).catch(() => {}); });
+      adopt(dbSaleReturns, setSaleReturns, OfflineStorage.saveSaleReturns, n => { idbStorage.saveSaleReturns(n).catch(() => {}); });
+      adopt(dbSupplierPayments, setSupplierPayments, OfflineStorage.saveSupplierPayments, n => { idbStorage.saveSupplierPayments(n).catch(() => {}); });
+      adopt(dbCustomerPayments, setCustomerPayments, OfflineStorage.saveCustomerPayments, n => { idbStorage.saveCustomerPayments(n).catch(() => {}); });
+      adopt(dbExpenses, setExpenses, OfflineStorage.saveExpenses, n => { idbStorage.saveExpenses(n).catch(() => {}); });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
   const [settings, setSettings] = useState<PharmacySettings>(() => {
     const loaded = OfflineStorage.getSettings();
@@ -880,6 +900,62 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               return updatedProds;
             });
           }
+        } else if (payload.type === 'SALE_UPSERT') {
+          // Bulk CSV section import: restore a record whether or not it already exists.
+          // Deliberately does NOT deplete stock, unlike SALE_CREATED — the imported
+          // sales are historical and the other terminal's stock already reflects them.
+          const remoteSale = payload.data as SaleTransaction;
+          if (!remoteSale?.id) return;
+          registerSeenInvoiceNumber('INV', remoteSale.invoiceNumber);
+          if (remoteSale.isUnreal) registerSeenInvoiceNumber('UNR', remoteSale.invoiceNumber);
+          setSales(prev => {
+            if (!remoteSale) return prev;
+            const next = upsertById(prev, remoteSale);
+            OfflineStorage.saveSales(next);
+            idbStorage.saveSales(next).catch(() => {});
+            return next;
+          });
+        } else if (payload.type === 'PURCHASE_UPSERT') {
+          const remotePurchase = payload.data as PurchaseInvoice;
+          if (!remotePurchase?.id) return;
+          registerSeenInvoiceNumber('PINV', remotePurchase.invoiceNumber);
+          setPurchases(prev => {
+            if (!remotePurchase) return prev;
+            const next = upsertById(prev, remotePurchase);
+            OfflineStorage.savePurchases(next);
+            idbStorage.savePurchases(next).catch(() => {});
+            return next;
+          });
+        } else if (payload.type === 'PURCHASE_RETURN_UPSERT') {
+          const remoteReturn = payload.data as PurchaseReturn;
+          if (!remoteReturn?.id) return;
+          setPurchaseReturns(prev => {
+            if (!remoteReturn) return prev;
+            const next = upsertById(prev, remoteReturn);
+            OfflineStorage.savePurchaseReturns(next);
+            idbStorage.savePurchaseReturns(next).catch(() => {});
+            return next;
+          });
+        } else if (payload.type === 'SALE_RETURN_UPSERT') {
+          const remoteReturn = payload.data as SaleReturn;
+          if (!remoteReturn?.id) return;
+          setSaleReturns(prev => {
+            if (!remoteReturn) return prev;
+            const next = upsertById(prev, remoteReturn);
+            OfflineStorage.saveSaleReturns(next);
+            idbStorage.saveSaleReturns(next).catch(() => {});
+            return next;
+          });
+        } else if (payload.type === 'EXPENSE_UPSERT') {
+          const remoteExpense = payload.data as Expense;
+          if (!remoteExpense?.id) return;
+          setExpenses(prev => {
+            if (!remoteExpense) return prev;
+            const next = upsertById(prev, remoteExpense);
+            OfflineStorage.saveExpenses(next);
+            idbStorage.saveExpenses(next).catch(() => {});
+            return next;
+          });
         } else if (payload.type === 'CLEAR_ALL_DATA') {
           // The other terminal wiped everything — mirror the wipe locally.
           setProducts([]);
@@ -927,6 +1003,17 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             return next;
           });
 
+        } else if (payload.type === 'SUPPLIER_PAYMENT_UPSERT') {
+          // Was whitelisted + declared but never applied on the receiving side, so
+          // supplier payments silently failed to reach the other terminal.
+          const remotePayment = payload.data as SupplierPayment;
+          if (!remotePayment?.id) return;
+          setSupplierPayments(prev => {
+            const next = upsertById(prev, remotePayment);
+            OfflineStorage.saveSupplierPayments(next);
+            idbStorage.saveSupplierPayments(next).catch(() => {});
+            return next;
+          });
         } else if (payload.type === 'CUSTOMER_PAYMENT_UPSERT') {
           const remotePayment = payload.data as CustomerPayment;
           if (!remotePayment) return;
@@ -1140,6 +1227,16 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               setExpenses(mergedExpenses);
               OfflineStorage.saveExpenses(mergedExpenses);
             }
+            if (Array.isArray(requesterData.supplierPayments)) {
+              const mergedSupplierPayments = mergeById(requesterData.supplierPayments, supplierPaymentsRef.current);
+              setSupplierPayments(mergedSupplierPayments);
+              OfflineStorage.saveSupplierPayments(mergedSupplierPayments);
+            }
+            if (Array.isArray(requesterData.customerPayments)) {
+              const mergedCustomerPayments = mergeById(requesterData.customerPayments, customerPaymentsRef.current);
+              setCustomerPayments(mergedCustomerPayments);
+              OfflineStorage.saveCustomerPayments(mergedCustomerPayments);
+            }
             if (Array.isArray(requesterData.users)) {
               mergedUsers = mergeById(requesterData.users, usersRef.current);
               setUsers(mergedUsers);
@@ -1183,6 +1280,8 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             purchaseReturns: mergedPurchaseReturns,
             saleReturns: saleReturnsRef.current,
             expenses: expensesRef.current,
+            supplierPayments: supplierPaymentsRef.current,
+            customerPayments: customerPaymentsRef.current,
             users: mergedUsers,
             settings: pickSharedSettings(settingsRef.current),
             activeSessions: activeSessionsRef.current,
@@ -1243,6 +1342,20 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setExpenses(prev => {
             const next = mergeById(prev, snapshotData.expenses);
             OfflineStorage.saveExpenses(next);
+            return next;
+          });
+        }
+        if (Array.isArray(snapshotData?.supplierPayments)) {
+          setSupplierPayments(prev => {
+            const next = mergeById(prev, snapshotData.supplierPayments);
+            OfflineStorage.saveSupplierPayments(next);
+            return next;
+          });
+        }
+        if (Array.isArray(snapshotData?.customerPayments)) {
+          setCustomerPayments(prev => {
+            const next = mergeById(prev, snapshotData.customerPayments);
+            OfflineStorage.saveCustomerPayments(next);
             return next;
           });
         }
@@ -1318,6 +1431,8 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         purchaseReturns: purchaseReturnsRef.current,
         saleReturns: saleReturnsRef.current,
         expenses: expensesRef.current,
+        supplierPayments: supplierPaymentsRef.current,
+        customerPayments: customerPaymentsRef.current,
         users: usersRef.current,
         notifications: notificationsRef.current,
         logs: logsRef.current,
@@ -2796,6 +2911,117 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       errors,
       skippedLowerPricesCount,
     };
+  };
+
+  // Which sync type carries each section to the other terminal. Payments already had a
+  // true upsert type; the rest needed dedicated data-only upserts (see KNOWN_SYNC_TYPES).
+  const SECTION_SYNC_TYPE = {
+    sales: 'SALE_UPSERT',
+    purchases: 'PURCHASE_UPSERT',
+    purchaseReturns: 'PURCHASE_RETURN_UPSERT',
+    saleReturns: 'SALE_RETURN_UPSERT',
+    supplierPayments: 'SUPPLIER_PAYMENT_UPSERT',
+    customerPayments: 'CUSTOMER_PAYMENT_UPSERT',
+    expenses: 'EXPENSE_UPSERT',
+  } as const satisfies Record<SectionKey, string>;
+
+  // Per-section CSV import for the transaction/history sections. Unlike the full
+  // JSON restore (authoritative whole-database replacement), this path merges by id and
+  // by recency, so it is safe to re-run: a record that already exists is only replaced
+  // when the CSV row is strictly newer than the stored copy.
+  const importSectionFromCSV = (section: SectionKey, csvText: string): SectionImportResult => {
+    const { records, errors } = parseSectionCsv(section, csvText);
+
+    if (records.length === 0) {
+      return { success: false, importedCount: 0, skippedCount: 0, errors: errors.length > 0 ? errors : ['No records could be parsed from the CSV file.'] };
+    }
+
+    // Every section mirrors to the other terminal with a data-only *_UPSERT broadcast,
+    // so a re-run of the same CSV stays idempotent on both PCs. SALE_UPSERT is used
+    // rather than SALE_CREATED precisely because these are historical records: the
+    // peer must not deplete stock for them.
+    const broadcastSection = (records: { id: string }[]) => {
+      const type = SECTION_SYNC_TYPE[section];
+      for (const record of records) {
+        try { syncEngine.broadcast(type, record); } catch (e) {}
+      }
+    };
+
+    // Merged synchronously against the ref rather than inside a state updater: the
+    // updater runs during the render phase, so its result could not be read back here to
+    // decide what to broadcast. Only records that actually displaced (or joined) the
+    // stored copy are broadcast, so a stale export can never push an older copy to the peer.
+    const commitSection = <T extends { id: string; timestamp?: number }>(
+      current: T[],
+      setter: React.Dispatch<React.SetStateAction<T[]>>,
+      saveLocal: (next: T[]) => void,
+      saveDb: (next: T[]) => void
+    ): T[] => {
+      const { merged, applied } = mergeByIdPreferNewer(current, records as unknown as T[]);
+      if (applied.length > 0) {
+        setter(merged);
+        saveLocal(merged);
+        saveDb(merged);
+      }
+      return applied;
+    };
+
+    let appliedRecords: { id: string }[];
+    if (section === 'sales') {
+      appliedRecords = commitSection<SaleTransaction>(salesRef.current, setSales, OfflineStorage.saveSales, n => { idbStorage.saveSales(n).catch(() => {}); });
+    } else if (section === 'purchases') {
+      appliedRecords = commitSection<PurchaseInvoice>(purchasesRef.current, setPurchases, OfflineStorage.savePurchases, n => { idbStorage.savePurchases(n).catch(() => {}); });
+    } else if (section === 'purchaseReturns') {
+      appliedRecords = commitSection<PurchaseReturn>(purchaseReturnsRef.current, setPurchaseReturns, OfflineStorage.savePurchaseReturns, n => { idbStorage.savePurchaseReturns(n).catch(() => {}); });
+    } else if (section === 'saleReturns') {
+      appliedRecords = commitSection<SaleReturn>(saleReturnsRef.current, setSaleReturns, OfflineStorage.saveSaleReturns, n => { idbStorage.saveSaleReturns(n).catch(() => {}); });
+    } else if (section === 'supplierPayments') {
+      appliedRecords = commitSection<SupplierPayment>(supplierPaymentsRef.current, setSupplierPayments, OfflineStorage.saveSupplierPayments, n => { idbStorage.saveSupplierPayments(n).catch(() => {}); });
+    } else if (section === 'customerPayments') {
+      appliedRecords = commitSection<CustomerPayment>(customerPaymentsRef.current, setCustomerPayments, OfflineStorage.saveCustomerPayments, n => { idbStorage.saveCustomerPayments(n).catch(() => {}); });
+    } else {
+      appliedRecords = commitSection<Expense>(expensesRef.current, setExpenses, OfflineStorage.saveExpenses, n => { idbStorage.saveExpenses(n).catch(() => {}); });
+    }
+
+    broadcastSection(appliedRecords);
+
+    // Applied = brand new plus strictly newer than what is stored. The remainder were
+    // already present and at least as recent, so re-importing the file cannot revert them.
+    const skippedCount = records.length - appliedRecords.length;
+
+    if (skippedCount > 0) {
+      errors.push(`${skippedCount} record(s) already existed and were not older than the stored copy, so those were kept.`);
+    }
+    if (errors.length > 0) {
+      addNotification('Section Import Warnings', `${appliedRecords.length} record(s) imported with ${errors.length} warning(s).`, 'system', 'warning');
+    }
+
+    return {
+      success: true,
+      importedCount: appliedRecords.length,
+      skippedCount,
+      errors,
+    };
+  };
+
+  // Builds a CSV export of the current in-memory records for a section.
+  const exportSectionCSV = (section: SectionKey): string => {
+    switch (section) {
+      case 'sales':
+        return buildSectionCsv(section, sales);
+      case 'purchases':
+        return buildSectionCsv(section, purchases);
+      case 'purchaseReturns':
+        return buildSectionCsv(section, purchaseReturns);
+      case 'saleReturns':
+        return buildSectionCsv(section, saleReturns);
+      case 'supplierPayments':
+        return buildSectionCsv(section, supplierPayments);
+      case 'customerPayments':
+        return buildSectionCsv(section, customerPayments);
+      default:
+        return buildSectionCsv(section, expenses);
+    }
   };
 
   // Sales
@@ -4828,12 +5054,26 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
       setCustomers(OfflineStorage.getCustomers());
       setSales(OfflineStorage.getSales());
       setPurchases(OfflineStorage.getPurchases());
+      setPurchaseReturns(OfflineStorage.getPurchaseReturns());
+      setSaleReturns(OfflineStorage.getSaleReturns());
       setSupplierPayments(OfflineStorage.getSupplierPayments());
       setCustomerPayments(OfflineStorage.getCustomerPayments());
+      setExpenses(OfflineStorage.getExpenses());
+      setClosedYears(OfflineStorage.getClosedYears());
       setSyncConflicts(OfflineStorage.getConflicts());
       setNotifications(OfflineStorage.getNotifications());
       setLogs(OfflineStorage.getLogs());
       setDeletedProducts(OfflineStorage.getDeletedProducts());
+      // Land on a year that is actually open in the restored data. Forcing the current
+      // year would drop the user into a live year the backup has already closed, so the
+      // year is derived from the restored closedYears and switchWorkingYear applies the
+      // matching archive/read-only state exactly as the year selector does.
+      const restoredClosed = OfflineStorage.getClosedYears();
+      const currentYear = new Date().getFullYear();
+      const currentYearIsClosed = restoredClosed.some(r => r.year === currentYear);
+      const latestKnown = restoredClosed.reduce((max, r) => Math.max(max, r.year), currentYear);
+      const targetYear = currentYearIsClosed ? latestKnown : currentYear;
+      await switchWorkingYear(targetYear);
       addNotification('Database Restored', 'Successfully restored full pharmacy backup!', 'system', 'success');
       return true;
     }
@@ -5130,6 +5370,8 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     updateDrugPriceByCode,
     clearPriceChangeIndicators,
     importProductsFromCSV,
+    importSectionFromCSV,
+    exportSectionCSV,
     searchScientificDataOnline,
     enrichProductWithOnlineScientifics,
     enrichAllProductsOnline,
@@ -5212,6 +5454,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     toLBP, toUSD, formatLBP, formatUSD,
     addProduct, updateProduct, bulkUpdateProducts, bulkDeleteProducts, deleteProduct, deleteAllProducts,
     updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV,
+    importSectionFromCSV, exportSectionCSV,
     searchScientificDataOnline, enrichProductWithOnlineScientifics, enrichAllProductsOnline, standardizeAllScientifics,
     recordSale, updateSale, deleteSale, recordPurchase, updatePurchase, deletePurchase, recordPurchaseReturn, deletePurchaseReturn,
     recordSaleReturn, deleteSaleReturn,
@@ -5228,7 +5471,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
   const dataContextValue = useMemo(() => ({
     exchangeRate, setExchangeRate, toLBP, toUSD, formatLBP, formatUSD,
     products, addProduct, updateProduct, bulkUpdateProducts, bulkDeleteProducts, deleteProduct, deleteAllProducts,
-    updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV,
+    updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV, importSectionFromCSV, exportSectionCSV,
     searchScientificDataOnline, enrichProductWithOnlineScientifics, enrichAllProductsOnline, isSearchingScientifics, standardizeAllScientifics,
     sales, recordSale, updateSale, deleteSale,
     purchases, purchaseReturns, supplierPayments, recordSupplierPayment, updateSupplierPayment, deleteSupplierPayment,
@@ -5240,7 +5483,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
   }), [
     exchangeRate, setExchangeRate, toLBP, toUSD, formatLBP, formatUSD,
     products, addProduct, updateProduct, bulkUpdateProducts, bulkDeleteProducts, deleteProduct, deleteAllProducts,
-    updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV,
+    updateDrugPriceByCode, clearPriceChangeIndicators, importProductsFromCSV, importSectionFromCSV, exportSectionCSV,
     searchScientificDataOnline, enrichProductWithOnlineScientifics, enrichAllProductsOnline, isSearchingScientifics, standardizeAllScientifics,
     sales, recordSale, updateSale, deleteSale,
     purchases, purchaseReturns, supplierPayments, recordSupplierPayment, updateSupplierPayment, deleteSupplierPayment,

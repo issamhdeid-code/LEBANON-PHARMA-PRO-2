@@ -46,6 +46,10 @@ const KNOWN_SYNC_TYPES = new Set([
   'PURCHASE_RETURN_CREATED', 'PURCHASE_RETURN_DELETED',
   'SALE_RETURN_CREATED', 'SALE_RETURN_DELETED',
   'EXPENSE_CREATED', 'EXPENSE_DELETED',
+  // Bulk CSV section import: idempotent data-only upserts. Unlike SALE_CREATED these
+  // never touch stock on the receiving terminal, because they restore historical
+  // records rather than representing a dispense that happened just now.
+  'SALE_UPSERT', 'PURCHASE_UPSERT', 'PURCHASE_RETURN_UPSERT', 'SALE_RETURN_UPSERT', 'EXPENSE_UPSERT',
   'USER_UPSERT', 'USER_DELETED', 'SETTINGS_UPDATE', 'USER_SESSION', 'CLEAR_ALL_DATA',
   'YEAR_CLOSED',
 ]);
