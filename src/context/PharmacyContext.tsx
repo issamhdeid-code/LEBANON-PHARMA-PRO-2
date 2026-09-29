@@ -269,7 +269,7 @@ interface PharmacyContextType {
 
   // Products & Stock
   products: Product[];
-  addProduct: (product: Omit<Product, 'id' | 'updatedAt' | 'version'>) => void;
+  addProduct: (product: Omit<Product, 'id' | 'updatedAt' | 'version'>) => { success: boolean; message?: string };
   updateProduct: (id: string, updates: Partial<Product>) => void;
   bulkUpdateProducts: (
     ids: string[],
@@ -975,10 +975,12 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         } else if (payload.type === 'SALE_UPDATED') {
           const remoteSale = payload.data as SaleTransaction;
           setSales(prev => {
+            // Still an update-only message: an unknown id is ignored rather than inserted.
             if (!remoteSale || !prev.some(s => s.id === remoteSale.id)) return prev;
-            const next = upsertById(prev, remoteSale);
-            OfflineStorage.saveSales(next);
-            return next;
+            const { merged, applied } = mergeByIdPreferNewer(prev, [remoteSale]);
+            if (applied.length === 0) return prev;
+            OfflineStorage.saveSales(merged);
+            return merged;
           });
         } else if (payload.type === 'SALE_DELETED') {
           const deletedId = payload.data?.id;
@@ -1011,19 +1013,27 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const remotePayment = payload.data as SupplierPayment;
           if (!remotePayment?.id) return;
           setSupplierPayments(prev => {
-            const next = upsertById(prev, remotePayment);
-            OfflineStorage.saveSupplierPayments(next);
-            idbStorage.saveSupplierPayments(next).catch(() => {});
-            return next;
+            const { merged, applied } = mergeByIdPreferNewer(prev, [remotePayment]);
+            if (applied.length === 0) return prev;
+            OfflineStorage.saveSupplierPayments(merged);
+            idbStorage.saveSupplierPayments(merged).catch(() => {});
+            return merged;
           });
         } else if (payload.type === 'CUSTOMER_PAYMENT_UPSERT') {
           const remotePayment = payload.data as CustomerPayment;
           if (!remotePayment) return;
           setCustomerPayments(prev => {
-            const exists = prev.some(p => p.id === remotePayment.id);
-            const next = exists ? prev.map(p => p.id === remotePayment.id ? remotePayment : p) : [remotePayment, ...prev];
-            OfflineStorage.saveCustomerPayments(next);
-            return next;
+            // A payment this terminal has never seen is still prepended, as before; only an
+            // existing one is subject to the recency check.
+            if (!prev.some(p => p.id === remotePayment.id)) {
+              const next = [remotePayment, ...prev];
+              OfflineStorage.saveCustomerPayments(next);
+              return next;
+            }
+            const { merged, applied } = mergeByIdPreferNewer(prev, [remotePayment]);
+            if (applied.length === 0) return prev;
+            OfflineStorage.saveCustomerPayments(merged);
+            return merged;
           });
         } else if (payload.type === 'CUSTOMER_PAYMENT_DELETED') {
           const deletedId = payload.data.id;
@@ -1053,10 +1063,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         } else if (payload.type === 'PURCHASE_UPDATED') {
           const remotePurchase = payload.data as PurchaseInvoice;
           setPurchases(prev => {
-            if (!remotePurchase) return prev;
-            const next = prev.map(p => p.id === remotePurchase.id ? remotePurchase : p);
-            OfflineStorage.savePurchases(next);
-            return next;
+            if (!remotePurchase || !prev.some(p => p.id === remotePurchase.id)) return prev;
+            const { merged, applied } = mergeByIdPreferNewer(prev, [remotePurchase]);
+            if (applied.length === 0) return prev;
+            OfflineStorage.savePurchases(merged);
+            return merged;
           });
         } else if (payload.type === 'PURCHASE_DELETED') {
           const deletedId = payload.data?.id;
@@ -1194,8 +1205,14 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 idbStorage.saveProducts(merged).catch(() => {});
               }
             }
+            // Transaction sections merge by record recency in BOTH directions, so whichever
+            // side holds the newer copy wins regardless of which PC is the Main. mergeById
+            // gave the Main's copy unconditional priority, which let a stale Main record
+            // overwrite a newer one recorded on the Secondary while it was disconnected.
+            // suppliers/customers/users/notifications/logs keep remote-wins on purpose:
+            // they are master data with no reliable recency field.
             if (Array.isArray(requesterData.sales)) {
-              mergedSales = mergeById(requesterData.sales, salesRef.current);
+              mergedSales = mergeByIdPreferNewer(requesterData.sales, salesRef.current).merged;
               setSales(mergedSales);
               OfflineStorage.saveSales(mergedSales);
             }
@@ -1210,32 +1227,32 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               OfflineStorage.saveCustomers(mergedCustomers);
             }
             if (Array.isArray(requesterData.purchases)) {
-              mergedPurchases = mergeById(requesterData.purchases, purchasesRef.current);
+              mergedPurchases = mergeByIdPreferNewer(requesterData.purchases, purchasesRef.current).merged;
               setPurchases(mergedPurchases);
               OfflineStorage.savePurchases(mergedPurchases);
             }
             if (Array.isArray(requesterData.purchaseReturns)) {
-              mergedPurchaseReturns = mergeById(requesterData.purchaseReturns, purchaseReturnsRef.current);
+              mergedPurchaseReturns = mergeByIdPreferNewer(requesterData.purchaseReturns, purchaseReturnsRef.current).merged;
               setPurchaseReturns(mergedPurchaseReturns);
               OfflineStorage.savePurchaseReturns(mergedPurchaseReturns);
             }
             if (Array.isArray(requesterData.saleReturns)) {
-              const mergedSaleReturns = mergeById(requesterData.saleReturns, saleReturnsRef.current);
+              const mergedSaleReturns = mergeByIdPreferNewer(requesterData.saleReturns, saleReturnsRef.current).merged;
               setSaleReturns(mergedSaleReturns);
               OfflineStorage.saveSaleReturns(mergedSaleReturns);
             }
             if (Array.isArray(requesterData.expenses)) {
-              const mergedExpenses = mergeById(requesterData.expenses, expensesRef.current);
+              const mergedExpenses = mergeByIdPreferNewer(requesterData.expenses, expensesRef.current).merged;
               setExpenses(mergedExpenses);
               OfflineStorage.saveExpenses(mergedExpenses);
             }
             if (Array.isArray(requesterData.supplierPayments)) {
-              const mergedSupplierPayments = mergeById(requesterData.supplierPayments, supplierPaymentsRef.current);
+              const mergedSupplierPayments = mergeByIdPreferNewer(requesterData.supplierPayments, supplierPaymentsRef.current).merged;
               setSupplierPayments(mergedSupplierPayments);
               OfflineStorage.saveSupplierPayments(mergedSupplierPayments);
             }
             if (Array.isArray(requesterData.customerPayments)) {
-              const mergedCustomerPayments = mergeById(requesterData.customerPayments, customerPaymentsRef.current);
+              const mergedCustomerPayments = mergeByIdPreferNewer(requesterData.customerPayments, customerPaymentsRef.current).merged;
               setCustomerPayments(mergedCustomerPayments);
               OfflineStorage.saveCustomerPayments(mergedCustomerPayments);
             }
@@ -1300,7 +1317,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (snapshotData?.products) applyRemoteProducts(snapshotData.products);
         if (Array.isArray(snapshotData?.sales)) {
           setSales(prev => {
-            const next = mergeById(prev, snapshotData.sales);
+            const next = mergeByIdPreferNewer(prev, snapshotData.sales).merged;
             OfflineStorage.saveSales(next);
             return next;
           });
@@ -1321,42 +1338,42 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
         if (Array.isArray(snapshotData?.purchases)) {
           setPurchases(prev => {
-            const next = mergeById(prev, snapshotData.purchases);
+            const next = mergeByIdPreferNewer(prev, snapshotData.purchases).merged;
             OfflineStorage.savePurchases(next);
             return next;
           });
         }
         if (Array.isArray(snapshotData?.purchaseReturns)) {
           setPurchaseReturns(prev => {
-            const next = mergeById(prev, snapshotData.purchaseReturns);
+            const next = mergeByIdPreferNewer(prev, snapshotData.purchaseReturns).merged;
             OfflineStorage.savePurchaseReturns(next);
             return next;
           });
         }
         if (Array.isArray(snapshotData?.saleReturns)) {
           setSaleReturns(prev => {
-            const next = mergeById(prev, snapshotData.saleReturns);
+            const next = mergeByIdPreferNewer(prev, snapshotData.saleReturns).merged;
             OfflineStorage.saveSaleReturns(next);
             return next;
           });
         }
         if (Array.isArray(snapshotData?.expenses)) {
           setExpenses(prev => {
-            const next = mergeById(prev, snapshotData.expenses);
+            const next = mergeByIdPreferNewer(prev, snapshotData.expenses).merged;
             OfflineStorage.saveExpenses(next);
             return next;
           });
         }
         if (Array.isArray(snapshotData?.supplierPayments)) {
           setSupplierPayments(prev => {
-            const next = mergeById(prev, snapshotData.supplierPayments);
+            const next = mergeByIdPreferNewer(prev, snapshotData.supplierPayments).merged;
             OfflineStorage.saveSupplierPayments(next);
             return next;
           });
         }
         if (Array.isArray(snapshotData?.customerPayments)) {
           setCustomerPayments(prev => {
-            const next = mergeById(prev, snapshotData.customerPayments);
+            const next = mergeByIdPreferNewer(prev, snapshotData.customerPayments).merged;
             OfflineStorage.saveCustomerPayments(next);
             return next;
           });
@@ -1973,7 +1990,33 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
   }, [addNotification, addLog, products]);
 
-  const addProduct = (productData: Omit<Product, 'id' | 'updatedAt' | 'version'>) => {
+  const addProduct = (
+    productData: Omit<Product, 'id' | 'updatedAt' | 'version'>
+  ): { success: boolean; message?: string } => {
+    // One row per code. mergeProductsArrays has to collapse a code that turns up under two
+    // ids because duplicate rows double-count stock and make a barcode scan ambiguous, so
+    // refuse the collision at entry rather than letting it reach the catalog. Compared the
+    // same way updateDrugPriceByCode normalises, so a code entered with different spacing
+    // or case is still caught. An edit (updateProduct) is untouched and stays allowed.
+    const incomingCode = String(productData.code || '').trim().toUpperCase();
+    if (incomingCode) {
+      const clash = products.find(p => String(p.code || '').trim().toUpperCase() === incomingCode);
+      if (clash) {
+        const message = `Item code "${productData.code}" already exists in stock as "${clash.name}". Edit that item instead of adding a second row with the same code.`;
+        addNotification('Duplicate Item Code', message, 'inventory', 'error');
+        addLog({
+          component: 'Inventory / Stock',
+          action: 'PRODUCT_CREATE_REJECTED',
+          level: 'error',
+          title: `Duplicate Code Rejected: ${productData.code}`,
+          description: message,
+          entityId: clash.id,
+          entityType: 'product',
+          details: { attemptedCode: productData.code, existingName: clash.name, existingId: clash.id },
+        });
+        return { success: false, message };
+      }
+    }
     const normForm = normalizePharmaceuticalForm(productData.form);
     const normPres = normalizePresentation(productData.presentation);
     const newProduct: Product = {
@@ -2070,6 +2113,8 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
       }
     }
+
+    return { success: true };
   };
 
   const updateProduct = (id: string, updates: Partial<Product>) => {

@@ -17,6 +17,25 @@ export interface ProductMergeResult {
  * Used both for the Main/Secondary snapshot exchange and for boot hydration from IndexedDB,
  * so a product list is never replaced wholesale on the way in.
  */
+/**
+ * Decide whether the incoming copy should displace the one already held.
+ *
+ * A strictly higher version always wins. On a version tie -- two terminals edited the
+ * same product without having seen each other's change -- the tie is broken on updatedAt
+ * so that both sides reach the same verdict from the same pair of records and converge in
+ * a single exchange. Comparing the version alone with >= let the incoming copy win
+ * unconditionally, which made each terminal adopt the other's content: they disagreed
+ * after one merge, and the winner depended on message order rather than on the data.
+ * An exact tie (same version and same updatedAt) keeps the stored copy, so re-delivery of
+ * an identical record is a no-op instead of a rewrite.
+ */
+function winsTie(remote: Product, local: Product): boolean {
+  const rv = remote.version || 0;
+  const lv = local.version || 0;
+  if (rv !== lv) return rv > lv;
+  return (remote.updatedAt || 0) > (local.updatedAt || 0);
+}
+
 export function mergeProductsArrays(
   local: Product[],
   remote: Product[],
@@ -44,7 +63,7 @@ export function mergeProductsArrays(
       const normalized = String(remoteProd.code || '').toUpperCase();
       localMatch = normalized ? byCode.get(normalized) : undefined;
     }
-    if (!localMatch || (remoteProd.version || 0) >= (localMatch.version || 0)) {
+    if (!localMatch || winsTie(remoteProd, localMatch)) {
       // A code-based match means the same product turned up under a different id (it was
       // re-created or re-imported on the other PC). The incoming copy is stored under its
       // own id, so the row it matched has to be dropped — otherwise the catalog ends up

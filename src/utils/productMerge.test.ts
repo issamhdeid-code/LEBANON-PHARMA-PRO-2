@@ -164,4 +164,40 @@ describe('mergeProductsArrays', () => {
 
     expect(merged[0].version).toBe(1);
   });
+
+  it('converges when both terminals edited one product to the same version', () => {
+    // The property the version-only compare got wrong: with `>=` the incoming copy won
+    // unconditionally, so each terminal adopted the other's content and they disagreed.
+    // Both sides must reach the same verdict from the same pair, in a single exchange.
+    const atA = [prod('a', 5, { name: 'edited on A', updatedAt: 1000 })];
+    const atB = [prod('a', 5, { name: 'edited on B', updatedAt: 2000 })];
+
+    const resultA = mergeProductsArrays(atA, atB).merged;
+    const resultB = mergeProductsArrays(atB, atA).merged;
+
+    expect(resultA[0].name).toBe('edited on B');
+    expect(resultB[0].name).toBe('edited on B');
+    expect(resultA[0].name).toBe(resultB[0].name);
+  });
+
+  it('keeps the stored copy on an exact version and updatedAt tie', () => {
+    // Re-delivery of an identical record must be a no-op rather than a rewrite.
+    const local = [prod('a', 5, { name: 'stored', updatedAt: 1000 })];
+    const remote = [prod('a', 5, { name: 'redelivered', updatedAt: 1000 })];
+
+    const { merged, changed } = mergeProductsArrays(local, remote);
+
+    expect(merged[0].name).toBe('stored');
+    expect(changed).toBe(false);
+  });
+
+  it('still prefers the higher version whatever the updatedAt says', () => {
+    // Guards the new tie-break against shadowing the primary rule.
+    const local = [prod('a', 9, { name: 'v9 but older stamp', updatedAt: 1000 })];
+    const remote = [prod('a', 4, { name: 'v4 but newer stamp', updatedAt: 9000 })];
+
+    const { merged } = mergeProductsArrays(local, remote);
+
+    expect(merged[0].name).toBe('v9 but older stamp');
+  });
 });

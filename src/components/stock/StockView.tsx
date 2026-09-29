@@ -2053,7 +2053,7 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         scientificInfo,
       });
     } else {
-      addProduct({
+      const added = addProduct({
         code: resolvedCode,
         barcode: formBarcode.trim(),
         name: formName.trim(),
@@ -2082,6 +2082,9 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
         batches,
         scientificInfo,
       });
+      // A duplicate code is rejected inside addProduct, which already notified the user.
+      // Keep the modal open instead of closing it as if the item had been saved.
+      if (!added.success) return;
     }
 
     setIsEditModalOpen(false);

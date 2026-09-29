@@ -566,7 +566,12 @@ export const AddStockProductModal: React.FC<AddStockProductModalProps> = ({
       scientificInfo,
     };
 
-    addProduct(productPayload);
+    const added = addProduct(productPayload);
+    if (!added.success) {
+      // addProduct already raised the notification + log; keep the form open so the code
+      // can be corrected instead of reporting a success that never happened.
+      return;
+    }
 
     const generatedProduct: Product = {
       ...productPayload,
