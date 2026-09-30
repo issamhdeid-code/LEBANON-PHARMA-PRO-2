@@ -92,7 +92,7 @@ export const ViewAdjustmentLogModal: React.FC<ViewAdjustmentLogModalProps> = ({
                 Target Product
               </div>
               <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
-                {details.productName || log.title.replace(/^Quantity Adjustment:\s*/i, '')}
+                {details.productName || (log.title || '').replace(/^Quantity Adjustment:\s*/i, '')}
               </h3>
               <div className="text-xs font-mono text-slate-500 dark:text-slate-400 mt-0.5">
                 Code: {details.productCode || details.productId || 'N/A'}

@@ -549,7 +549,7 @@ export const QuantityAdjustmentsView: React.FC = () => {
 
     // 5. Notify user
     if (addNotification) {
-      const prodName = log.details?.productName || log.title.replace(/^Quantity Adjustment:\s*/i, '');
+      const prodName = log.details?.productName || (log.title || '').replace(/^Quantity Adjustment:\s*/i, '');
       addNotification('Activity Log Deleted', `Adjustment activity record for ${prodName} was removed.`, 'inventory', 'info');
     }
   };
@@ -1275,7 +1275,7 @@ export const QuantityAdjustmentsView: React.FC = () => {
                         {/* Product */}
                         <td className="py-3 px-4">
                           <div className="font-bold text-slate-800 dark:text-slate-100 line-clamp-1">
-                            {details.productName || activity.title.replace(/^Quantity Adjustment:\s*/i, '')}
+                            {details.productName || (activity.title || '').replace(/^Quantity Adjustment:\s*/i, '')}
                           </div>
                           <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
                             {details.productCode || details.productId || '—'}
