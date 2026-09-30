@@ -162,6 +162,43 @@ This log tracks all architectural decisions, feature implementations, and module
   - **Unit Testing** (`src/services/yearClosing.test.ts`):
     - Comprehensive Vitest test suite verifying summary calculation, inventory quantity & batch carryover, customer/supplier opening balance preservation, and full backup/restore compatibility. All 20 test files and 189 tests passing.
 
+#### 11. Settings & Data Integrity — Per-Section CSV Import/Export with Peer Sync
+- **Requirement**: Add a per-section CSV import/export panel under Settings so the seven transaction sections (sales, purchases, purchase returns, sale returns, supplier payments, customer payments, expenses) can be backed up and restored individually, with the restored data reaching the other terminal without corrupting stock.
+- **Implementation**:
+  - **Data Model & Sync** (`src/utils/sectionCsv.ts`, `src/services/storage.ts`, `src/services/indexedDbStorage.ts`, `src/services/syncEngine.ts`, `server.ts`):
+    - Added a typed per-section CSV contract (`SECTION_HEADERS`, `SectionKey`, `parseSectionCsv`, `exportSectionCsv`) covering the 7 transaction sections. Adjustment logs are deliberately NOT CSV-importable.
+    - Records mirror to the peer as data-only `*_UPSERT` broadcasts rather than `*_CREATED`, because these are historical records — the peer must not replay stock movement for them. The new types were registered in `server.ts` (`KNOWN_SYNC_TYPES`) and in the `SyncPayload` union.
+  - **Recency-Based Merge** (`src/utils/collectionMerge.ts`, `src/utils/productMerge.ts`):
+    - Added `mergeByIdPreferNewer`, which unions two id-keyed collections and only lets a record displace the stored copy when it is strictly newer. This replaced length-based reconciliation, which silently discarded every record that existed on only the shorter side — precisely the data a quota-failed `localStorage` write had been hiding.
+    - Products keep their existing `version` + `updatedAt` scheme; a `winsTie()` helper makes tie-breaks deterministic so two terminals always converge on the same winner.
+  - **UI** (`src/components/settings/SectionCSVPanel.tsx`, `SettingsView.tsx`): per-section export/import with row counts and per-record error reporting.
+
+#### 12. Stock Module — Quantity Adjustment Tab Crash (Null-Safe Log Titles)
+- **Requirement**: The app crashed on entering the Quantity Adjustment tab, collapsing the whole view into its error boundary.
+- **Root Cause**: `QuantityAdjustmentsView.tsx` filtered adjustment logs with `l.title?.toLowerCase()` (correctly treating `title` as optional), but the table renderer then called `activity.title.replace(...)` unconditionally. Any log with `component === 'Inventory / Stock'` and a "stock adjusted" description but no `title` passed the filter and threw.
+- **Fix**: `(log.title || '').replace(...)` at all three affected sites — `QuantityAdjustmentsView.tsx` (filter seed list and table row) and the same latent crash in `ViewAdjustmentLogModal.tsx`, which would have fired on the very next click.
+- **Verification**: reproduced the `TypeError` before the fix and confirmed the tab renders every record afterwards; zero unguarded `title.replace(` remain under `src/`.
+
+#### 13. Two-Terminal Sync — In-App Edits Were Silently Dropped on the Peer
+- **Requirement**: An edit made in the app never reached the second terminal.
+- **Root Cause**: A regression introduced by the recency guard added in item 11. The receiving side only accepts a strictly newer record, but `updateSale`, `updatePurchase` and `updateExpense` all kept the record's original `timestamp`, so the edited copy tied with the peer's untouched copy and was discarded (`applied.length === 0` → `return prev`). This is a live two-terminal data divergence, not merely an import limitation.
+- **Why `timestamp` Could Not Be Bumped**: it is the record's accounting date and decides the day every report attributes the record to — daily sales, VAT, cashier summary, profit margin, and debt aging. Rewriting it would move an edited sale into a different accounting day.
+- **Fix**:
+  - Added an optional `updatedAt` to `SaleTransaction`, `PurchaseInvoice`, `CustomerPayment`, `SupplierPayment` and `Expense`; the three drop-prone update functions now stamp `updatedAt` instead of touching `timestamp`.
+  - `mergeByIdPreferNewer` now compares `updatedAt ?? timestamp` — "when this record's content was last written". A creation time and an edit time are both wall-clock, so they stay directly comparable, and a never-edited record still falls back to its creation time.
+  - `updateCustomerPayment` previously stamped `timestamp: Date.now()`, which both moved an edited payment to today in the daily/aging reports *and* discarded any date the user had chosen in the form. It now stamps `updatedAt` too.
+- **Verification**: the two-terminal suite drives a real Edit Sale on the Main and asserts the Secondary receives it while BOTH terminals keep the original timestamp, plus a phase that imports a sale using non-canonical item keys and confirms the row is editable on both PCs.
+
+#### 14. Sale & CSV Import — Un-editable Rows from Hand-Written CSVs
+- **Requirement**: A sale imported from a CSV could not be opened in the Edit Sale modal.
+- **Root Cause**: `parseSectionCsv` normalized every scalar field defensively (`opt`/`num`/`bool`) but cast sale `items` straight through from JSON with no coercion. A CSV using aliases (`code`/`name`/`priceUSD` instead of `productCode`/`productName`/`unitPriceUSD`) produced items missing the numerics the UI reads, so `EditSaleModal` threw `TypeError: Cannot read properties of undefined (reading 'toFixed')` and the row became permanently un-editable.
+- **Fix**:
+  - Added `normalizeSaleItem` in `src/utils/sectionCsv.ts`, wired into the `sales` case only — purchases and both return sections keep their own item shapes and are untouched. It accepts the common aliases, defaults every numeric to 0, derives a missing line total from unit price × quantity, derives a missing LBP unit price from the line total ÷ quantity, and substitutes safe placeholders for nameless/idless entries. Nested `batches` are accepted as either a JSON string or an already-parsed array.
+  - Hardened the four `.toFixed()` call sites in `src/components/sale/EditSaleModal.tsx` so a row can never crash the modal even if it predates this normalization.
+- **Unit Testing** (`src/utils/sectionCsv.test.ts`, `src/utils/collectionMerge.test.ts`): tests cover canonical round-trip, alias acceptance, missing total/price derivation, division-by-zero edge cases, non-object entries, empty-array cells, and `updatedAt` recency (including convergence from either terminal). Each new test was confirmed to fail against the previous behavior before being accepted.
+
+**Gate status at the time of writing**: `npm run lint` exit 0 · `npm run test` 248/248 across 24 files · `npm run build` exit 0 · two-terminal sync suite 55/55 · full Puppeteer walkthrough 131/131 with 0 non-benign console errors. Committed as `d90bd38`, `b7187b2`, `925505a`, `febcf27`, `e82a10d`, `ed4e207` — 6 commits ahead of `origin/main`, **not yet pushed**.
+
 ---
 
 ## Ongoing Backlog & Next Steps for OpenCode
@@ -174,7 +211,15 @@ This log tracks all architectural decisions, feature implementations, and module
    - List multi-ingredient combinations containing the molecule second.
    - Prioritize in-stock alternatives while showing all alternatives regardless of stock status.
    - Audit molecule matching to ensure exact active ingredient correspondence.
-3. **Multi-Terminal LAN Connectivity & Secondary PC Verification**:
+3. **Two-PC Runtime Test (Hardware)**:
+   - Run a live test with a real second machine, importing a sales CSV on the Main and confirming the Secondary receives records and its stock does NOT move for a `SALE_CREATED` replay; verify the in-app sale edit propagates while both terminals keep the original timestamp.
+4. **Offline Queue Cap Verification (Build Repro)**:
+   - Optionally build a >500-record offline replay repro to confirm the capped 500-item pending queue (`MAX_PENDING_PAYLOADS = 500`) drops oldest as intended and flushes correctly on reconnect.
+5. **`updateCustomerPayment` — Business Date Decision**:
+   - As of `ed4e207`, it stamps `updatedAt` (not `timestamp`). This fixes the sync-dropout and preserves the payment's accounting date in reports, which is the correct accounting behavior. It also means an edit no longer moves a payment to "today" in reports. If that business rule ever needs to change, revisit it explicitly.
+6. **Importer Item Normalization Scope**:
+   - `normalizeSaleItem` currently normalises only `sales`. If purchases or returns ever need the same alias tolerance (hand-written CSVs), consider extending it to those sections after verifying their item shapes.
+7. **Multi-Terminal LAN Connectivity & Secondary PC Verification**:
    - Validate peer connection and developer view access for secondary PCs on the local network.
-4. **Year Closing Historical Transaction Filtering**:
+8. **Year Closing Historical Transaction Filtering**:
    - Add global fiscal year selector filter in Reports and Transaction logs to switch between active year and archived closed years.
