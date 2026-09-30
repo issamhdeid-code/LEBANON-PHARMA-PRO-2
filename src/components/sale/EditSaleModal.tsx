@@ -54,8 +54,8 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
       copy[index] = {
         ...item,
         quantity: newQty,
-        totalUSD: Number((item.unitPriceUSD * newQty).toFixed(2)),
-        totalLBP: Math.round(item.unitPriceLBP * newQty),
+        totalUSD: Number((Number(item.unitPriceUSD || 0) * newQty).toFixed(2)),
+        totalLBP: Math.round(Number(item.unitPriceLBP || 0) * newQty),
       };
       return copy;
     });
@@ -225,7 +225,7 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
                       )}
                     </div>
                     <div className="text-[10px] text-gray-500 dark:text-slate-400">
-                      Code: {item.productCode} • ${item.unitPriceUSD.toFixed(2)} / unit ({formatLBPValue(item.unitPriceLBP)} LBP)
+                      Code: {item.productCode} • ${Number(item.unitPriceUSD || 0).toFixed(2)} / unit ({formatLBPValue(item.unitPriceLBP)} LBP)
                     </div>
                   </div>
 
@@ -251,7 +251,7 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
                     </div>
 
                     <div className="w-20 text-right font-bold text-blue-600 dark:text-blue-400">
-                      ${item.totalUSD.toFixed(2)}
+                      ${Number(item.totalUSD || 0).toFixed(2)}
                     </div>
 
                     <button
@@ -278,7 +278,7 @@ export const EditSaleModal: React.FC<EditSaleModalProps> = ({ sale, onClose, onS
               <option value="">+ Add another medication to this sale...</option>
               {products.map((p) => (
                 <option key={p.id} value={p.id} disabled={p.stockQuantity <= 0}>
-                  {p.name} ({p.code}) - ${p.priceUSD.toFixed(2)} [{formatStockDisplay(p.stockQuantity, p.isDivisible, p.piecesPerBox, p.pieceName)} in stock]
+                  {p.name} ({p.code}) - ${Number(p.priceUSD || 0).toFixed(2)} [{formatStockDisplay(p.stockQuantity, p.isDivisible, p.piecesPerBox, p.pieceName)} in stock]
                 </option>
               ))}
             </select>

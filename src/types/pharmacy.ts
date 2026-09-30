@@ -124,6 +124,7 @@ export interface SaleTransaction {
   receiptNumber?: string;
   date: string; // ISO string
   timestamp: number;
+  updatedAt?: number;
   invoices?: string[];
   items: {
     productId: string;
@@ -199,6 +200,7 @@ export interface PurchaseInvoice {
   status: 'received' | 'pending';
   paid: boolean;
   timestamp: number;
+  updatedAt?: number;
   invoices?: string[];
   currency?: 'USD' | 'LBP';
   invoiceDiscount?: number;
@@ -408,6 +410,7 @@ export interface CustomerPayment {
   amountLBP?: number;
   date: string;
   timestamp: number;
+  updatedAt?: number;
   invoices?: string[];
   isPaymentOnAccount?: boolean;
 }
@@ -428,6 +431,7 @@ export interface SupplierPayment {
   allocations?: { invoiceId: string, amountUSD: number, amountLBP: number }[];
   isPaymentOnAccount: boolean;
   timestamp: number;
+  updatedAt?: number;
   // Funding source details
   fundingSource?: PaymentFundingSource; // 'drawer' | 'outside' | 'mixed' (defaults to 'drawer')
   drawerAmountUSD?: number;
@@ -515,6 +519,7 @@ export interface Expense {
   receiptRef?: string;   // Receipt/Invoice number from the payee
   notes?: string;
   timestamp: number;
+  updatedAt?: number;
   synced?: boolean;
 }
 

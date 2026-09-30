@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { mergeByIdPreferNewer } from './collectionMerge';
 
-type Row = { id: string; timestamp?: number; label?: string };
+type Row = { id: string; timestamp?: number; updatedAt?: number; label?: string };
 
 describe('mergeByIdPreferNewer', () => {
   it('keeps records that exist on only one side, instead of dropping the shorter side', () => {
@@ -132,5 +132,86 @@ describe('mergeByIdPreferNewer', () => {
 
     expect(merged).toHaveLength(1);
     expect(merged[0].label).toBe('third');
+  });
+
+  describe('recency reads updatedAt, so an in-app edit still wins', () => {
+    it('applies an edit whose timestamp is unchanged but which carries a newer updatedAt', () => {
+      // The regression this covers: updateSale keeps the original `timestamp` because that
+      // value is the sale's accounting date and must not move when the sale is edited. Under
+      // a timestamp-only recency rule the edit tied with the peer's copy, was reported as not
+      // applied, and the edit was silently dropped on the second terminal forever.
+      const stored: Row[] = [{ id: 'sale-1', timestamp: 1000, label: 'original' }];
+      const incoming: Row[] = [{ id: 'sale-1', timestamp: 1000, updatedAt: 5000, label: 'edited in app' }];
+
+      const { merged, applied } = mergeByIdPreferNewer(stored, incoming);
+
+      expect(merged[0].label).toBe('edited in app');
+      expect(applied).toHaveLength(1);
+    });
+
+    it('leaves the business timestamp alone, so the record keeps its accounting day', () => {
+      const stored: Row[] = [{ id: 'sale-1', timestamp: 1000 }];
+      const incoming: Row[] = [{ id: 'sale-1', timestamp: 1000, updatedAt: 5000 }];
+
+      expect(mergeByIdPreferNewer(stored, incoming).merged[0].timestamp).toBe(1000);
+    });
+
+    it('still refuses a stale export that predates the edit', () => {
+      // The property the recency rule exists to protect must survive the new field.
+      const stored: Row[] = [{ id: 'sale-1', timestamp: 1000, updatedAt: 5000, label: 'edited in app' }];
+      const incoming: Row[] = [{ id: 'sale-1', timestamp: 1000, label: 'stale export' }];
+
+      const { merged, applied } = mergeByIdPreferNewer(stored, incoming);
+
+      expect(merged[0].label).toBe('edited in app');
+      expect(applied).toHaveLength(0);
+    });
+
+    it('keeps the stored copy when updatedAt ties, so replaying an import is idempotent', () => {
+      const stored: Row[] = [{ id: 'sale-1', timestamp: 1000, updatedAt: 5000, label: 'stored' }];
+      const incoming: Row[] = [{ id: 'sale-1', timestamp: 1000, updatedAt: 5000, label: 'incoming' }];
+
+      const { merged, applied } = mergeByIdPreferNewer(stored, incoming);
+
+      expect(merged[0].label).toBe('stored');
+      expect(applied).toHaveLength(0);
+    });
+
+    it('lets a later edit win over an earlier one', () => {
+      const stored: Row[] = [{ id: 'sale-1', timestamp: 1000, updatedAt: 5000, label: 'first edit' }];
+      const incoming: Row[] = [{ id: 'sale-1', timestamp: 1000, updatedAt: 9000, label: 'second edit' }];
+
+      expect(mergeByIdPreferNewer(stored, incoming).merged[0].label).toBe('second edit');
+    });
+
+    it('lets the copy whose content was written later win, whoever wrote it', () => {
+      // `updatedAt ?? timestamp` is "when this record's content was last written", and an
+      // edit time and a creation time are both wall-clock, so they are directly comparable.
+      // The stored copy was edited at 5000; the incoming one was merely created at 4000 and
+      // never edited, so the edit is the more recent write and must survive.
+      const stored: Row[] = [{ id: 'sale-1', timestamp: 1000, updatedAt: 5000, label: 'edited' }];
+      const incoming: Row[] = [{ id: 'sale-1', timestamp: 4000, label: 'created later but never edited' }];
+
+      expect(mergeByIdPreferNewer(stored, incoming).merged[0].label).toBe('edited');
+    });
+
+    it('lets a genuinely later creation displace an older untouched record', () => {
+      const stored: Row[] = [{ id: 'sale-1', timestamp: 1000, label: 'older' }];
+      const incoming: Row[] = [{ id: 'sale-1', timestamp: 9000, label: 'later' }];
+
+      expect(mergeByIdPreferNewer(stored, incoming).merged[0].label).toBe('later');
+    });
+
+    it('converges whichever terminal applies the edit', () => {
+      const pc1: Row[] = [{ id: 'a', timestamp: 1000, updatedAt: 5000, label: 'newer' }];
+      const pc2: Row[] = [{ id: 'a', timestamp: 1000, label: 'older' }];
+
+      const atPc1 = mergeByIdPreferNewer(pc1, pc2);
+      const atPc2 = mergeByIdPreferNewer(pc2, pc1);
+
+      expect(atPc1.merged).toEqual(atPc2.merged);
+      expect(atPc1.merged[0].label).toBe('newer');
+      expect(atPc2.merged[0].label).toBe('newer');
+    });
   });
 });

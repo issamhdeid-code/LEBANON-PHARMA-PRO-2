@@ -16,20 +16,35 @@ export interface MergeResult<T> {
 }
 
 /**
+ * Recency of a record for merge purposes. `timestamp` is the record's business
+ * date and time — it decides which accounting day a sale lands in, so it must
+ * never be rewritten just to win a merge. `updatedAt` is the separate
+ * last-modified stamp, and it is what merge ordering reads once a record has
+ * been edited in-app. Records that have never been edited simply have no
+ * `updatedAt` and fall back to their creation time.
+ */
+function recencyOf(record: { timestamp?: number; updatedAt?: number }): number {
+  return record.updatedAt ?? record.timestamp ?? 0;
+}
+
+/**
  * Unions two collections keyed by `id`. A record only displaces the stored copy when its
- * `timestamp` is strictly newer; otherwise the stored copy is kept.
+ * recency (see `recencyOf`) is strictly newer; otherwise the stored copy is kept.
  *
  * This makes a merge:
  *  - lossless: a record present on only one side is always kept, never dropped;
  *  - monotonic: the same inputs always produce the same output, so replaying an import or
  *    re-running boot hydration is idempotent;
  *  - safe against stale copies: an older export (e.g. a CSV the user re-imports after editing
- *    a record in the app) cannot revert the newer in-app edit.
+ *    a record in the app) cannot revert the newer in-app edit;
+ *  - able to carry an edit: because an in-app edit stamps `updatedAt`, it is strictly newer
+ *    than the peer's untouched copy and so does displace it, without disturbing `timestamp`
+ *    and therefore without moving the record to a different day in any report.
  *
  * @param stored   the copy currently held by the app
  * @param incoming the copy being merged in
  */
-export function mergeByIdPreferNewer<T extends { id: string; timestamp?: number }>(
+export function mergeByIdPreferNewer<T extends { id: string; timestamp?: number; updatedAt?: number }>(
   stored: T[],
   incoming: T[]
 ): MergeResult<T> {
@@ -43,7 +58,7 @@ export function mergeByIdPreferNewer<T extends { id: string; timestamp?: number 
       index.set(record.id, merged.length);
       merged.push(record);
       applied.push(record);
-    } else if ((record.timestamp ?? 0) > (merged[idx].timestamp ?? 0)) {
+    } else if (recencyOf(record) > recencyOf(merged[idx])) {
       merged[idx] = record;
       applied.push(record);
     }

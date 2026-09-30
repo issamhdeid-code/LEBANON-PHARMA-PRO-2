@@ -3209,6 +3209,7 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       ...prevSale,
       ...updatedData,
       isUnreal,
+      updatedAt: Date.now(),
     };
 
     // If items were updated, calculate stock difference for each item (bypassed for unreal invoices)
@@ -4265,7 +4266,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
     const oldPurchase = purchases.find(p => p.id === purchaseId);
     if (!oldPurchase) return { success: false, error: 'Purchase not found' };
 
-    const newPurchase = { ...oldPurchase, ...updatedData };
+    const newPurchase: PurchaseInvoice = { ...oldPurchase, ...updatedData, updatedAt: Date.now() };
 
     // Update purchase record
     const updatedPurchases = purchases.map(p => p.id === purchaseId ? newPurchase : p);
@@ -4936,6 +4937,7 @@ const recordSupplierPayment = (payment: Omit<SupplierPayment, 'id' | 'timestamp'
       ...existing,
       ...updatedData,
       id: expenseId,
+      updatedAt: Date.now(),
     };
 
     const updated = expenses.map(e => e.id === expenseId ? merged : e);
