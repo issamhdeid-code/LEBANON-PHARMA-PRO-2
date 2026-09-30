@@ -129,6 +129,59 @@ function parseJsonArray<T>(value: unknown): T[] {
   return [];
 }
 
+/**
+ * Coerces one raw entry from a sale's `items` JSON cell into the
+ * `SaleTransaction['items']` shape.
+ *
+ * Every other field in a parsed row is defensively normalised (opt/num/bool), but `items`
+ * used to be cast straight through, so a hand-written or third-party CSV that used different
+ * key names (`code`/`name`/`priceUSD`) produced a sale whose items did not satisfy the type
+ * the rest of the app reads. The consequences were real: EditSaleModal threw
+ * "Cannot read properties of undefined (reading 'toFixed')" on open, and itemised reports
+ * rendered blanks. Aliases are accepted, numeric fields are defaulted, and a missing line
+ * total is derived from unit price x quantity so the figures still add up.
+ */
+function normalizeSaleItem(raw: unknown): SaleTransaction['items'][number] {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const quantity = numRequired(r['quantity'] ?? r['qty'], 0);
+  const unitPriceUSD = numRequired(r['unitPriceUSD'] ?? r['priceUSD'] ?? r['unitPrice'] ?? r['price'], 0);
+  // Derive the LBP unit price from the line total when only the total was supplied, so an
+  // imported sale still prices correctly in LBP instead of showing 0.
+  const totalLBP = num(r['totalLBP']) ?? num(r['total_lbp']);
+  const unitPriceLBP = numRequired(
+    r['unitPriceLBP'] ?? r['priceLBP'] ?? r['unit_price_lbp'],
+    quantity > 0 && totalLBP !== undefined ? totalLBP / quantity : 0
+  );
+  const totalUSD = numRequired(r['totalUSD'] ?? r['total_usd'], Number((unitPriceUSD * quantity).toFixed(2)));
+
+  return {
+    productId: opt(String(r['productId'] ?? r['id'] ?? '')) || 'unknown',
+    productCode: opt(String(r['productCode'] ?? r['code'] ?? r['sku'] ?? '')),
+    productName: opt(String(r['productName'] ?? r['name'] ?? '')) || 'Unknown Item',
+    category: (opt(String(r['category'] ?? '')) || 'drug') as SaleTransaction['items'][number]['category'],
+    quantity,
+    discountPercent: num(r['discountPercent']),
+    unitPriceUSD,
+    unitPriceLBP,
+    costPriceUSD: numRequired(r['costPriceUSD'] ?? r['costPrice'] ?? r['costUSD'] ?? r['cost'], 0),
+    totalUSD,
+    totalLBP: totalLBP ?? Math.round(unitPriceLBP * quantity),
+    isPiece: bool(r['isPiece'], false),
+    selectedBatchNumber: opt(String(r['selectedBatchNumber'] ?? '')) || undefined,
+    selectedExpiryDate: opt(String(r['selectedExpiryDate'] ?? '')) || undefined,
+    // parseJsonArray stringifies before JSON.parse, so handing it an already-parsed array
+    // would yield "[object Object]" and silently drop the batches. Accept either form.
+    batches: (Array.isArray(r['batches']) ? r['batches'] : parseJsonArray<Record<string, unknown>>(r['batches'])).map((b) => {
+      const bb = (b && typeof b === 'object' ? b : {}) as Record<string, unknown>;
+      return {
+        batchNumber: opt(String(bb['batchNumber'] ?? '')),
+        expiryDate: opt(String(bb['expiryDate'] ?? '')),
+        quantity: numRequired(bb['quantity'], 0),
+      };
+    }),
+  };
+}
+
 function timestamp(value: unknown): number {
   const n = num(value);
   if (n !== undefined) return n;
@@ -294,6 +347,10 @@ export function parseSectionCsv(section: SectionKey, csvText: string): { records
     const id = opt(h['id']) || `${section}-import-${Date.now()}-${i}`;
     const missingId = !opt(rawId(h));
     const items = parseJsonArray<any>(h['items']);
+    // Only sales are normalised: their items are read as SaleTransaction['items'] by the POS,
+    // the edit modal and itemised reports, all of which require the canonical keys. The other
+    // three sections keep their own item shapes and are left exactly as they were.
+    const saleItems = items.map(normalizeSaleItem);
 
     switch (section) {
       case 'sales': {
@@ -303,7 +360,7 @@ export function parseSectionCsv(section: SectionKey, csvText: string): { records
           receiptNumber: opt(h['receiptnumber']) || undefined,
           date: localeDate(h['date']),
           timestamp: timestamp(h['timestamp']),
-          items: items.length > 0 ? items : [],
+          items: saleItems,
           totalUSD: numRequired(h['totalusd'], 0),
           totalLBP: numRequired(h['totallbp'], 0),
           exchangeRate: numRequired(h['exchangerate'], 89500),

@@ -3655,7 +3655,11 @@ export const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const oldPayment = customerPayments.find(p => p.id === paymentId);
     if (!oldPayment) return { success: false, error: 'Payment not found' };
 
-    const mergedData = { ...oldPayment, ...updatedData, timestamp: Date.now() };
+    // `updatedAt`, not `timestamp`: `timestamp` is the payment's accounting date and feeds
+    // the daily/aging reports, so overwriting it with the edit time both moved an edited
+    // payment to today and silently discarded any date the user had chosen in the form. The
+    // edit still wins the recency merge because mergeByIdPreferNewer reads `updatedAt`.
+    const mergedData = { ...oldPayment, ...updatedData, updatedAt: Date.now() };
 
     const cust = customers.find(c => c.id === oldPayment.customerId);
     if (cust) {

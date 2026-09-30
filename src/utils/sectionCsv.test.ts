@@ -111,4 +111,104 @@ describe('sectionCsv', () => {
     expect(parsed.payee).toBe('"Bob" & Co');
     expect(parsed.notes).toBe('multi\nline');
   });
+
+  describe('sale items are normalised to the SaleTransaction items contract', () => {
+    const itemsCsv = (itemsJson: string) =>
+      `id,invoiceNumber,date,timestamp,items,totalUSD,totalLBP\n` +
+      `s-1,INV-1,2026-02-03,1780000000000,"${itemsJson.replace(/"/g, '""')}",10,900000\n`;
+
+    it('accepts a hand-written CSV that uses code/name/priceUSD instead of the canonical keys', () => {
+      // This is the exact shape that crashed EditSaleModal: no unitPriceUSD, so the modal's
+      // .toFixed() threw and the whole sale row became un-editable.
+      const csv = itemsCsv(JSON.stringify([
+        { productId: 'p1', code: 'A1', name: 'Panadol', quantity: 5, priceUSD: 12.5, totalUSD: 62.5 },
+      ]));
+      const { records, errors } = parseSectionCsv('sales', csv);
+      expect(errors).toEqual([]);
+      const item = (records[0] as { items: Record<string, unknown>[] }).items[0];
+      expect(item.productCode).toBe('A1');
+      expect(item.productName).toBe('Panadol');
+      expect(item.unitPriceUSD).toBe(12.5);
+      expect(item.totalUSD).toBe(62.5);
+      // Every numeric the POS and reports read must be a real number, never undefined.
+      for (const k of ['quantity', 'unitPriceUSD', 'unitPriceLBP', 'costPriceUSD', 'totalUSD', 'totalLBP']) {
+        expect(typeof item[k]).toBe('number');
+      }
+    });
+
+    it('leaves already-canonical items unchanged', () => {
+      const canonical = {
+        productId: 'p1', productCode: 'A1', productName: 'Panadol', category: 'drug',
+        quantity: 2, unitPriceUSD: 1.5, unitPriceLBP: 133500, costPriceUSD: 1,
+        totalUSD: 3, totalLBP: 267000,
+      };
+      const { records } = parseSectionCsv('sales', itemsCsv(JSON.stringify([canonical])));
+      const item = (records[0] as { items: Record<string, unknown>[] }).items[0];
+      for (const [k, v] of Object.entries(canonical)) {
+        expect(item[k]).toEqual(v);
+      }
+    });
+
+    it('derives a missing line total from unit price x quantity', () => {
+      const { records } = parseSectionCsv('sales', itemsCsv(JSON.stringify([
+        { productId: 'p1', productCode: 'A1', quantity: 3, unitPriceUSD: 2.5 },
+      ])));
+      const item = (records[0] as { items: Record<string, unknown>[] }).items[0];
+      expect(item.totalUSD).toBe(7.5);
+    });
+
+    it('derives a missing LBP unit price from the line total and quantity', () => {
+      const { records } = parseSectionCsv('sales', itemsCsv(JSON.stringify([
+        { productId: 'p1', productCode: 'A1', quantity: 4, totalLBP: 400000 },
+      ])));
+      const item = (records[0] as { items: Record<string, unknown>[] }).items[0];
+      expect(item.unitPriceLBP).toBe(100000);
+      expect(item.totalLBP).toBe(400000);
+    });
+
+    it('does not divide by zero when quantity is missing or zero', () => {
+      const { records } = parseSectionCsv('sales', itemsCsv(JSON.stringify([
+        { productId: 'p1', totalLBP: 100000 },
+      ])));
+      const item = (records[0] as { items: Record<string, unknown>[] }).items[0];
+      expect(item.quantity).toBe(0);
+      expect(item.unitPriceLBP).toBe(0);
+      expect(Number.isFinite(item.totalLBP as number)).toBe(true);
+    });
+
+    it('keeps nested batch data, which is already an array rather than a JSON string', () => {
+      // parseJsonArray stringifies before parsing, so an inline array would be lost if the
+      // normaliser routed it through that helper.
+      const { records } = parseSectionCsv('sales', itemsCsv(JSON.stringify([
+        { productId: 'p1', productCode: 'A1', quantity: 2, unitPriceUSD: 1, totalUSD: 2,
+          batches: [{ batchNumber: 'B1', expiryDate: '2027-01-01', quantity: 5 }] },
+      ])));
+      const item = (records[0] as { items: { batches: unknown[] }[] }).items[0];
+      expect(item.batches).toHaveLength(1);
+      expect(item.batches[0]).toMatchObject({ batchNumber: 'B1', quantity: 5 });
+    });
+
+    it('substitutes placeholders so an item is never nameless or idless', () => {
+      const { records } = parseSectionCsv('sales', itemsCsv(JSON.stringify([{ quantity: 1 }])));
+      const item = (records[0] as { items: Record<string, unknown>[] }).items[0];
+      expect(item.productId).toBe('unknown');
+      expect(item.productName).toBe('Unknown Item');
+      expect(item.category).toBe('drug');
+    });
+
+    it('tolerates a non-object entry in the items array', () => {
+      const { records } = parseSectionCsv('sales', itemsCsv(JSON.stringify(['garbage', null, 5])));
+      const items = (records[0] as { items: Record<string, unknown>[] }).items;
+      expect(items).toHaveLength(3);
+      for (const item of items) {
+        expect(typeof item.productName).toBe('string');
+        expect(typeof item.totalUSD).toBe('number');
+      }
+    });
+
+    it('leaves an empty items cell as an empty array', () => {
+      const { records } = parseSectionCsv('sales', 'id,invoiceNumber,date,timestamp,items\ns-1,INV-1,2026-02-03,1780000000000,\n');
+      expect((records[0] as { items: unknown[] }).items).toEqual([]);
+    });
+  });
 });
