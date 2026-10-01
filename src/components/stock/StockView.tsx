@@ -45,6 +45,7 @@ import {
   ExpiryPreset,
   isDateInRange,
   matchesBatchAndExpiryFilter,
+  parseExpiryDate,
 } from '../../utils/stockUtils';
 import { resolveStraightforwardScientificInfo } from '../../services/scientificDataService';
 import { getPriceChangeInfoUSD, getPriceChangeInfoLBP, formatLBPValue } from '../../utils/priceUtils';
@@ -85,64 +86,6 @@ export interface StockSortConfig {
 export const DEFAULT_STOCK_SORT: StockSortConfig = {
   key: 'name',
   direction: 'asc',
-};
-
-// Helper to parse diverse date formats (DD-MM-YYYY, YYYY-MM-DD, MM-YYYY) and output MM-YYYY format
-const parseExpiryDate = (dateStr?: string): { date: Date | null; displayMMYYYY: string } => {
-  if (!dateStr) return { date: null, displayMMYYYY: '' };
-  const str = dateStr.trim();
-
-  // Pattern: DD-MM-YYYY or D-M-YYYY (e.g. 31-10-2026, 31/10/2026)
-  const dmy = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
-  if (dmy) {
-    const day = parseInt(dmy[1], 10);
-    const month = parseInt(dmy[2], 10);
-    const year = parseInt(dmy[3], 10);
-    const d = new Date(year, month - 1, day);
-    const mm = String(month).padStart(2, '0');
-    return { date: d, displayMMYYYY: `${mm}-${year}` };
-  }
-
-  // Pattern: YYYY-MM-DD (e.g. 2026-10-31)
-  const ymd = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
-  if (ymd) {
-    const year = parseInt(ymd[1], 10);
-    const month = parseInt(ymd[2], 10);
-    const day = parseInt(ymd[3], 10);
-    const d = new Date(year, month - 1, day);
-    const mm = String(month).padStart(2, '0');
-    return { date: d, displayMMYYYY: `${mm}-${year}` };
-  }
-
-  // Pattern: MM-YYYY or M-YYYY (e.g. 10-2026, 10/2026)
-  const my = str.match(/^(\d{1,2})[-/.](\d{4})$/);
-  if (my) {
-    const month = parseInt(my[1], 10);
-    const year = parseInt(my[2], 10);
-    const d = new Date(year, month, 0); // Last day of month
-    const mm = String(month).padStart(2, '0');
-    return { date: d, displayMMYYYY: `${mm}-${year}` };
-  }
-
-  // Pattern: YYYY-MM (e.g. 2026-10)
-  const ym = str.match(/^(\d{4})[-/.](\d{1,2})$/);
-  if (ym) {
-    const year = parseInt(ym[1], 10);
-    const month = parseInt(ym[2], 10);
-    const d = new Date(year, month, 0);
-    const mm = String(month).padStart(2, '0');
-    return { date: d, displayMMYYYY: `${mm}-${year}` };
-  }
-
-  // Fallback to native Date parser
-  const d = new Date(str);
-  if (!isNaN(d.getTime())) {
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const year = d.getFullYear();
-    return { date: d, displayMMYYYY: `${mm}-${year}` };
-  }
-
-  return { date: null, displayMMYYYY: str };
 };
 
 const DEFAULT_STOCK_COL_WIDTHS: Record<string, number> = {
@@ -4594,3 +4537,5 @@ export const StockView: React.FC<StockViewProps> = ({ onViewScientific, onOpenCS
     </div>
   );
 };
+
+export default StockView;

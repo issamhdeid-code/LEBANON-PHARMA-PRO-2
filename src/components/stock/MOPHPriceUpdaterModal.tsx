@@ -27,6 +27,7 @@ import {
   fetchMOPHPriceList,
   fetchMOPHLNDDIngredients,
   fetchMOPHNow,
+  verifyMOPHUnlock,
 } from '../../services/mophApiService';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { normalizePharmaceuticalForm } from '../../utils/pharmaceuticalFormUtils';
@@ -77,15 +78,13 @@ const MAX_INGREDIENTS_BATCH = 200;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lock for the "Update from MOPH" feature.
-// The password is checked locally in the app — change the value below to set
-// your own password (e.g. MOPH_UPDATE_PASSWORD = 'mySecret123';).
+// Password verification is executed securely by the server route POST /api/moph/verify-unlock.
 // The first successful unlock activates the feature for one year (persisted in
 // localStorage). The client's PC clock is NEVER trusted: the current time is
 // fetched online via GET /api/moph/now (server reads Date headers from public
 // HTTPS hosts) both to verify an existing unlock and to stamp the 1-year window.
 // If online time is unreachable the feature fails closed and stays locked.
 // ─────────────────────────────────────────────────────────────────────────────
-const MOPH_UPDATE_PASSWORD = 'pharma2026';
 const MOPH_UNLOCK_STORAGE_KEY = 'moph_unlock_expires_at';
 const MOPH_UNLOCK_DURATION_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -163,23 +162,25 @@ export const MOPHPriceUpdaterModal: React.FC<MOPHPriceUpdaterModalProps> = ({ on
   const unlockExpiry = useMemo(() => mophUnlockExpiryDate(), [step]);
 
   const handleUnlock = useCallback(async () => {
-    if (unlockPassword !== MOPH_UPDATE_PASSWORD) {
+    if (!unlockPassword.trim()) {
       setUnlockError('Incorrect password. Please try again.');
       return;
     }
 
     setUnlockError('');
     try {
-      // Stamp the 1-year window from trusted online time, not the PC's clock.
-      const now = await fetchMOPHNow();
-      if (!now.trusted || !(now.unixMs > 0)) throw new Error('Online time is untrusted');
-      try {
-        localStorage.setItem(MOPH_UNLOCK_STORAGE_KEY, String(now.unixMs + MOPH_UNLOCK_DURATION_MS));
-      } catch { /* ignore */ }
-      setUnlockPassword('');
-      setStep('start');
-    } catch {
-      setUnlockError('Could not verify the current time online. Make sure you are connected to the internet and try again.');
+      const result = await verifyMOPHUnlock(unlockPassword.trim());
+      if (result.valid && result.expiresAt > 0) {
+        try {
+          localStorage.setItem(MOPH_UNLOCK_STORAGE_KEY, String(result.expiresAt));
+        } catch { /* ignore */ }
+        setUnlockPassword('');
+        setStep('start');
+      } else {
+        setUnlockError('Incorrect password. Please try again.');
+      }
+    } catch (err: any) {
+      setUnlockError(err?.message || 'Incorrect password. Please try again.');
     }
   }, [unlockPassword]);
 

@@ -520,7 +520,9 @@ export const DevElementPicker: React.FC = () => {
         setEditorError('The changed element is no longer connected. Reload the preview to reset.');
         return;
       }
-      action.element.innerHTML = action.beforeHtml;
+      if (!setElementText(action.element, action.beforeText)) {
+        action.element.textContent = action.beforeText;
+      }
     } else if (action.kind === 'resize') {
       if (!action.element.isConnected) {
         setEditorError('The changed element is no longer connected. Reload the preview to reset.');

@@ -312,6 +312,8 @@ export interface PharmacySettings {
       no: string;
     };
   };
+  receiptTemplate?: ReceiptTemplate;
+  defaultPrintFormat?: 'receipt' | 'invoice';
   // Loyalty Point System Configuration
   loyaltyProgramEnabled?: boolean;
   loyaltyPointsPerUSD?: number; // e.g. 1 point earned per $1 spent
@@ -319,6 +321,34 @@ export interface PharmacySettings {
   loyaltyRedeemRateUSD?: number; // e.g. $1.00 USD (so 100 points = $1.00)
   loyaltyMinPointsToRedeem?: number; // e.g. 10 points minimum to redeem
   loyaltyMaxRedemptionPercent?: number; // e.g. 100% max discount from points
+}
+
+export interface ReceiptTemplate {
+  enabled: boolean;
+  header: {
+    pharmacyName: string;
+    address: string;
+    phone: string;
+    licenseNumber: string;
+    tagline?: string;
+    headerNote?: string;
+  };
+  footer: {
+    thankYouMessage: string;
+    policyNote: string;
+    recoveryGreeting: string;
+    customNote?: string;
+  };
+  options: {
+    paperWidth: '80mm' | '58mm';
+    showCashier: boolean;
+    showCustomer: boolean;
+    showExchangeRate: boolean;
+    showItemCode: boolean;
+    showPaymentBreakdown: boolean;
+    showLoyaltyPoints: boolean;
+    showLicenseNumber: boolean;
+  };
 }
 
 export type SyncStatus = 'offline' | 'connecting' | 'connected' | 'error';

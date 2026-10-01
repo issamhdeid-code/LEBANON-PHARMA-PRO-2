@@ -34,7 +34,9 @@ import {
   Layers,
   Activity,
   PauseCircle,
-  GripVertical
+  GripVertical,
+  ChevronDown,
+  FileText
 } from 'lucide-react';
 import { usePharmacy } from '../../context/PharmacyContext';
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner';
@@ -45,7 +47,7 @@ import { formatStockDisplay, parseExpiryDate } from '../../utils/stockUtils';
 import { formatLBPValue } from '../../utils/priceUtils';
 import { filterProductsByMultiWordQuery } from '../../utils/searchUtils';
 import { extractCleanMolecules } from '../../services/scientificDataService';
-import { ReceiptModal } from '../common/ReceiptModal';
+import { ReceiptModal, PrintFormat } from '../common/ReceiptModal';
 import { SalesTransactionLog } from './SalesTransactionLog';
 import { DesktopWindow } from '../common/DesktopWindow';
 import { SectionRestoreButton } from '../common/SectionRestoreButton';
@@ -824,6 +826,39 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
   const [leftPanelMode, setLeftPanelMode] = useState<'log' | 'catalog'>('log');
   const catalogContainerRef = useRef<HTMLDivElement>(null);
   const printAfterSaleRef = useRef(false);
+
+  // User-selectable print form: Official Invoice vs Receipt Format
+  const [preferredPrintFormat, setPreferredPrintFormat] = useState<PrintFormat>(() => {
+    try {
+      const saved = localStorage.getItem('pos_print_format');
+      if (saved === 'invoice' || saved === 'receipt') return saved;
+    } catch {
+      // ignore
+    }
+    return settings.defaultPrintFormat || (settings.invoiceTemplate?.enabled ? 'invoice' : 'receipt');
+  });
+  const [showPrintFormatMenu, setShowPrintFormatMenu] = useState(false);
+  const printMenuRef = useRef<HTMLDivElement>(null);
+
+  const handleSetPrintFormat = (format: PrintFormat) => {
+    setPreferredPrintFormat(format);
+    try {
+      localStorage.setItem('pos_print_format', format);
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    if (!showPrintFormatMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (printMenuRef.current && !printMenuRef.current.contains(e.target as Node)) {
+        setShowPrintFormatMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showPrintFormatMenu]);
 
   // Parked / Held Sales State (persistent across reloads via localStorage)
   const [parkedSales, setParkedSales] = useState<ParkedSale[]>(() => {
@@ -1850,8 +1885,11 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
     return result;
   };
 
-  const handlePrintClick = () => {
+  const handlePrintClick = (formatOverride?: PrintFormat) => {
     if (cart.length === 0) return;
+    if (formatOverride) {
+      handleSetPrintFormat(formatOverride);
+    }
     
     if (isUnrealInvoice) {
       handleCheckout(true);
@@ -3607,14 +3645,84 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
               <span className="truncate">Hold</span>
             </button>
             
-            <button
-              onClick={handlePrintClick}
-              disabled={cart.length === 0}
-              className="flex-1 flex items-center justify-center space-x-1 rounded-lg px-2 text-[10px] font-bold shadow-xs transition-all cursor-pointer uppercase tracking-wider bg-slate-700 text-white hover:bg-slate-800 active:scale-[0.99] dark:bg-slate-600 dark:hover:bg-slate-500 disabled:opacity-40"
-            >
-              <span className="truncate">Print</span>
-              <Printer className="h-3 w-3 shrink-0" />
-            </button>
+            {/* Print with Format Selector */}
+            <div ref={printMenuRef} className="relative flex-1 flex items-stretch">
+              <button
+                type="button"
+                onClick={() => handlePrintClick()}
+                disabled={cart.length === 0}
+                className="flex-1 flex items-center justify-center space-x-1 rounded-l-lg px-2 text-[10px] font-bold shadow-xs transition-all cursor-pointer uppercase tracking-wider bg-slate-700 text-white hover:bg-slate-800 active:scale-[0.99] dark:bg-slate-600 dark:hover:bg-slate-500 disabled:opacity-40"
+                title={`Print sale (${preferredPrintFormat === 'invoice' ? 'Official Invoice' : 'Receipt Format'})`}
+              >
+                <span className="truncate">Print</span>
+                <Printer className="h-3 w-3 shrink-0" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowPrintFormatMenu((prev) => !prev);
+                }}
+                disabled={cart.length === 0}
+                className="flex items-center justify-center px-1.5 rounded-r-lg border-l border-slate-600/70 bg-slate-700 text-white hover:bg-slate-800 active:scale-[0.99] dark:bg-slate-600 dark:hover:bg-slate-500 dark:border-slate-500/70 cursor-pointer disabled:opacity-40"
+                title="Choose format: Official Invoice or Receipt Format"
+                aria-label="Choose print format"
+              >
+                <ChevronDown className="h-3 w-3" />
+              </button>
+
+              {/* Format Dropdown Menu */}
+              {showPrintFormatMenu && (
+                <div className="absolute bottom-full right-0 mb-1.5 w-60 rounded-xl bg-white dark:bg-slate-800 shadow-2xl border border-slate-200 dark:border-slate-700 p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 select-none">
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700/60 mb-1">
+                    Choose Print Format
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPrintFormatMenu(false);
+                      handlePrintClick('receipt');
+                    }}
+                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-colors ${
+                      preferredPrintFormat === 'receipt'
+                        ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300 font-bold'
+                        : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700/60'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Receipt className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                      <span className="flex flex-col text-left">
+                        <span>Receipt Format</span>
+                        <span className="text-[10px] font-normal text-slate-400 dark:text-slate-400">Standard Thermal 80mm slip</span>
+                      </span>
+                    </span>
+                    {preferredPrintFormat === 'receipt' && <Check className="h-4 w-4 text-teal-600 dark:text-teal-400 shrink-0" />}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPrintFormatMenu(false);
+                      handlePrintClick('invoice');
+                    }}
+                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-colors ${
+                      preferredPrintFormat === 'invoice'
+                        ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300 font-bold'
+                        : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700/60'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                      <span className="flex flex-col text-left">
+                        <span>Official Invoice</span>
+                        <span className="text-[10px] font-normal text-slate-400 dark:text-slate-400">MoPH & CNSS A4 Template</span>
+                      </span>
+                    </span>
+                    {preferredPrintFormat === 'invoice' && <Check className="h-4 w-4 text-teal-600 dark:text-teal-400 shrink-0" />}
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Option: Write Off Differences */}
             <div
@@ -3801,6 +3909,8 @@ export const SaleView: React.FC<SaleViewProps> = ({ onViewScientific }) => {
         <ReceiptModal
           sale={lastCompletedSale}
           settings={settings}
+          initialFormat={preferredPrintFormat}
+          onFormatChange={handleSetPrintFormat}
           onClose={() => setLastCompletedSale(null)}
         />
       )}

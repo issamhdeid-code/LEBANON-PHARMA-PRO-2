@@ -81,3 +81,29 @@ export async function fetchMOPHLNDDIngredients(
   const result = await response.json();
   return Array.isArray(result) ? result : [];
 }
+
+export interface MOPHUnlockResult {
+  valid: boolean;
+  expiresAt: number;
+  unixMs: number;
+}
+
+export async function verifyMOPHUnlock(password: string): Promise<MOPHUnlockResult> {
+  const response = await fetch(`${API_BASE}/api/moph/verify-unlock`, {
+    method: 'POST',
+    headers: protectedHeaders(),
+    body: JSON.stringify({ password }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Incorrect password. Please try again.');
+  }
+
+  const data = await response.json();
+  return {
+    valid: Boolean(data?.valid),
+    expiresAt: Number(data?.expiresAt) || 0,
+    unixMs: Number(data?.unixMs) || 0,
+  };
+}

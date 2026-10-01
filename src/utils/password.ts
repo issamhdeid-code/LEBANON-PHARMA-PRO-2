@@ -97,24 +97,49 @@ export function sha256Hex(input: string): string {
 }
 
 const HASH_REGEX = /^[0-9a-f]{64}$/i;
+const SALTED_HASH_REGEX = /^[0-9a-f]{16,32}:[0-9a-f]{64}$/i;
 
-export function hashPassword(plain: string): string {
-  return sha256Hex(plain);
+function generateSalt(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  return (Math.random().toString(36).slice(2, 10) + Date.now().toString(36)).slice(0, 16);
+}
+
+export function hashPassword(plain: string, explicitSalt?: string): string {
+  const salt = explicitSalt || generateSalt();
+  const hash = sha256Hex(`${salt}:${plain}`);
+  return `${salt}:${hash}`;
 }
 
 export function isHashedPassword(pw: string | undefined): boolean {
-  return typeof pw === 'string' && HASH_REGEX.test(pw);
+  if (typeof pw !== 'string') return false;
+  return SALTED_HASH_REGEX.test(pw) || HASH_REGEX.test(pw);
 }
 
-// Accepts both hashed and legacy plaintext credentials (pre-hashing installs).
-// Legacy matches are meant to be upgraded to a hash by the caller right after a
-// successful login, so plaintext eventually disappears from synced storage.
+// Accepts salted hashes, legacy unsalted 64-char hashes, and pre-hashing plaintext credentials.
+// Validates constant-time to mitigate timing side-channels.
 export function verifyPassword(plain: string, stored: string | undefined): boolean {
   if (!stored) return false;
   if (!isHashedPassword(stored)) {
     return stored === plain;
   }
-  const candidate = hashPassword(plain);
+  if (stored.includes(':')) {
+    const [salt, expectedHash] = stored.split(':');
+    const candidateHash = sha256Hex(`${salt}:${plain}`);
+    if (expectedHash.length !== candidateHash.length) return false;
+    let diff = 0;
+    for (let i = 0; i < expectedHash.length; i++) {
+      diff |= expectedHash.charCodeAt(i) ^ candidateHash.charCodeAt(i);
+    }
+    return diff === 0;
+  }
+
+  // Legacy unsalted SHA-256 hash
+  const candidate = sha256Hex(plain);
+  if (stored.length !== candidate.length) return false;
   let diff = 0;
   for (let i = 0; i < stored.length; i++) {
     diff |= stored.charCodeAt(i) ^ candidate.charCodeAt(i);

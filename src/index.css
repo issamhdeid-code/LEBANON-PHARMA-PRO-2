@@ -43,6 +43,8 @@
     padding: 12px;
     background: #ffffff !important;
     color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   #printable-barcode-labels {
     position: absolute;

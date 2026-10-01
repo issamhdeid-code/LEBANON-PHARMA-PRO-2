@@ -136,6 +136,14 @@ io.on('connection', (socket) => {
   socket.on('sync_update', (data) => {
     if (!isValidSyncPayload(data)) return;
     if (data.protocol !== undefined && data.protocol !== SYNC_PROTOCOL_VERSION) return;
+    // Guard destructive mutations from remote / untrusted sockets
+    if (data.type === 'CLEAR_ALL_DATA') {
+      const clientIp = socket.handshake.address;
+      if (!isLoopbackAddress(clientIp)) {
+        console.warn(`[Security] Blocked unauthorized CLEAR_ALL_DATA sync from: ${clientIp}`);
+        return;
+      }
+    }
     // Relay the message to all OTHER connected clients
     socket.broadcast.emit('sync_update', data);
   });
@@ -190,6 +198,14 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+function requireTrustedOrigin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const origin = req.headers.origin;
+  if (origin && !isAllowedOrigin(origin)) {
+    return res.status(403).json({ error: 'Forbidden origin' });
+  }
+  next();
+}
 
 // Health check endpoint — also serves as the fingerprint the Electron main
 // process verifies before trusting whatever is listening on port 3000.
@@ -291,8 +307,78 @@ function getAIClient(): GoogleGenAI | null {
   return aiClient;
 }
 
+const GEMINI_CANDIDATE_MODELS = [
+  'gemini-3.5-flash',
+  'gemini-3.6-flash',
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-flash-latest',
+  'gemini-3.1-flash-lite',
+];
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
+async function generateWithGeminiFallback(
+  ai: GoogleGenAI,
+  contents: any,
+  options: { timeoutMs?: number; tag?: string } = {}
+): Promise<any> {
+  const timeoutMs = options.timeoutMs || 45_000;
+  const tag = options.tag || 'AI';
+  let lastError: any = null;
+
+  for (const model of GEMINI_CANDIDATE_MODELS) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await withTimeout(
+          ai.models.generateContent({
+            model,
+            contents,
+            config: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+            },
+          }),
+          timeoutMs,
+          model
+        );
+        if (response && response.text) {
+          return response;
+        }
+      } catch (err: any) {
+        lastError = err;
+        const isQuota = String(err?.message || '').includes('429') ||
+          String(err?.message || '').includes('quota') ||
+          err?.status === 'RESOURCE_EXHAUSTED' ||
+          err?.code === 429;
+        const isHighDemand = String(err?.message || '').includes('503') || 
+          String(err?.message || '').includes('high demand') || 
+          err?.status === 'UNAVAILABLE' || 
+          err?.code === 503;
+
+        if (isHighDemand && attempt === 1) {
+          await new Promise((r) => setTimeout(r, 600));
+          continue;
+        }
+        console.info(`[${tag}] Model ${model} unavailable (${isQuota ? '429 Quota' : isHighDemand ? '503 High Demand' : 'busy'}), switching candidate`);
+        break;
+      }
+    }
+  }
+
+  throw lastError || new Error(`All AI models failed in ${tag}`);
+}
+
 // Endpoint to enrich scientific drug monographs with AI
-app.post('/api/scientifics/enrich', rateLimit(12, 60_000), async (req, res) => {
+app.post('/api/scientifics/enrich', rateLimit(12, 60_000), requireTrustedOrigin, async (req, res) => {
   try {
     const sanitize = (v: unknown): string => String(v ?? '')
       .replace(/[\u0000-\u001f\u007f]/g, ' ')   // strip control chars (incl. newlines) -> no prompt smuggling
@@ -366,69 +452,7 @@ Return ONLY valid JSON matching this schema:
   "identifiedIngredients": ["..."]
 }`;
 
-    const candidateModels = [
-      'gemini-3.5-flash',
-      'gemini-3.6-flash',
-      'gemini-3.8-flash',
-      'gemini-3.7-flash',
-      'gemini-flash-latest',
-      'gemini-3.1-flash-lite',
-    ];
-    let response: any = null;
-    let lastError: any = null;
-
-    const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
-      new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms);
-        promise.then(
-          (v) => { clearTimeout(timer); resolve(v); },
-          (e) => { clearTimeout(timer); reject(e); }
-        );
-      });
-
-    for (const model of candidateModels) {
-      // Allow up to 2 attempts per candidate to gracefully absorb temporary 503 spikes
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          response = await withTimeout(ai.models.generateContent({
-            model,
-            contents: prompt,
-            config: {
-              responseMimeType: 'application/json',
-              temperature: 0.1,
-            },
-          }), 45_000, model);
-          if (response && response.text) {
-            break;
-          }
-        } catch (err: any) {
-          lastError = err;
-          const isQuota = String(err?.message || '').includes('429') ||
-            String(err?.message || '').includes('quota') ||
-            err?.status === 'RESOURCE_EXHAUSTED' ||
-            err?.code === 429;
-          const isHighDemand = String(err?.message || '').includes('503') || 
-            String(err?.message || '').includes('high demand') || 
-            err?.status === 'UNAVAILABLE' || 
-            err?.code === 503;
-
-          if (isHighDemand && attempt === 1) {
-            await new Promise((r) => setTimeout(r, 600));
-            continue;
-          }
-          console.info(`[Scientifics] Model ${model} unavailable (${isQuota ? '429 Quota' : isHighDemand ? '503 High Demand' : 'busy'}), switching candidate`);
-          break;
-        }
-      }
-      if (response && response.text) {
-        break;
-      }
-    }
-
-    if (!response || !response.text) {
-      throw lastError || new Error('All AI models failed to generate content');
-    }
-
+    const response = await generateWithGeminiFallback(ai, prompt, { timeoutMs: 45_000, tag: 'Scientifics' });
     const responseText = response.text || '';
     let parsedData: any = null;
     try {
@@ -541,7 +565,7 @@ app.get('/api/scientifics/fda-label', rateLimit(30, 60_000), async (req, res) =>
 // ---------------------------------------------------------------------------
 // IDP (Intelligent Document Processing) for Supplier Purchase Invoices
 // ---------------------------------------------------------------------------
-app.post('/api/idp/process-invoice', rateLimit(20, 60_000), async (req, res) => {
+app.post('/api/idp/process-invoice', rateLimit(20, 60_000), requireTrustedOrigin, async (req, res) => {
   try {
     const rawData = req.body?.fileData;
     let mimeType = req.body?.mimeType || 'image/jpeg';
@@ -629,85 +653,24 @@ Return ONLY valid JSON matching this schema:
   ]
 }`;
 
-    const candidateModels = [
-      'gemini-3.5-flash',
-      'gemini-3.6-flash',
-      'gemini-3.8-flash',
-      'gemini-3.7-flash',
-      'gemini-flash-latest',
-      'gemini-3.1-flash-lite',
-    ];
-    let response: any = null;
-    let lastError: any = null;
-
-    const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
-      new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms);
-        promise.then(
-          (v) => { clearTimeout(timer); resolve(v); },
-          (e) => { clearTimeout(timer); reject(e); }
-        );
-      });
-
-    for (const model of candidateModels) {
-      // Allow up to 2 attempts per candidate with backoff on transient 503 spikes
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          response = await withTimeout(ai.models.generateContent({
-            model,
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType,
-                      data: base64Clean,
-                    },
-                  },
-                  {
-                    text: prompt,
-                  },
-                ],
-              },
-            ],
-            config: {
-              responseMimeType: 'application/json',
-              temperature: 0.1,
+    const idpContents = [
+      {
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              mimeType,
+              data: base64Clean,
             },
-          }), 60_000, model);
+          },
+          {
+            text: prompt,
+          },
+        ],
+      },
+    ];
 
-          if (response && response.text) {
-            break;
-          }
-        } catch (err: any) {
-          lastError = err;
-          const isQuota = String(err?.message || '').includes('429') ||
-            String(err?.message || '').includes('quota') ||
-            err?.status === 'RESOURCE_EXHAUSTED' ||
-            err?.code === 429;
-          const isHighDemand = String(err?.message || '').includes('503') || 
-            String(err?.message || '').includes('high demand') || 
-            err?.status === 'UNAVAILABLE' || 
-            err?.code === 503;
-
-          if (isHighDemand && attempt === 1) {
-            await new Promise((r) => setTimeout(r, 600));
-            continue;
-          }
-          console.info(`[IDP] Model ${model} unavailable (${isQuota ? '429 Quota' : isHighDemand ? '503 High Demand' : 'busy'}), switching candidate`);
-          break;
-        }
-      }
-      if (response && response.text) {
-        break;
-      }
-    }
-
-    if (!response || !response.text) {
-      throw lastError || new Error('All AI models failed to process the invoice');
-    }
-
+    const response = await generateWithGeminiFallback(ai, idpContents, { timeoutMs: 60_000, tag: 'IDP' });
     const responseText = response.text || '';
     let parsedData: any = null;
     try {
@@ -922,6 +885,28 @@ app.get('/api/moph/now', rateLimit(40, 60_000), async (req, res) => {
   }
 });
 
+// Secure server-side verification for the "Update from MOPH" 1-year unlock.
+// Prevents exposing the unlock password in renderer source bundles and applies rate limiting.
+app.post('/api/moph/verify-unlock', rateLimit(10, 60_000), requireTrustedOrigin, async (req, res) => {
+  try {
+    const password = String(req.body?.password || '').trim();
+    const expectedPassword = process.env.MOPH_UPDATE_PASSWORD || 'pharma2026';
+    if (!password || password !== expectedPassword) {
+      return res.status(401).json({ valid: false, error: 'Incorrect password. Please try again.' });
+    }
+    const unixMs = await fetchTrustedTime().catch(() => Date.now());
+    const durationMs = 365 * 24 * 60 * 60 * 1000;
+    return res.json({
+      valid: true,
+      unixMs,
+      expiresAt: unixMs + durationMs,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ valid: false, error: 'Failed to verify unlock password' });
+  }
+});
+
+
 // LNDD ingredients lookup cache keyed by normalized query signature,
 // persisted to disk so app/PC restarts don't re-hit the public site.
 const lnddIngredientsCache = new Map<string, string>();
@@ -974,10 +959,10 @@ const LNDD_CACHE_FILE = process.env.LNDD_CACHE_FILE
 let lnddSaveTimer: NodeJS.Timeout | null = null;
 function scheduleLnddCacheSave() {
   if (lnddSaveTimer) clearTimeout(lnddSaveTimer);
-  lnddSaveTimer = setTimeout(() => {
+  lnddSaveTimer = setTimeout(async () => {
     try {
-      fs.mkdirSync(path.dirname(LNDD_CACHE_FILE), { recursive: true });
-      fs.writeFileSync(LNDD_CACHE_FILE, JSON.stringify(Object.fromEntries(lnddIngredientsCache)));
+      await fs.promises.mkdir(path.dirname(LNDD_CACHE_FILE), { recursive: true });
+      await fs.promises.writeFile(LNDD_CACHE_FILE, JSON.stringify(Object.fromEntries(lnddIngredientsCache)));
     } catch (e) {
       console.warn('Failed to persist LNDD ingredients cache:', e instanceof Error ? e.message : String(e));
     }
